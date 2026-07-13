@@ -1,0 +1,53 @@
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+aiosqlite==0.19.0
+
+# Communication Protocols
+# pyvisa + pyvisa-py: SCPI/VISA instruments (pure Python backend, no NI-VISA required)
+pyvisa==1.14.1
+pyvisa-py==0.7.1
+# python-can: CAN bus (Linux: SocketCAN, Windows: PCAN/Vector/Kvaser)
+python-can==4.3.1
+# pyserial: RS232/RS485 serial ports (cross-platform)
+pyserial==3.5
+pyserial-asyncio==0.6
+# pyusb: Raw USB device access (for devices without kernel drivers)
+pyusb==1.2.1
+
+# AI Integration
+httpx==0.25.2
+openai==1.6.1
+
+# Voice/Speech (optional, install separately if needed)
+# openai-whisper requires PyTorch, large download (~2GB+)
+# SpeechRecognition==3.10.1
+
+# Report Generation
+Jinja2==3.1.2
+# weasyprint: PDF generation (Linux: needs Pango/Cairo; Windows: needs GTK3)
+# Install separately based on platform:
+#   Linux: apt install libpango-1.0-0 libcairo2
+#   Windows: install GTK3 from https://github.com/tschoonj/GTK-for-Windows
+# weasyprint==60.1
+python-docx==1.1.0
+
+# Data Processing
+# Note: pandas 1.5.x is the last version supporting Python 3.8
+# Upgrade to pandas>=2.0 when using Python >=3.9
+pandas>=1.5.0,<2.0.0
+numpy>=1.20.0,<1.25.0
+
+# Utilities
+pydantic==2.5.2
+pydantic-settings==2.1.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+aiofiles==23.2.1
+
+# Plugin System
+importlib-metadata==6.8.0

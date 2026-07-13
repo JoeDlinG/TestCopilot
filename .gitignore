@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+venv/
+env/
+.venv/
+
+# Node.js / Frontend
+node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+logs/
+backend/logs/
+
+# Reports / Exports
+backend/reports/*.pdf
+backend/reports/*.html
+backend/reports/*.docx
+backend/exports/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CodeBuddy (project-level agent data)
+# Keep agent definitions but ignore team runtime data
+.codebuddy/teams/
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
