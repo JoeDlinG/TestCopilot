@@ -10,29 +10,9 @@ import {
 import { deviceAPI } from '../services/api'
 import { extractItems } from '../services/apiHelper'
 import type { Device } from '../types'
+import { useTerminalStore, nextMsgId } from '../stores/terminalStore'
 
 const { Title, Text } = Typography
-
-interface TerminalMessage {
-  id: string
-  timestamp: string
-  type: 'sent' | 'received' | 'data' | 'error' | 'system'
-  content: string
-}
-
-interface TerminalTab {
-  deviceId: string
-  deviceName: string
-  messages: TerminalMessage[]
-  listening: boolean
-  ws: WebSocket | null
-  reconnectAttempts: number
-}
-
-let msgIdCounter = 0
-function nextMsgId() {
-  return `msg_${++msgIdCounter}_${Date.now()}`
-}
 
 function formatTime() {
   const now = new Date()
@@ -59,337 +39,184 @@ function formatTimestamp(isoStr?: string): string {
   }
 }
 
-export default function DebugTerminal() {
-  const [devices, setDevices] = useState<Device[]>([])
-  const [loading, setLoading] = useState(false)
-  const [activeTabKey, setActiveTabKey] = useState<string>('')
-  const [tabs, setTabs] = useState<Map<string, TerminalTab>>(new Map())
-  const [commandInputs, setCommandInputs] = useState<Record<string, string>>({})
-  const [commandHistories, setCommandHistories] = useState<Record<string, string[]>>({})
-  const [historyIndexes, setHistoryIndexes] = useState<Record<string, number>>({})
-  const logRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const wsRefs = useRef<Record<string, WebSocket | null>>({})
+// Module-level WebSocket factory. Uses the global store directly so that
+// message handling keeps working even after the React component unmounts
+// (e.g. when navigating to another page and back).
+function createWebSocket(deviceId: string): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.hostname || 'localhost'
+  const wsUrl = `${protocol}//${host}:8000/ws/devices/${deviceId}`
 
-  const connectedDevices = devices.filter(
-    (d: any) => d.status === 'connected'
-  )
+  const ws = new WebSocket(wsUrl)
 
-  const loadDevices = async () => {
-    setLoading(true)
+  ws.onopen = () => {
+    useTerminalStore.getState().setReconnectAttempts(deviceId, 0)
+    useTerminalStore.getState().addMessage(deviceId, {
+      id: nextMsgId(),
+      timestamp: formatTime(),
+      type: 'system',
+      content: 'WebSocket 已连接',
+    })
+  }
+
+  ws.onmessage = (event) => {
     try {
-      const res = await deviceAPI.list()
-      const list = extractItems(res)
-      setDevices(list)
+      const msg = JSON.parse(event.data)
+      const ts = formatTimestamp(msg.timestamp)
+      const store = useTerminalStore.getState()
+      switch (msg.type) {
+        case 'connected':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'system',
+            content: msg.message || '已连接到设备',
+          })
+          break
+        case 'command_response':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'sent',
+            content: msg.command,
+          })
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'received',
+            content: `${msg.response}  (${msg.duration_ms}ms)`,
+          })
+          break
+        case 'command_error':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'sent',
+            content: msg.command,
+          })
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'error',
+            content: `Error: ${msg.error}`,
+          })
+          break
+        case 'device_data':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'data',
+            content: msg.data,
+          })
+          break
+        case 'receive_started':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'system',
+            content: `开始监听设备数据 (间隔: ${msg.interval_ms}ms)`,
+          })
+          store.setListening(deviceId, true)
+          break
+        case 'receive_stopped':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'system',
+            content: '已停止监听',
+          })
+          store.setListening(deviceId, false)
+          break
+        case 'receive_error':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'error',
+            content: `接收错误: ${msg.error}`,
+          })
+          break
+        case 'device_disconnected':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'error',
+            content: `设备已断开: ${msg.message}`,
+          })
+          store.setListening(deviceId, false)
+          break
+        case 'pong':
+          break
+        case 'error':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'error',
+            content: msg.message,
+          })
+          break
+      }
     } catch {
-      // ignore
-    } finally {
-      setLoading(false)
+      // ignore parse errors
     }
   }
 
-  useEffect(() => {
-    loadDevices()
-    const interval = setInterval(loadDevices, 5000)
-    return () => clearInterval(interval)
-  }, [])
+  ws.onclose = () => {
+    const store = useTerminalStore.getState()
+    const tab = store.tabs[deviceId]
+    const attempts = (tab?.reconnectAttempts || 0) + 1
+    store.setReconnectAttempts(deviceId, attempts)
+    store.setListening(deviceId, false)
+    store.addMessage(deviceId, {
+      id: nextMsgId(),
+      timestamp: formatTime(),
+      type: 'system',
+      content: 'WebSocket 已断开，将在 3s 后重连...',
+    })
 
-  const scrollToBottom = useCallback((deviceId: string) => {
+    // Reconnect with exponential backoff
+    const delay = Math.min(1000 * Math.pow(2, Math.min(attempts, 5)), 30000)
     setTimeout(() => {
-      const el = logRefs.current[deviceId]
-      if (el) {
-        el.scrollTop = el.scrollHeight
-      }
-    }, 50)
-  }, [])
+      const newWs = createWebSocket(deviceId)
+      useTerminalStore.getState().setWs(deviceId, newWs)
+    }, delay)
+  }
 
-  const addMessage = useCallback((deviceId: string, msg: TerminalMessage) => {
-    setTabs(prev => {
-      const next = new Map(prev)
-      const tab = next.get(deviceId)
-      if (tab) {
-        next.set(deviceId, {
-          ...tab,
-          messages: [...tab.messages, msg],
-        })
-      }
-      return next
-    })
-    scrollToBottom(deviceId)
-  }, [scrollToBottom])
+  ws.onerror = () => {
+    // onclose will fire after this
+  }
 
-  const createWebSocket = useCallback((deviceId: string): WebSocket => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.hostname || 'localhost'
-    const wsUrl = `${protocol}//${host}:8000/ws/devices/${deviceId}`
+  return ws
+}
 
-    const ws = new WebSocket(wsUrl)
+// Single terminal window (one device). Extracted so it can use hooks
+// independently of the parent's render cycle.
+function TerminalWindow({ deviceId }: { deviceId: string }) {
+  const tab = useTerminalStore((s) => s.tabs[deviceId])
+  const commandInput = useTerminalStore((s) => s.commandInputs[deviceId] || '')
+  const setCommandInput = useTerminalStore((s) => s.setCommandInput)
+  const setCommandHistory = useTerminalStore((s) => s.addCommandHistory)
+  const setHistoryIndex = useTerminalStore((s) => s.setHistoryIndex)
+  const historyIndexes = useTerminalStore((s) => s.historyIndexes)
+  const commandHistories = useTerminalStore((s) => s.commandHistories)
+  const clearMessages = useTerminalStore((s) => s.clearMessages)
 
-    ws.onopen = () => {
-      setTabs(prev => {
-        const next = new Map(prev)
-        const tab = next.get(deviceId)
-        if (tab) {
-          next.set(deviceId, { ...tab, reconnectAttempts: 0 })
-        }
-        return next
-      })
-      addMessage(deviceId, {
-        id: nextMsgId(),
-        timestamp: formatTime(),
-        type: 'system',
-        content: 'WebSocket 已连接',
-      })
+  const logRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
     }
+  }, [tab?.messages.length])
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data)
-        const ts = formatTimestamp(msg.timestamp)
-        switch (msg.type) {
-          case 'connected':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'system',
-              content: msg.message || '已连接到设备',
-            })
-            break
-          case 'command_response':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'sent',
-              content: msg.command,
-            })
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'received',
-              content: `${msg.response}  (${msg.duration_ms}ms)`,
-            })
-            break
-          case 'command_error':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'sent',
-              content: msg.command,
-            })
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'error',
-              content: `Error: ${msg.error}`,
-            })
-            break
-          case 'device_data':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'data',
-              content: msg.data,
-            })
-            break
-          case 'receive_started':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'system',
-              content: `开始监听设备数据 (间隔: ${msg.interval_ms}ms)`,
-            })
-            setTabs(prev => {
-              const next = new Map(prev)
-              const tab = next.get(deviceId)
-              if (tab) {
-                next.set(deviceId, { ...tab, listening: true })
-              }
-              return next
-            })
-            break
-          case 'receive_stopped':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'system',
-              content: '已停止监听',
-            })
-            setTabs(prev => {
-              const next = new Map(prev)
-              const tab = next.get(deviceId)
-              if (tab) {
-                next.set(deviceId, { ...tab, listening: false })
-              }
-              return next
-            })
-            break
-          case 'receive_error':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'error',
-              content: `接收错误: ${msg.error}`,
-            })
-            break
-          case 'device_disconnected':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'error',
-              content: `设备已断开: ${msg.message}`,
-            })
-            setTabs(prev => {
-              const next = new Map(prev)
-              const tab = next.get(deviceId)
-              if (tab) {
-                next.set(deviceId, { ...tab, listening: false })
-              }
-              return next
-            })
-            break
-          case 'pong':
-            break
-          case 'error':
-            addMessage(deviceId, {
-              id: nextMsgId(),
-              timestamp: ts,
-              type: 'error',
-              content: msg.message,
-            })
-            break
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
+  if (!tab) return null
 
-    ws.onclose = () => {
-      setTabs(prev => {
-        const next = new Map(prev)
-        const tab = next.get(deviceId)
-        if (tab) {
-          const attempts = (tab.reconnectAttempts || 0) + 1
-          next.set(deviceId, { ...tab, reconnectAttempts: attempts, listening: false })
-        }
-        return next
-      })
-
-      addMessage(deviceId, {
-        id: nextMsgId(),
-        timestamp: formatTime(),
-        type: 'system',
-        content: 'WebSocket 已断开，将在 3s 后重连...',
-      })
-
-      // Reconnect with exponential backoff
-      setTabs(prev => {
-        const tab = prev.get(deviceId)
-        if (tab) {
-          const attempts = tab.reconnectAttempts
-          const delay = Math.min(1000 * Math.pow(2, Math.min(attempts, 5)), 30000)
-          setTimeout(() => {
-            const ws = createWebSocket(deviceId)
-            wsRefs.current[deviceId] = ws
-            setTabs(prev2 => {
-              const next = new Map(prev2)
-              const current = next.get(deviceId)
-              if (current) {
-                next.set(deviceId, { ...current, ws })
-              }
-              return next
-            })
-          }, delay)
-        }
-        return prev
-      })
-    }
-
-    ws.onerror = () => {
-      // onclose will fire after this
-    }
-
-    return ws
-  }, [addMessage])
-
-  const openTerminal = useCallback((device: Device) => {
-    const deviceId = device.id
-    if (tabs.has(deviceId)) {
-      setActiveTabKey(deviceId)
-      return
-    }
-
-    const ws = createWebSocket(deviceId)
-    wsRefs.current[deviceId] = ws
-
-    const newTab: TerminalTab = {
-      deviceId,
-      deviceName: device.name,
-      messages: [],
-      listening: false,
-      ws,
-      reconnectAttempts: 0,
-    }
-
-    setTabs(prev => {
-      const next = new Map(prev)
-      next.set(deviceId, newTab)
-      return next
-    })
-    setActiveTabKey(deviceId)
-  }, [tabs, createWebSocket])
-
-  const closeTerminal = useCallback((deviceId: string) => {
-    const ws = wsRefs.current[deviceId]
-    if (ws) {
-      ws.onclose = null // prevent reconnect
-      ws.close()
-      delete wsRefs.current[deviceId]
-    }
-
-    setTabs(prev => {
-      const next = new Map(prev)
-      next.delete(deviceId)
-      return next
-    })
-
-    setCommandInputs(prev => {
-      const next = { ...prev }
-      delete next[deviceId]
-      return next
-    })
-
-    setCommandHistories(prev => {
-      const next = { ...prev }
-      delete next[deviceId]
-      return next
-    })
-
-    setHistoryIndexes(prev => {
-      const next = { ...prev }
-      delete next[deviceId]
-      return next
-    })
-
-    // Switch to another tab if available
-    if (activeTabKey === deviceId) {
-      setTabs(prev => {
-        const keys = Array.from(prev.keys())
-        if (keys.length > 0) {
-          setActiveTabKey(keys[keys.length - 1])
-        } else {
-          setActiveTabKey('')
-        }
-        return prev
-      })
-    }
-  }, [activeTabKey])
-
-  const sendCommand = useCallback((deviceId: string) => {
-    const command = commandInputs[deviceId]?.trim()
+  const sendCommand = () => {
+    const command = commandInput.trim()
     if (!command) return
 
-    const ws = wsRefs.current[deviceId]
+    const ws = tab.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      addMessage(deviceId, {
+      useTerminalStore.getState().addMessage(deviceId, {
         id: nextMsgId(),
         timestamp: formatTime(),
         type: 'error',
@@ -399,75 +226,42 @@ export default function DebugTerminal() {
     }
 
     ws.send(JSON.stringify({ type: 'command', command }))
+    setCommandHistory(deviceId, command)
+    setHistoryIndex(deviceId, (historyIndexes[deviceId] || 0) + 1)
+    setCommandInput(deviceId, '')
+  }
 
-    // Save to history
-    setCommandHistories(prev => ({
-      ...prev,
-      [deviceId]: [...(prev[deviceId] || []), command],
-    }))
-    setHistoryIndexes(prev => ({
-      ...prev,
-      [deviceId]: (prev[deviceId] || 0) + 1,
-    }))
-
-    // Clear input
-    setCommandInputs(prev => ({ ...prev, [deviceId]: '' }))
-  }, [commandInputs, addMessage])
-
-  const toggleListening = useCallback((deviceId: string) => {
-    const ws = wsRefs.current[deviceId]
+  const toggleListening = () => {
+    const ws = tab.ws
     if (!ws || ws.readyState !== WebSocket.OPEN) return
-
-    const tab = tabs.get(deviceId)
-    if (tab?.listening) {
+    if (tab.listening) {
       ws.send(JSON.stringify({ type: 'stop_receive' }))
     } else {
       ws.send(JSON.stringify({ type: 'start_receive', interval_ms: 200 }))
     }
-  }, [tabs])
+  }
 
-  const clearMessages = useCallback((deviceId: string) => {
-    setTabs(prev => {
-      const next = new Map(prev)
-      const tab = next.get(deviceId)
-      if (tab) {
-        next.set(deviceId, { ...tab, messages: [] })
-      }
-      return next
-    })
-  }, [])
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent, deviceId: string) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      sendCommand(deviceId)
+      sendCommand()
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       const history = commandHistories[deviceId] || []
       if (history.length === 0) return
-      setHistoryIndexes(prev => {
-        const currentIdx = prev[deviceId] ?? history.length
-        const newIdx = Math.max(0, currentIdx - 1)
-        setCommandInputs(prev2 => ({
-          ...prev2,
-          [deviceId]: history[newIdx] || '',
-        }))
-        return { ...prev, [deviceId]: newIdx }
-      })
+      const currentIdx = historyIndexes[deviceId] ?? history.length
+      const newIdx = Math.max(0, currentIdx - 1)
+      setCommandInput(deviceId, history[newIdx] || '')
+      setHistoryIndex(deviceId, newIdx)
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       const history = commandHistories[deviceId] || []
-      setHistoryIndexes(prev => {
-        const currentIdx = prev[deviceId] ?? history.length
-        const newIdx = Math.min(history.length, currentIdx + 1)
-        setCommandInputs(prev2 => ({
-          ...prev2,
-          [deviceId]: newIdx < history.length ? history[newIdx] : '',
-        }))
-        return { ...prev, [deviceId]: newIdx }
-      })
+      const currentIdx = historyIndexes[deviceId] ?? history.length
+      const newIdx = Math.min(history.length, currentIdx + 1)
+      setCommandInput(deviceId, newIdx < history.length ? history[newIdx] : '')
+      setHistoryIndex(deviceId, newIdx)
     }
-  }, [commandHistories, sendCommand])
+  }
 
   const getMessageColor = (type: string) => {
     switch (type) {
@@ -491,125 +285,189 @@ export default function DebugTerminal() {
     }
   }
 
-  // Render tab content for a device
-  const renderTerminalContent = (deviceId: string) => {
-    const tab = tabs.get(deviceId)
-    if (!tab) return null
+  const isOpen = tab.ws && tab.ws.readyState === WebSocket.OPEN
 
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* Toolbar */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '8px 12px',
-          borderBottom: '1px solid #333',
-          background: '#252526',
-        }}>
-          <Space>
-            <Text style={{ color: '#ccc', fontSize: 13 }}>
-              {tab.deviceName}
-            </Text>
-            <Tag color={tab.ws && tab.ws.readyState === WebSocket.OPEN ? 'green' : 'red'}>
-              {tab.ws && tab.ws.readyState === WebSocket.OPEN ? '已连接' : '未连接'}
-            </Tag>
-          </Space>
-          <Space>
-            <Tooltip title={tab.listening ? '停止监听' : '开始监听实时数据'}>
-              <Button
-                size="small"
-                type={tab.listening ? 'primary' : 'default'}
-                danger={tab.listening}
-                icon={tab.listening ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-                onClick={() => toggleListening(deviceId)}
-                disabled={!tab.ws || tab.ws.readyState !== WebSocket.OPEN}
-              >
-                {tab.listening ? '停止监听' : '开始监听'}
-              </Button>
-            </Tooltip>
-            <Tooltip title="清空日志">
-              <Button
-                size="small"
-                icon={<ClearOutlined />}
-                onClick={() => clearMessages(deviceId)}
-              />
-            </Tooltip>
-          </Space>
-        </div>
-
-        {/* Message log */}
-        <div
-          ref={(el) => { logRefs.current[deviceId] = el }}
-          style={{
-            flex: 1,
-            overflow: 'auto',
-            background: '#1e1e1e',
-            padding: '12px',
-            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-            fontSize: 13,
-            lineHeight: 1.6,
-            minHeight: 0,
-          }}
-        >
-          {tab.messages.length === 0 ? (
-            <div style={{
-              color: '#666',
-              textAlign: 'center',
-              paddingTop: 40,
-            }}>
-              等待设备数据... 在下方输入框发送命令
-            </div>
-          ) : (
-            tab.messages.map(msg => (
-              <div key={msg.id} style={{ marginBottom: 2 }}>
-                <span style={{ color: '#666', fontSize: 11, marginRight: 8 }}>
-                  {msg.timestamp}
-                </span>
-                <span style={{ color: getMessageColor(msg.type) }}>
-                  {getMessagePrefix(msg.type)}{msg.content}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Command input */}
-        <div style={{
-          display: 'flex',
-          gap: 8,
-          padding: '8px 12px',
-          borderTop: '1px solid #333',
-          background: '#252526',
-        }}>
-          <Input
-            value={commandInputs[deviceId] || ''}
-            onChange={(e) => setCommandInputs(prev => ({ ...prev, [deviceId]: e.target.value }))}
-            onKeyDown={(e) => handleKeyDown(e, deviceId)}
-            placeholder="输入命令，Enter 发送，Shift+Enter 换行，↑↓ 历史命令..."
-            style={{
-              background: '#3c3c3c',
-              border: '1px solid #555',
-              color: '#d4d4d4',
-              fontFamily: 'Consolas, Monaco, monospace',
-            }}
-          />
-          <Button
-            type="primary"
-            icon={<SendOutlined />}
-            onClick={() => sendCommand(deviceId)}
-            disabled={!tab.ws || tab.ws.readyState !== WebSocket.OPEN}
-          >
-            发送
-          </Button>
-        </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Toolbar */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 12px',
+        borderBottom: '1px solid #333',
+        background: '#252526',
+      }}>
+        <Space>
+          <Text style={{ color: '#ccc', fontSize: 13 }}>
+            {tab.deviceName}
+          </Text>
+          <Tag color={isOpen ? 'green' : 'red'}>
+            {isOpen ? '已连接' : '未连接'}
+          </Tag>
+        </Space>
+        <Space>
+          <Tooltip title={tab.listening ? '停止监听' : '开始监听实时数据'}>
+            <Button
+              size="small"
+              type={tab.listening ? 'primary' : 'default'}
+              danger={tab.listening}
+              icon={tab.listening ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+              onClick={toggleListening}
+              disabled={!isOpen}
+            >
+              {tab.listening ? '停止监听' : '开始监听'}
+            </Button>
+          </Tooltip>
+          <Tooltip title="清空日志">
+            <Button
+              size="small"
+              icon={<ClearOutlined />}
+              onClick={() => clearMessages(deviceId)}
+            />
+          </Tooltip>
+        </Space>
       </div>
-    )
+
+      {/* Message log */}
+      <div
+        ref={logRef}
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          background: '#1e1e1e',
+          padding: '12px',
+          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+          fontSize: 13,
+          lineHeight: 1.6,
+          minHeight: 0,
+        }}
+      >
+        {tab.messages.length === 0 ? (
+          <div style={{
+            color: '#666',
+            textAlign: 'center',
+            paddingTop: 40,
+          }}>
+            等待设备数据... 在下方输入框发送命令
+          </div>
+        ) : (
+          tab.messages.map(msg => (
+            <div key={msg.id} style={{ marginBottom: 2 }}>
+              <span style={{ color: '#666', fontSize: 11, marginRight: 8 }}>
+                {msg.timestamp}
+              </span>
+              <span style={{ color: getMessageColor(msg.type) }}>
+                {getMessagePrefix(msg.type)}{msg.content}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Command input */}
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        padding: '8px 12px',
+        borderTop: '1px solid #333',
+        background: '#252526',
+      }}>
+        <Input
+          value={commandInput}
+          onChange={(e) => setCommandInput(deviceId, e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="输入命令，Enter 发送，Shift+Enter 换行，↑↓ 历史命令..."
+          style={{
+            background: '#3c3c3c',
+            border: '1px solid #555',
+            color: '#d4d4d4',
+            fontFamily: 'Consolas, Monaco, monospace',
+          }}
+        />
+        <Button
+          type="primary"
+          icon={<SendOutlined />}
+          onClick={sendCommand}
+          disabled={!isOpen}
+        >
+          发送
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+export default function DebugTerminal() {
+  const [devices, setDevices] = useState<Device[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const tabs = useTerminalStore((s) => s.tabs)
+  const activeTabId = useTerminalStore((s) => s.activeTabId)
+  const openTerminalAction = useTerminalStore((s) => s.openTerminal)
+  const closeTerminalAction = useTerminalStore((s) => s.closeTerminal)
+  const setActiveTab = useTerminalStore((s) => s.setActiveTab)
+
+  const connectedDevices = devices.filter(
+    (d: any) => d.status === 'connected'
+  )
+
+  const loadDevices = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await deviceAPI.list()
+      const list = extractItems(res)
+      setDevices(list)
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDevices()
+    const interval = setInterval(loadDevices, 5000)
+    return () => clearInterval(interval)
+  }, [loadDevices])
+
+  // On mount, re-establish any WebSocket connections that were kept in the
+  // global store while navigating away (e.g. the component was unmounted).
+  // This keeps messages flowing and preserves history across page switches.
+  useEffect(() => {
+    const store = useTerminalStore.getState()
+    Object.values(store.tabs).forEach((tab) => {
+      if (!tab.ws || tab.ws.readyState === WebSocket.CLOSED) {
+        const ws = createWebSocket(tab.deviceId)
+        store.setWs(tab.deviceId, ws)
+      }
+    })
+  }, [])
+
+  const openTerminal = (device: Device) => {
+    const deviceId = device.id
+    const store = useTerminalStore.getState()
+    if (store.tabs[deviceId]) {
+      store.setActiveTab(deviceId)
+      return
+    }
+    const ws = createWebSocket(deviceId)
+    openTerminalAction(deviceId, device.name, ws)
+  }
+
+  const closeTerminal = (deviceId: string) => {
+    const store = useTerminalStore.getState()
+    const ws = store.tabs[deviceId]?.ws
+    if (ws) {
+      ws.onclose = null // prevent reconnect
+      ws.close()
+    }
+    closeTerminalAction(deviceId)
   }
 
   // Render tab bar
   const renderTabBar = () => {
-    const tabEntries = Array.from(tabs.entries())
+    const tabEntries = Object.entries(tabs)
     if (tabEntries.length === 0) return null
 
     return (
@@ -622,15 +480,15 @@ export default function DebugTerminal() {
         {tabEntries.map(([deviceId, tab]) => (
           <div
             key={deviceId}
-            onClick={() => setActiveTabKey(deviceId)}
+            onClick={() => setActiveTab(deviceId)}
             style={{
               display: 'flex',
               alignItems: 'center',
               padding: '8px 12px',
               cursor: 'pointer',
               borderRight: '1px solid #333',
-              background: activeTabKey === deviceId ? '#1e1e1e' : '#2d2d2d',
-              color: activeTabKey === deviceId ? '#fff' : '#999',
+              background: activeTabId === deviceId ? '#1e1e1e' : '#2d2d2d',
+              color: activeTabId === deviceId ? '#fff' : '#999',
               whiteSpace: 'nowrap',
               fontSize: 13,
               minWidth: 0,
@@ -694,8 +552,7 @@ export default function DebugTerminal() {
             </Card>
           ) : (
             connectedDevices.map(device => {
-              const isActive = activeTabKey === device.id
-              const hasTab = tabs.has(device.id)
+              const isActive = activeTabId === device.id
               return (
                 <div
                   key={device.id}
@@ -744,7 +601,7 @@ export default function DebugTerminal() {
 
       {/* Right area - Terminal windows */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {tabs.size === 0 ? (
+        {Object.keys(tabs).length === 0 ? (
           <div style={{
             flex: 1,
             display: 'flex',
@@ -768,8 +625,8 @@ export default function DebugTerminal() {
           <>
             {renderTabBar()}
             <div style={{ flex: 1, overflow: 'hidden' }}>
-              {activeTabKey && tabs.has(activeTabKey) ? (
-                renderTerminalContent(activeTabKey)
+              {activeTabId && tabs[activeTabId] ? (
+                <TerminalWindow deviceId={activeTabId} />
               ) : (
                 <div style={{
                   flex: 1,
