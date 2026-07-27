@@ -269,18 +269,40 @@ def _normalize_test_cases(parsed: dict) -> dict:
 class AIService:
     """Unified AI service for local and cloud models."""
 
+    # Providers whose APIs enforce exact model names.  Any value NOT in the list
+    # (or, for list-check providers, any value that doesn't match one of them)
+    # is rejected at save time so the user gets immediate feedback instead of an
+    # opaque "400 Bad Request" error later during a test or chat.
+    _PROVIDER_STRICT_MODEL_NAMES: Dict[str, List[str]] = {
+        "deepseek": ["deepseek-v4-pro", "deepseek-v4-flash"],
+    }
+
     def _validate_model_config(self, data: dict) -> None:
         """Reject configurations that cannot possibly connect.
 
-        In particular, the ``custom`` (OpenAI-compatible) provider requires an
-        explicit ``base_url``; otherwise the request silently falls back to
-        OpenAI's endpoint and fails with a confusing "connection failed".
+        Checks:
+        1. ``custom`` provider MUST have an explicit ``base_url``.
+        2. Known providers with a strict model-name contract (e.g. DeepSeek)
+           only accept the exact names listed in ``_PROVIDER_STRICT_MODEL_NAMES``.
         """
-        if data.get("provider") == "custom":
+        provider = data.get("provider", "")
+        model_name = data.get("model_name", "")
+
+        # 1. custom provider needs a base_url
+        if provider == "custom":
             base_url = data.get("base_url")
             if not base_url or not str(base_url).strip():
                 raise ValueError(
                     "自定义 (custom) 供应商必须填写 Base URL（OpenAI 兼容接口地址）"
+                )
+
+        # 2. strict model name check
+        if provider in self._PROVIDER_STRICT_MODEL_NAMES:
+            valid = self._PROVIDER_STRICT_MODEL_NAMES[provider]
+            if model_name and model_name not in valid:
+                raise ValueError(
+                    f"供应商 '{provider}' 仅接受以下模型名称: {', '.join(valid)}。"
+                    f"当前值 '{model_name}' 无效，请修改后重试。"
                 )
 
     async def configure_model(self, db: AsyncSession, data: dict) -> AIModelConfig:

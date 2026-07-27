@@ -55,7 +55,12 @@ def _model_to_dict(model) -> dict:
 
 @router.post("/models", status_code=201)
 async def create_model(data: AIModelConfigCreate, db: AsyncSession = Depends(get_db)):
-    model = await ai_service.configure_model(db, data.model_dump())
+    try:
+        model = await ai_service.configure_model(db, data.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40008, "message": "配置验证失败", "detail": str(e),
+        })
     return {"code": 0, "message": "success", "data": _model_to_dict(model)}
 
 
@@ -81,7 +86,12 @@ async def get_model(model_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/models/{model_id}")
 async def update_model(model_id: str, data: AIModelConfigUpdate, db: AsyncSession = Depends(get_db)):
-    model = await ai_service.update_model(db, model_id, data.model_dump(exclude_unset=True))
+    try:
+        model = await ai_service.update_model(db, model_id, data.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40008, "message": "配置验证失败", "detail": str(e),
+        })
     if not model:
         raise HTTPException(status_code=404, detail={
             "code": 40006, "message": "AI model not found",

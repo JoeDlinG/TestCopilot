@@ -215,7 +215,6 @@ class FlowViewport(BaseModel):
 
 
 class TestFlowCreate(BaseModel):
-    testcase_id: str
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     viewport: Optional[Dict[str, Any]] = None
