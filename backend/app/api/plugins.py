@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.schemas import PluginInstallRequest, PluginUpdateRequest
+from app.schemas.schemas import PluginInstallRequest, PluginUpdateRequest, DeviceCreate
 from app.services.plugin_service import plugin_service
+from app.services.device_service import device_service
 
 router = APIRouter(prefix="/api/plugins", tags=["Plugins"])
 
@@ -62,6 +63,25 @@ async def list_plugins(db: AsyncSession = Depends(get_db)):
 async def list_discovered_plugins():
     plugins = await plugin_service.list_discovered_plugins()
     return {"code": 0, "message": "success", "data": plugins}
+
+
+@router.get("/skills")
+async def list_plugin_skills():
+    """List available plugin skills (manual + AI test-case generation guide)."""
+    skills = plugin_service.list_plugin_skills()
+    return {"code": 0, "message": "success", "data": skills}
+
+
+@router.get("/skills/{protocol}")
+async def get_plugin_skill(protocol: str):
+    """Get the full skill + manual content for a plugin protocol."""
+    content = plugin_service.get_plugin_skill_content(protocol)
+    if not content:
+        raise HTTPException(status_code=404, detail={
+            "code": 40010, "message": "Plugin skill not found",
+            "detail": f"No skill for protocol '{protocol}'",
+        })
+    return {"code": 0, "message": "success", "data": content}
 
 
 @router.get("/{plugin_id}")
@@ -120,3 +140,43 @@ async def uninstall_plugin(plugin_id: str, db: AsyncSession = Depends(get_db)):
             "code": 40008, "message": "Plugin not found",
         })
     return {"code": 0, "message": "Plugin uninstalled", "data": None}
+
+
+@router.post("/{plugin_id}/add-device")
+async def add_device_from_plugin(plugin_id: str, db: AsyncSession = Depends(get_db)):
+    """Create a Device from the plugin's ``get_device_template()``."""
+    plugin = await plugin_service.get_plugin(db, plugin_id)
+    if not plugin:
+        raise HTTPException(status_code=404, detail={
+            "code": 40008, "message": "Plugin not found",
+            "detail": f"No plugin with id={plugin_id}",
+        })
+
+    try:
+        plugin_class = await plugin_service.load_plugin_class(plugin)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40009, "message": "Plugin file not found", "detail": str(e),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40009, "message": "Plugin load failed", "detail": str(e),
+        })
+
+    template = plugin_class().get_device_template() or {}
+    if not template:
+        raise HTTPException(status_code=400, detail={
+            "code": 40009, "message": "Plugin provides no device template",
+        })
+
+    try:
+        device = await device_service.create_device(db, DeviceCreate(**template))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40009, "message": "Failed to create device", "detail": str(e),
+        })
+
+    return {
+        "code": 0, "message": "Device created from plugin",
+        "data": device_service._model_to_response(device),
+    }

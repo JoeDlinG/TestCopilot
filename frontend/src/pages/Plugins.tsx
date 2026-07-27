@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   PlusOutlined, ReloadOutlined, PoweroffOutlined,
-  PlayCircleOutlined, AppstoreAddOutlined, InboxOutlined
+  PlayCircleOutlined, AppstoreAddOutlined, InboxOutlined, ApiOutlined
 } from '@ant-design/icons'
 import { pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
@@ -19,6 +19,8 @@ export default function Plugins() {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [form] = Form.useForm()
+  const [discovered, setDiscovered] = useState<any[]>([])
+  const [discovering, setDiscovering] = useState(false)
 
   const loadPlugins = async () => {
     setLoading(true)
@@ -32,7 +34,19 @@ export default function Plugins() {
     }
   }
 
-  useEffect(() => { loadPlugins() }, [])
+  const loadDiscovered = async () => {
+    setDiscovering(true)
+    try {
+      const res = await pluginAPI.discovered()
+      setDiscovered(extractData(res, []))
+    } catch (err) {
+      handleApiError(err, '扫描插件失败')
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  useEffect(() => { loadPlugins(); loadDiscovered() }, [])
 
   const handleToggle = async (plugin: Plugin) => {
     try {
@@ -69,6 +83,26 @@ export default function Plugins() {
       loadPlugins()
     } catch (err) {
       handleApiError(err, '安装失败')
+    }
+  }
+
+  const handleInstallDiscovered = async (item: any) => {
+    try {
+      await pluginAPI.installDiscovered(item)
+      message.success(`插件 ${item.name} 安装成功`)
+      loadPlugins()
+      loadDiscovered()
+    } catch (err) {
+      handleApiError(err, '安装失败')
+    }
+  }
+
+  const handleAddDevice = async (plugin: Plugin) => {
+    try {
+      await pluginAPI.addDevice(plugin.id)
+      message.success(`已从插件 "${plugin.name}" 创建设备`)
+    } catch (err) {
+      handleApiError(err, '创建设备失败')
     }
   }
 
@@ -116,14 +150,25 @@ export default function Plugins() {
       title: '操作',
       key: 'actions',
       render: (_: any, record: Plugin) => (
-        <Button
-          size="small"
-          type={(record as any).status === 'enabled' ? 'default' : 'primary'}
-          icon={<PoweroffOutlined />}
-          onClick={() => handleToggle(record)}
-        >
-          {(record as any).status === 'enabled' ? '禁用' : '启用'}
-        </Button>
+        <Space>
+          <Button
+            size="small"
+            type={(record as any).status === 'enabled' ? 'default' : 'primary'}
+            icon={<PoweroffOutlined />}
+            onClick={() => handleToggle(record)}
+          >
+            {(record as any).status === 'enabled' ? '禁用' : '启用'}
+          </Button>
+          <Button
+            size="small"
+            icon={<ApiOutlined />}
+            disabled={(record as any).status !== 'enabled'}
+            onClick={() => handleAddDevice(record)}
+            title="根据插件创建设备"
+          >
+            添加设备
+          </Button>
+        </Space>
       ),
     },
   ]
@@ -160,6 +205,46 @@ export default function Plugins() {
           <p>3. 将插件文件放入 <code>plugins/</code> 目录，通过下方表单安装</p>
           <p>参考示例：<code>plugins/example_plugin.py</code> (Modbus RTU 协议)</p>
         </div>
+      </Card>
+
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text strong>已发现的插件</Text>
+          <Button size="small" icon={<ReloadOutlined />} loading={discovering} onClick={loadDiscovered}>
+            扫描
+          </Button>
+        </div>
+        {discovered.length === 0 ? (
+          <Empty description="未在 plugins/ 目录发现可安装插件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <Table
+            dataSource={discovered}
+            rowKey={(r: any) => r.module_name}
+            pagination={false}
+            size="small"
+            columns={[
+              { title: '名称', dataIndex: 'name', key: 'name' },
+              { title: '版本', dataIndex: 'version', key: 'version',
+                render: (v: string) => <Tag color="blue">v{v}</Tag> },
+              { title: '协议', dataIndex: 'protocol_name', key: 'protocol_name',
+                render: (p: string) => <Tag>{p}</Tag> },
+              { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+              {
+                title: '操作', key: 'actions',
+                render: (_: any, record: any) => (
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<AppstoreAddOutlined />}
+                    onClick={() => handleInstallDiscovered(record)}
+                  >
+                    安装
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        )}
       </Card>
 
       <Card>

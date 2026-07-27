@@ -36,7 +36,10 @@ export const deviceAPI = {
 export const aiAPI = {
   listModels: () => api.get('/ai/models'),
   createModel: (data: any) => api.post('/ai/models', data),
+  updateModel: (id: string, data: any) => api.put(`/ai/models/${id}`, data),
+  deleteModel: (id: string) => api.delete(`/ai/models/${id}`),
   activateModel: (id: string) => api.post(`/ai/models/${id}/activate`),
+  testModel: (id: string) => api.post(`/ai/models/${id}/test`),
   chat: (data: any) => api.post('/ai/chat', data),
   generateTestCases: (data: any) => api.post('/ai/generate-testcases', data),
   naturalLanguageQuery: (data: any) => api.post('/ai/query', data),
@@ -56,6 +59,13 @@ export const testCaseAPI = {
   create: (data: any) => api.post('/testcases/', data),
   update: (id: string, data: any) => api.put(`/testcases/${id}`, data),
   delete: (id: string) => api.delete(`/testcases/${id}`),
+  generate: (data: any) => api.post('/testcases/generate', data),
+  // Flowchart
+  getFlow: (id: string) => api.get(`/testcases/${id}/flow`),
+  createFlow: (id: string, data: any) => api.post(`/testcases/${id}/flow`, data),
+  updateFlow: (id: string, data: any) => api.put(`/testcases/${id}/flow`, data),
+  // Code generation
+  generateCode: (id: string) => api.post(`/testcases/${id}/generate-code`),
 }
 
 // Execution APIs
@@ -83,13 +93,31 @@ export const reportAPI = {
   createTemplate: (data: any) => api.post('/reports/templates', data),
 }
 
+// System control APIs
+export const systemAPI = {
+  restart: () => api.post('/system/restart'),
+}
+
 // Plugin APIs
 export const pluginAPI = {
   list: () => api.get('/plugins/'),
   install: (data: any) => api.post('/plugins/install', data),
   discovered: () => api.get('/plugins/discovered'),
+  installDiscovered: (item: any) =>
+    api.post('/plugins/install', {
+      name: item.name,
+      version: item.version || '1.0.0',
+      description: item.description,
+      protocol_type: item.protocol_name,
+      file_path: item.file_path,
+      module_name: item.module_name,
+      class_name: item.class_name,
+    }),
   enable: (id: string) => api.post(`/plugins/${id}/enable`),
   disable: (id: string) => api.post(`/plugins/${id}/disable`),
+  addDevice: (id: string) => api.post(`/plugins/${id}/add-device`),
+  listSkills: () => api.get('/plugins/skills'),
+  getSkill: (protocol: string) => api.get(`/plugins/skills/${protocol}`),
 }
 
 export default api

@@ -25,6 +25,7 @@ from app.schemas.schemas import (
     TestFlowCreate, TestFlowUpdate, TestFlowResponse,
 )
 from app.services.testgen_service import testgen_service
+from app.services.codegen_service import codegen_service
 
 router = APIRouter(prefix="/api/testcases", tags=["Test Cases"])
 
@@ -300,5 +301,41 @@ async def update_test_flow(
             "id": flow.id, "testcase_id": flow.testcase_id,
             "nodes": _parse_json(flow.nodes), "edges": _parse_json(flow.edges),
             "viewport": _parse_json(flow.viewport),
+        },
+    }
+
+
+# ============ Code Generation ============
+
+@router.post("/{test_case_id}/generate-code")
+async def generate_flow_code(test_case_id: str, db: AsyncSession = Depends(get_db)):
+    """Generate executable Python code from a test case's flowchart."""
+    tc_result = await db.execute(select(TestCase).where(TestCase.id == test_case_id))
+    tc = tc_result.scalar_one_or_none()
+    if not tc:
+        raise HTTPException(status_code=404, detail={
+            "code": 40004, "message": "Test case not found",
+        })
+
+    flow_result = await db.execute(select(TestFlow).where(TestFlow.testcase_id == test_case_id))
+    flow = flow_result.scalar_one_or_none()
+    if not flow:
+        raise HTTPException(status_code=404, detail={
+            "code": 40004, "message": "Flow not found — save a flowchart first",
+        })
+
+    nodes = _parse_json(flow.nodes) or []
+    edges = _parse_json(flow.edges) or []
+
+    code = codegen_service.generate_python(nodes, edges, test_case_name=tc.name)
+    summary = codegen_service.generate_json_summary(nodes, edges, name=tc.name)
+
+    return {
+        "code": 0, "message": "success",
+        "data": {
+            "test_case_id": test_case_id,
+            "test_case_name": tc.name,
+            "code": code,
+            "summary": summary,
         },
     }

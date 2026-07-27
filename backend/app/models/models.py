@@ -120,6 +120,8 @@ class ModelProvider(str, enum.Enum):
     HUNYUAN = "hunyuan"
     QWEN = "qwen"
     ERNIE = "ernie"
+    DEEPSEEK = "deepseek"
+    MINIMAX = "minimax"
     CUSTOM = "custom"
 
 

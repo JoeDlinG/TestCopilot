@@ -1,0 +1,123 @@
+# 项目看板 — AITestLab
+
+> 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
+> 最后更新：2026-07-25
+
+---
+
+## 📌 看板总览
+
+| 状态 | 含义 |
+|------|------|
+| 🔲 待办 (To Do) | 已规划，尚未开始 |
+| 🔧 进行中 (In Progress) | 正在开发/调试 |
+| ✅ 已完成 (Done) | 已实现并通过验证 |
+
+---
+
+## 🔲 待办 (To Do)
+
+- [ ] 端到端集成测试（设备 → AI 生成用例 → 执行 → 报告）
+- [ ] API Key 加密存储（当前明文，后端 `ai_service` 有 `TODO: encrypt`）
+- [ ] 性能优化（启动速度、大数据量日志渲染）
+- [ ] 国际化（中英文界面切换）
+- [ ] 打包与安装程序制作
+- [ ] 更多仪器驱动适配（示波器/万用表/信号发生器等真实型号）
+- [ ] CI/CD 流水线搭建
+- [ ] 插件进程隔离沙箱（当前为同步加载，无独立进程）
+- [ ] 语音输入对接（当前仅占位，未接浏览器录音上传）
+
+---
+
+## 🔧 进行中 (In Progress)
+
+- [ ] 调试终端多窗口增强（后台 unsolicited 数据轮询稳定性优化）
+- [ ] 通信日志大数据量分页与导出性能
+
+---
+
+## ✅ 已完成 (Done)
+
+### 基础设施 (M0)
+- [x] 后端 FastAPI 框架、配置、数据库（SQLite WAL）、ORM 模型（11 表）
+- [x] 前端 Vite + React + TS + Ant Design 脚手架、路由、布局、状态管理
+- [x] 通信协议层：SCPI / CAN / 串口 / 以太网
+- [x] 设备管理服务与 CRUD API、前端设备管理页
+- [x] AI 服务抽象层（Provider 工厂）、对话、用例生成、NL 查询
+- [x] 测试用例系统（CRUD + ReactFlow 流程图）
+- [x] 测试执行引擎（顺序/并行/条件/循环、变量、钩子、WebSocket 监控）
+- [x] 通信日志系统（SQLite + CSV 双写、查询、导出）
+- [x] 测试报告系统（Jinja2 / docx、模板管理）
+- [x] 插件系统（SDK、管理器、API、前端页、Modbus 示例）
+
+### 调试终端 (2026-07-09 ~ 07-10)
+- [x] WebSocket 终端端点 `/ws/terminal/{device_id}` 与前端多窗口终端
+- [x] Python 3.8 兼容（`asyncio.to_thread` → `run_in_executor`）
+- [x] 串口发送阻塞修复（`read_until` + fallback `read`）
+
+### 日志与诊断 (2026-07-11)
+- [x] 通信文件日志 `com_logger.py`（旋转、线程安全）
+- [x] 前端时间戳毫秒级显示
+- [x] 设备连接诊断（串口权限、Mock 设备）
+
+### 自定义协议插件 + AI 模型配置前端 (2026-07-20 上午)
+- [x] `BaseProtocolPlugin` 基类补齐（原被引用但未定义）
+- [x] Mini Gateway 100 协议插件（22 条命令，板卡 ID 默认 11，波特率默认 115200）
+- [x] `device_service` 路由非标准协议到插件实例
+- [x] `POST /api/plugins/{id}/add-device` 按模板一键创建设备
+- [x] 前端插件管理：已发现插件一键安装、添加设备
+- [x] 前端「模型配置」页（CRUD / 测试 / 设为默认）
+
+### AI 模型增强 + 对话修复 (2026-07-20)
+- [x] 新增供应商：**DeepSeek**、**MiniMax**（均 OpenAI 兼容，已加入后端 `ProviderFactory` 与前端 `PROVIDERS`）
+- [x] 前端「模型配置」新增**对话测试窗口**（Drawer，可直接与该模型对话验证）
+- [x] **修复 AI 助手发送无响应**
+- [x] 前端 `tsc --noEmit` 通过
+
+### 修复插件「Plugin class not found」+ 插件 Skill 体系 (2026-07-25)
+- [x] 修复 `_load_plugin_module` 返回值语义错误
+- [x] 插件类 4 级解析回退 + 文件路径 4 级解析回退
+- [x] 插件手册与 Skill 体系（manuals/ + skills/）
+- [x] AI 助手集成插件 Skill（前端多选器 + 后端关键词自动检测注入）
+- [x] 真实硬件端到端验证
+
+### 修复 AI 模型「连接失败」+ 重置/Key 问题 (2026-07-25 ~ 07-27)
+- [x] `ProviderFactory` 新增 `DEFAULT_BASE_URLS`；JoeAI 指向 DeepSeek
+- [x] `AIModelConfigUpdate` 增加 `provider`、`model_name` 字段
+- [x] `test_model` 返回真实错误；`custom` 缺 Base URL 后端拒绝
+- [x] `PROVIDERS.deepseek` 提示更新为 `deepseek-v4-pro / deepseek-v4-flash`
+- [x] **修复重置软件进程未完全关闭**：`restart_helper.py` 按端口 + 进程树 kill（解决 reload 模式 worker 残留）
+- [x] **修复 API Key 显示为空**：前端编辑时以掩码显示已保存 Key，提交时保留原 Key 不变
+- [x] **修复模型测试 400**：动态 placeholder 按供应商提示有效模型名，切换供应商清空旧名
+
+### 测试用例流程图增强 (2026-07-27)
+- [x] **AI 驱动流程图生成**：AI 从自然语言需求生成含判断/循环/分支的完整流程图节点
+- [x] **流程图编辑器重写**：自定义 ReactFlow 节点（Start/Action/Condition/Loop/End），左侧节点面板拖拽添加
+- [x] **判断节点**：菱形渲染，支持条件表达式编辑、true/false 分支
+- [x] **循环节点**：for/while 循环，条件表达式编辑
+- [x] **可执行代码输出**：`POST /api/testcases/{id}/generate-code` 从流程图生成 Python 测试脚本
+- [x] **代码生成器**：遍历流程图拓扑结构，生成完整的 if/else/for/while 和执行步骤的 Python 代码
+
+---
+
+## 🗺️ 近期计划 (Roadmap)
+
+| 优先级 | 计划项 | 说明 |
+|--------|--------|------|
+| P0 | 端到端集成测试 | 打通"需求 → AI 用例 → 执行 → 报告"主链路 |
+| P0 | API Key 加密 | 生产环境必须，避免明文存储 |
+| P1 | 更多仪器驱动 | 真实型号 SCPI 指令集适配 |
+| P1 | 插件进程隔离 | 提升稳定性与安全性 |
+| P2 | 国际化 | 中英界面 |
+| P2 | 打包分发 | 安装程序 / 容器镜像 |
+| P3 | CI/CD | 自动化测试与发布 |
+
+---
+
+## 📊 进度统计（估算）
+
+- 核心模块完成度：~85%（9 大模块均已落地，待集成测试与加固）
+- 后端 API 端点：~45 个
+- 数据库表：11 张
+- 已接入 AI 供应商：OpenAI / Anthropic / Ollama / LocalAI / vLLM / 混元 / 通义 / 文心 / **DeepSeek** / **MiniMax** / 自定义
+- 自定义协议插件：Modbus RTU（示例）、Mini Gateway 100

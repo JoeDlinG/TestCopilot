@@ -17,7 +17,11 @@ from app.communication import (
     create_interface,
     CommunicationInterface,
 )
+from app.services.plugin_service import plugin_service
 from app.services.com_logger import com_logger
+
+# Protocols handled natively by the communication layer (not by plugins).
+_STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +110,15 @@ class DeviceService:
         return ""
 
     def _get_connect_config(self, device: Device, config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Build config dict for connection, merging device info with user-supplied config."""
+        """Build config dict for connection, merging device info with user-supplied config.
+
+        The device's stored config (JSON) is always used as the base so that
+        plugin devices (e.g. created via "add device from plugin") keep their
+        port/baudrate/board_id defaults; user-supplied config overrides it.
+        """
         merged = {}
-        if device.protocol == "usb":
-            # Extract VID/PID from device's serial_port field (which stores usb_device_path or vid:pid)
-            # Or from config JSON
-            existing = self._parse_json_field(device.config) or {}
+        existing = self._parse_json_field(device.config)
+        if isinstance(existing, dict):
             merged.update(existing)
         if config:
             merged.update(config)
@@ -208,14 +215,27 @@ class DeviceService:
             # Build merged config
             merged_config = self._get_connect_config(device, config)
 
-            # Create communication interface
-            interface = create_interface(
-                protocol=device.protocol,
-                address=self._get_address(device),
-                port=device.port,
-                config=merged_config,
-            )
-            await interface.connect()
+            # Create communication interface. Custom protocols are handled by
+            # an installed + enabled plugin (matched on protocol_name).
+            if device.protocol in _STANDARD_PROTOCOLS:
+                interface = create_interface(
+                    protocol=device.protocol,
+                    address=self._get_address(device),
+                    port=device.port,
+                    config=merged_config,
+                )
+                await interface.connect()
+            else:
+                plugin_class = await plugin_service.get_plugin_class_by_protocol(
+                    db, device.protocol
+                )
+                if plugin_class is None:
+                    raise ValueError(
+                        f"未找到协议 '{device.protocol}' 对应的已启用插件。"
+                        "请先在「插件管理」中安装并启用对应插件。"
+                    )
+                interface = plugin_class()
+                await interface.connect(merged_config or {})
             _active_connections[device.id] = interface
 
             device.status = DeviceStatus.CONNECTED.value

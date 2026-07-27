@@ -8,8 +8,8 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 |------|------|
 | **设备连接** | 支持可编程电源、示波器、万用表、电子负载、信号发生器，集成 PCAN/Vector/CAN/LIN/串口/以太网工具链 |
 | **多接口通信** | SCPI (PyVISA)、CAN/CAN FD (python-can)、串口 RS232/RS485 (pyserial)、以太网 TCP/UDP |
-| **插件扩展** | Python 插件 SDK，动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱 |
-| **AI 大模型** | 支持 OpenAI/Ollama/Anthropic 及国产模型（混元/通义千问等），Provider 抽象 + Fallback 机制 |
+| **插件扩展** | Python 插件 SDK（`BaseProtocolPlugin` 基类），动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱；支持自定义协议一键创建设备 |
+| **AI 大模型** | 支持 OpenAI/Ollama/Anthropic 及国产模型（混元/通义千问/文心/LocalAI/vLLM 等），Provider 抽象 + Fallback 机制；前端模型管理页（API Key 配置/测试/默认切换） |
 | **测试用例生成** | 文字/语音输入需求 → AI 自动生成结构化测试用例 → ReactFlow 流程图可视化编辑 |
 | **测试执行引擎** | 顺序/并行/条件/循环执行，变量系统，钩子系统，WebSocket 实时仪表盘监控 |
 | **通信日志** | SQLite + CSV 双写，通信数据实时记录，keyset 分页查询，CSV 批量导出 |
@@ -89,6 +89,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 DEFAULT_AI_PROVIDER=ollama
 ```
 
+> 除环境变量外，也可在前端「模型配置」页面可视化地添加/编辑/测试 AI 模型（支持 OpenAI、Anthropic、Ollama、LocalAI、vLLM、腾讯混元、阿里通义千问、百度文心一言及任意 OpenAI 兼容端点），并设置默认模型供 AI 助手使用。
+
 ## 项目结构
 
 ```
@@ -107,8 +109,8 @@ AITestLab/
 │   │   │   ├── ExecutionMonitorPage.tsx # 实时执行监控
 │   │   │   ├── LogsPage.tsx           # 通信日志查询
 │   │   │   ├── ReportsPage.tsx        # 报告管理
-│   │   │   ├── AIConfigPage.tsx       # AI 模型配置
-│   │   │   └── PluginsPage.tsx        # 插件管理
+│   │   │   ├── ModelConfig.tsx        # AI 模型配置管理
+│   │   │   └── Plugins.tsx            # 插件管理
 │   │   ├── services/                  # API 调用服务
 │   │   ├── stores/                    # Zustand 状态管理
 │   │   ├── types/                     # TypeScript 类型定义
@@ -154,7 +156,8 @@ AITestLab/
 │   │   └── main.py                    # FastAPI 应用入口
 │   ├── plugins/                       # 用户插件目录
 │   │   ├── __init__.py
-│   │   └── example_plugin.py          # Modbus RTU 示例插件
+│   │   ├── example_plugin.py          # Modbus RTU 示例插件
+│   │   └── mini_gateway100_plugin.py  # Mini Gateway 100 协议插件
 │   ├── requirements.txt
 │   └── run.py
 │
@@ -178,7 +181,7 @@ AITestLab/
 | 测试执行 | `/api/executions` | 创建执行、启动/停止、状态查询、步骤结果 |
 | 通信日志 | `/api/logs` | 日志查询（分页/筛选）、CSV 导出 |
 | 测试报告 | `/api/reports` | 报告生成、模板 CRUD、报告下载 |
-| 插件 | `/api/plugins` | 插件列表、安装、启用/禁用、配置 |
+| 插件 | `/api/plugins` | 插件列表、安装（含已发现插件扫描）、启用/禁用、按模板一键创建设备 |
 
 **WebSocket 端点**:
 - `ws://localhost:8000/ws/executions/{id}` — 测试执行实时监控
@@ -206,47 +209,56 @@ AITestLab/
 
 ## 插件开发
 
-AITestLab 支持通过 Python 插件扩展通信协议。开发一个自定义协议插件只需 3 步：
+AITestLab 支持通过 Python 插件扩展自定义通信协议。插件继承 `BaseProtocolPlugin` 基类，并实现 `connect` / `disconnect` / `send` 等接口；设备服务在连接 `protocol` 为非标准协议（如 `mini_gateway100`）时，会自动加载并启用对应的插件实例作为通信后端。
+
+开发一个自定义协议插件只需 3 步：
 
 ### 1. 继承基类
 
 ```python
-from app.communication import CommunicationInterface
+from app.services.plugin_service import BaseProtocolPlugin
 
-class MyProtocolPlugin(CommunicationInterface):
-    name = "my_protocol"
-    description = "自定义协议驱动"
+class MyProtocolPlugin(BaseProtocolPlugin):
+    plugin_name = "My Protocol"
+    protocol_name = "my_protocol"   # 设备 protocol 字段使用该值
+    version = "1.0.0"
 
-    async def connect(self) -> None:
-        # 建立连接逻辑
-        pass
+    async def connect(self, config: dict) -> bool:
+        # 使用 config 建立连接（串口/以太网/...）
+        return True
 
-    async def disconnect(self) -> None:
-        # 断开连接逻辑
-        pass
+    async def disconnect(self) -> bool:
+        return True
 
-    async def send(self, command: str) -> None:
-        # 发送命令逻辑
-        pass
-
-    async def receive(self) -> str:
-        # 接收响应逻辑
+    async def send(self, data) -> any:
+        # data 可为原始字符串或 {"command": "...", "parameters": [...]}
+        # 返回解析后的响应
         return ""
+
+    # 可选：为 UI 提供连接配置 schema / 设备模板 / 命令帮助
+    def get_config_schema(self) -> dict: ...
+    def get_device_template(self) -> dict: ...
+    def get_commands(self) -> list: ...
 ```
 
 ### 2. 放入插件目录
 
-将 `.py` 文件放入 `backend/plugins/` 目录。
+将 `.py` 文件放入 `backend/plugins/` 目录。重启后端后，可在「插件管理 → 已发现的插件」中一键安装，启用后通过「添加设备」按钮按插件模板自动创建设备。
 
 ### 3. 通过 API 安装
 
 ```bash
 curl -X POST http://localhost:8000/api/plugins/install \
   -H "Content-Type: application/json" \
-  -d '{"plugin_path": "plugins/my_protocol.py"}'
+  -d '{"name": "My Protocol", "version": "1.0.0", "protocol_type": "my_protocol", "file_path": "plugins/my_protocol.py", "module_name": "my_protocol", "class_name": "MyProtocolPlugin"}'
 ```
 
-参考 `backend/plugins/example_plugin.py` (Modbus RTU 示例)。
+### 内置插件示例
+
+- `backend/plugins/example_plugin.py` — Modbus RTU 示例插件
+- `backend/plugins/mini_gateway100_plugin.py` — **Mini Gateway 100** 协议插件，实现手册定义的 `@<ID>_<CMD>=<PARAMS>;` 命令集（HELLO/SYSID/PSUV/PSDV/ETH/RTC/STORAGE/SETDIG/CLRDIG/GETDIG/CALBRT/GETVOLT/SETVOLT/OPEN/CLOSE/CONFIG/TSTRT/TSTOP/MSGTX/MSGRX 共 22 条）。板卡 ID 可配置（默认 `11`），USB-C 主机口波特率默认 `115200` 可选。PSU RS-232 电源开关命令按需求暂未实现。
+
+参考 `backend/plugins/example_plugin.py` 与 `backend/plugins/mini_gateway100_plugin.py`。
 
 ## 配置说明
 

@@ -3,10 +3,13 @@
 Aligned with ARCHITECTURE.md — modular API, WebSocket, communication layer.
 """
 import os
+import sys
+import asyncio
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -104,3 +107,39 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "version": settings.APP_VERSION}
+
+
+# ---------------------------------------------------------------------------
+# System control: restart the backend process (used by the UI "Reset Software"
+# button). We spawn a detached helper that kills the current server and
+# relaunches it, so the HTTP request can return before the process dies.
+# ---------------------------------------------------------------------------
+RESTART_HELPER = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "restart_helper.py"
+)
+
+
+@app.post("/api/system/restart")
+async def restart_system():
+    if not os.path.exists(RESTART_HELPER):
+        raise HTTPException(status_code=500, detail="restart helper not found")
+    try:
+        subprocess.Popen(
+            [sys.executable, RESTART_HELPER],
+            cwd=os.path.dirname(RESTART_HELPER),
+            start_new_session=True,
+            stdout=open("/tmp/aitestlab_restart.log", "a"),
+            stderr=subprocess.STDOUT,
+        )
+    except Exception as e:
+        logger.error(f"Failed to spawn restart helper: {e}")
+        raise HTTPException(status_code=500, detail=f"restart failed: {e}")
+
+    async def _terminate():
+        # Let the response flush, then take the current process down so the
+        # helper (which is in its own session) can relaunch a clean instance.
+        await asyncio.sleep(0.5)
+        os._exit(0)
+
+    asyncio.create_task(_terminate())
+    return {"code": 0, "message": "restarting", "data": None}

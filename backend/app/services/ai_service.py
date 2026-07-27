@@ -12,26 +12,298 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.models import AIModelConfig, ChatHistory, TestCase, ChatInputType
+from app.models.models import AIModelConfig, ChatHistory, TestCase, ChatInputType, generate_short_id
 from app.ai import ai_provider_factory, AIProvider
 from app.core.exceptions import AIModelNotFoundError, AICallError
+from app.services.plugin_service import plugin_service
 
 logger = logging.getLogger(__name__)
+
+
+def _build_skill_context(
+    skill_protocols: Optional[List[str]],
+    *,
+    auto_detect_text: Optional[str] = None,
+) -> str:
+    """Assemble plugin skill + manual markdown into an AI context block.
+
+    ``skill_protocols`` are explicitly requested protocols; if
+    ``auto_detect_text`` is given, skills whose name/keywords appear in the
+    text are auto-attached as well (so "用 Mini Gateway 100 生成测试用例"
+    works without manual import).
+    """
+    protocols: List[str] = list(skill_protocols or [])
+    if auto_detect_text:
+        try:
+            for p in plugin_service.match_skills_for_text(auto_detect_text):
+                if p not in protocols:
+                    protocols.append(p)
+        except Exception as e:
+            logger.warning(f"Skill auto-detection failed: {e}")
+
+    sections = []
+    for protocol in protocols:
+        try:
+            content = plugin_service.get_plugin_skill_content(protocol)
+        except Exception as e:
+            logger.warning(f"Failed to load skill '{protocol}': {e}")
+            continue
+        if not content:
+            continue
+        part = f"## 设备 Skill: {content['name']} (protocol: {protocol})\n\n{content['skill']}"
+        if content.get("manual"):
+            part += f"\n\n## 设备使用手册: {content['name']}\n\n{content['manual']}"
+        sections.append(part)
+
+    if not sections:
+        return ""
+    return (
+        "# 已导入的设备插件知识（Skill / 使用手册）\n\n"
+        "生成测试用例或回答设备相关问题时，必须严格遵循以下设备的命令格式、"
+        "协议约束与测试流程：\n\n" + "\n\n---\n\n".join(sections)
+    )
+
+
+def _provider_with_min_tokens(model, min_tokens: int):
+    """Build a provider for ``model`` but guarantee a sane ``max_tokens`` floor.
+
+    Reasoning-capable models (e.g. DeepSeek-R1/v4) spend a large share of the
+    output budget on ``reasoning_content``; if the configured ``max_tokens`` is
+    too small the final ``content`` (or the JSON payload) gets truncated, which
+    previously produced empty test-case results. We therefore enforce a minimum
+    so the model always has room to emit a complete answer.
+    """
+    params: dict = {}
+    if model.parameters:
+        try:
+            params = json.loads(model.parameters)
+        except (json.JSONDecodeError, TypeError):
+            params = {}
+    if not isinstance(params, dict):
+        params = {}
+    try:
+        cur = int(params.get("max_tokens") or 0)
+    except (TypeError, ValueError):
+        cur = 0
+    if cur < min_tokens:
+        params["max_tokens"] = min_tokens
+    return ai_provider_factory.create(
+        provider=model.provider,
+        model_name=model.model_name,
+        api_key=model.api_key_encrypted,
+        base_url=model.base_url,
+        parameters=params,
+    )
+
+
+def _slice_balanced(s: str, start: int, open_ch: str, close_ch: str) -> Optional[str]:
+    """Return ``s[start:]`` up to the bracket matching ``open_ch`` at ``start``."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return None
+
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Best-effort extraction of a JSON object from arbitrary model output.
+
+    Robust to: markdown code fences, surrounding prose, a bare JSON array
+    ``[{...}]`` (wrapped into ``{"test_cases": [...]}``), the canonical
+    ``{"test_cases": [...]}`` shape, and a lone JSON object.
+    """
+    if not text or not text.strip():
+        return None
+    s = text.strip()
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", s)
+    if fence:
+        s = fence.group(1).strip()
+
+    # 1) Direct parse
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+        if isinstance(obj, list):
+            return {"test_cases": obj}
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 2) {"test_cases": [...]}
+    m = re.search(r'\{\s*"test_cases"\s*:\s*\[', s)
+    if m:
+        sub = _slice_balanced(s, m.start(), "{", "}")
+        if sub is not None:
+            try:
+                obj = json.loads(sub)
+                if isinstance(obj, dict):
+                    return obj
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    # 3) Bare top-level JSON array
+    m = re.search(r"\[\s*\{", s)
+    if m:
+        sub = _slice_balanced(s, m.start(), "[", "]")
+        if sub is not None:
+            try:
+                arr = json.loads(sub)
+                if isinstance(arr, list):
+                    return {"test_cases": arr}
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    # 4) First balanced object as last resort
+    m = re.search(r"\{", s)
+    if m:
+        sub = _slice_balanced(s, m.start(), "{", "}")
+        if sub is not None:
+            try:
+                obj = json.loads(sub)
+                if isinstance(obj, dict):
+                    return obj
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    return None
+
+
+def _normalize_test_cases(parsed: dict) -> dict:
+    """Normalize whatever the model returned into a stable test-case structure.
+
+    Guarantees each case has ``name``, ``description``, ``steps`` (list of
+    ``{step_number, action, expected_result, parameters, device_type}``),
+    ``expected_result``, ``parameters``, ``devices_required``, ``tags`` and
+    ``flow_description`` — so both the UI render and the save endpoint receive a
+    predictable shape even when the model uses alternate key names
+    (``testCaseId``, ``expectedResults``, string-only steps, ...).
+    """
+    raw_list = parsed.get("test_cases") if isinstance(parsed, dict) else None
+    if not isinstance(raw_list, list):
+        if isinstance(parsed, dict) and any(
+            k in parsed for k in ("name", "testCaseId", "title", "description")
+        ):
+            raw_list = [parsed]
+        else:
+            raw_list = []
+
+    cases = []
+    for idx, raw in enumerate(raw_list, 1):
+        if not isinstance(raw, dict):
+            continue
+        name = (
+            raw.get("name")
+            or raw.get("testCaseId")
+            or raw.get("title")
+            or f"测试用例 {idx}"
+        )
+        description = raw.get("description") or raw.get("summary") or ""
+        steps_raw = raw.get("steps") or []
+        steps = []
+        if isinstance(steps_raw, list):
+            for si, st in enumerate(steps_raw, 1):
+                if isinstance(st, dict):
+                    steps.append({
+                        "step_number": st.get("step_number") or si,
+                        "action": st.get("action") or st.get("description")
+                        or st.get("step") or "",
+                        "expected_result": st.get("expected_result")
+                        or st.get("expectedResult") or st.get("expected") or "",
+                        "parameters": st.get("parameters") or {},
+                        "device_type": st.get("device_type"),
+                    })
+                elif isinstance(st, str):
+                    steps.append({
+                        "step_number": si,
+                        "action": st,
+                        "expected_result": "",
+                        "parameters": {},
+                        "device_type": None,
+                    })
+        expected_result = (
+            raw.get("expected_result")
+            or raw.get("expectedResult")
+            or raw.get("expectedResults")
+            or ""
+        )
+        parameters = raw.get("parameters") or {}
+        devices_required = raw.get("devices_required") or raw.get("devicesRequired") or []
+        tags = raw.get("tags") or []
+        flow_description = (
+            raw.get("flow_description")
+            or raw.get("flowDescription")
+            or description
+        )
+        cases.append({
+            "name": name,
+            "description": description,
+            "steps": steps,
+            "expected_result": expected_result,
+            "parameters": parameters if isinstance(parameters, dict) else {},
+            "devices_required": devices_required if isinstance(devices_required, list) else [],
+            "tags": tags if isinstance(tags, list) else [],
+            "flow_description": flow_description,
+        })
+    return {"test_cases": cases}
 
 
 class AIService:
     """Unified AI service for local and cloud models."""
 
+    def _validate_model_config(self, data: dict) -> None:
+        """Reject configurations that cannot possibly connect.
+
+        In particular, the ``custom`` (OpenAI-compatible) provider requires an
+        explicit ``base_url``; otherwise the request silently falls back to
+        OpenAI's endpoint and fails with a confusing "connection failed".
+        """
+        if data.get("provider") == "custom":
+            base_url = data.get("base_url")
+            if not base_url or not str(base_url).strip():
+                raise ValueError(
+                    "自定义 (custom) 供应商必须填写 Base URL（OpenAI 兼容接口地址）"
+                )
+
     async def configure_model(self, db: AsyncSession, data: dict) -> AIModelConfig:
         # Set api_key_encrypted separately from api_key field
         api_key = data.pop("api_key", None)
         parameters = data.pop("parameters", None)
+        is_default = data.pop("is_default", False)
+
+        self._validate_model_config(data)
 
         model = AIModelConfig(**data)
         if api_key:
             model.api_key_encrypted = api_key  # TODO: encrypt in production
         if parameters:
             model.parameters = json.dumps(parameters, ensure_ascii=False)
+
+        # If this model is set as default, deactivate all others
+        if is_default:
+            model.is_default = True
+            all_models = await self.list_models(db)
+            for m in all_models:
+                m.is_default = False
+
         db.add(model)
         await db.commit()
         await db.refresh(model)
@@ -41,6 +313,13 @@ class AIService:
         model = await self.get_model(db, model_id)
         if not model:
             return None
+
+        # Validate the effective configuration (provider may change to custom)
+        effective = {
+            "provider": data.get("provider", model.provider),
+            "base_url": data.get("base_url", model.base_url),
+        }
+        self._validate_model_config(effective)
 
         for key, value in data.items():
             if key == "parameters" and value is not None:
@@ -107,7 +386,12 @@ class AIService:
         )
 
     async def test_model(self, db: AsyncSession, model_id: str) -> dict:
-        """Test if a model is reachable and working."""
+        """Test if a model is reachable and working.
+
+        Returns ``{"model_id", "status", "error"}`` where ``error`` carries the
+        concrete failure reason (e.g. invalid API key, wrong model name,
+        unreachable host) so the user can fix the configuration.
+        """
         model = await self.get_model(db, model_id)
         if not model:
             raise AIModelNotFoundError(model_id)
@@ -115,11 +399,18 @@ class AIService:
         try:
             provider = self._get_provider(model)
             is_ok = await provider.test_connection()
+            error = getattr(provider, "last_error", None)
 
+            # Reset status to active on success; mark error on failure
+            model.status = "active" if is_ok else "error"
             model.last_tested_at = None  # Will be set on commit
             await db.commit()
 
-            return {"model_id": model_id, "status": "ok" if is_ok else "failed"}
+            return {
+                "model_id": model_id,
+                "status": "ok" if is_ok else "failed",
+                "error": error,
+            }
         except Exception as e:
             model.status = "error"
             await db.commit()
@@ -133,12 +424,30 @@ class AIService:
         session_id: Optional[str] = None,
         system_prompt: Optional[str] = None,
         input_type: str = "text",
+        skill_protocols: Optional[List[str]] = None,
     ) -> dict:
         model = await self.get_model(db, model_id)
         if not model:
             raise AIModelNotFoundError(model_id)
 
-        provider = self._get_provider(model)
+        # Attach plugin skills: explicitly imported ones + auto-detected from
+        # the user's message (e.g. mentions "Mini Gateway 100").
+        skill_context = _build_skill_context(
+            skill_protocols, auto_detect_text=message
+        )
+        if skill_context:
+            system_prompt = (
+                f"{system_prompt}\n\n{skill_context}" if system_prompt else skill_context
+            )
+
+        # A chat session must have an id so history can be grouped; if the
+        # client didn't supply one (e.g. the very first message), generate it.
+        # This also satisfies the NOT NULL constraint on chat_history.session_id.
+        if not session_id:
+            session_id = generate_short_id("sess")
+
+        # Reasoning models need headroom or long answers get truncated.
+        provider = _provider_with_min_tokens(model, 4096)
 
         # Save user message
         chat_msg = ChatHistory(
@@ -195,6 +504,7 @@ class AIService:
         model_id: Optional[str],
         requirements: str,
         available_devices: Optional[List[Dict[str, Any]]] = None,
+        skill_protocols: Optional[List[str]] = None,
     ) -> dict:
         # Use active model if none specified
         if model_id:
@@ -205,7 +515,9 @@ class AIService:
         if not model:
             raise AIModelNotFoundError(model_id or "default")
 
-        provider = self._get_provider(model)
+        # Reasoning models burn tokens on reasoning_content; give generation a
+        # large budget so the JSON payload is never truncated.
+        provider = _provider_with_min_tokens(model, 8192)
 
         system_prompt = """You are a test automation expert. Generate structured test cases from the given requirements.
 Output MUST be valid JSON in the following format:
@@ -220,7 +532,26 @@ Output MUST be valid JSON in the following format:
                     "action": "Specific action to perform (e.g., Set power supply to 12V)",
                     "expected_result": "Expected outcome of this step",
                     "parameters": {},
-                    "device_type": "Type of device used (optional)"
+                    "device_type": "Type of device used (optional)",
+                    "flow_type": "action"
+                },
+                {
+                    "step_number": 2,
+                    "action": "Check if voltage > 10V",
+                    "expected_result": "Condition is true",
+                    "flow_type": "condition",
+                    "condition": "voltage > 10",
+                    "true_branch": "Proceed to step 3",
+                    "false_branch": "Report low voltage error"
+                },
+                {
+                    "step_number": 3,
+                    "action": "Repeat measurement 3 times",
+                    "flow_type": "loop",
+                    "loop_type": "for",
+                    "loop_variable": "i",
+                    "loop_expression": "3",
+                    "loop_body": "Measure and log voltage"
                 }
             ],
             "expected_result": "Overall expected test result",
@@ -231,7 +562,24 @@ Output MUST be valid JSON in the following format:
         }
     ]
 }
-Generate comprehensive test cases covering normal, edge, and error scenarios."""
+
+Flow type rules:
+- "action" — a normal sequential step (send command, read value, log, etc.).
+- "condition" — an if/else branch point. Must include "condition" (Python expression), "true_branch" (what to do if true), and "false_branch" (what to do if false).
+- "loop" — a repeating block. Must include "loop_type" ("for" or "while"), "loop_variable" (for "for" loops), "loop_expression" (the range or while condition), and "loop_body" (what to repeat).
+- Omit "flow_type" for normal steps; defaults to "action".
+
+Use condition/loop nodes wherever the requirements naturally involve decisions or repetitions.
+
+IMPORTANT: Output ONLY a single JSON object whose top-level key is "test_cases" (an array). Do NOT output a bare JSON array, do NOT wrap the output in markdown code fences, and do NOT include any explanatory text outside the JSON object."""
+
+        # Attach plugin skills (explicit + auto-detected from requirements) so
+        # generated test cases follow the device's real command protocol.
+        skill_context = _build_skill_context(
+            skill_protocols, auto_detect_text=requirements
+        )
+        if skill_context:
+            system_prompt += f"\n\n{skill_context}"
 
         devices_info = ""
         if available_devices:
@@ -248,16 +596,18 @@ Generate comprehensive test cases covering normal, edge, and error scenarios."""
         except Exception as e:
             raise AICallError(model.provider, str(e))
 
-        # Parse JSON from response
-        try:
-            json_match = re.search(r'\{[\s\S]*\}', response_text)
-            if json_match:
-                parsed = json.loads(json_match.group())
-            else:
-                parsed = {"test_cases": []}
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse AI response as JSON")
+        # Parse JSON from response (robust to fences / bare arrays / truncation)
+        response_text = response_text or ""
+        parsed_raw = _extract_json_object(response_text)
+        if parsed_raw is None:
+            logger.warning(
+                "Failed to parse AI test-case response as JSON (len=%d); "
+                "returning empty test_cases.",
+                len(response_text),
+            )
             parsed = {"test_cases": []}
+        else:
+            parsed = _normalize_test_cases(parsed_raw)
 
         return {
             "raw_response": response_text,
@@ -279,7 +629,9 @@ Generate comprehensive test cases covering normal, edge, and error scenarios."""
         if not model:
             raise AIModelNotFoundError(model_id or "default")
 
-        provider = self._get_provider(model)
+        # Reasoning models burn tokens on reasoning_content; give generation a
+        # large budget so the JSON payload is never truncated.
+        provider = _provider_with_min_tokens(model, 8192)
 
         schema_info = """
 Database tables:

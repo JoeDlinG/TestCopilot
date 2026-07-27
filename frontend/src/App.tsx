@@ -10,6 +10,7 @@ import Executions from './pages/Executions'
 import Logs from './pages/Logs'
 import Reports from './pages/Reports'
 import Plugins from './pages/Plugins'
+import ModelConfig from './pages/ModelConfig'
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
         <Route path="logs" element={<Logs />} />
         <Route path="reports" element={<Reports />} />
         <Route path="plugins" element={<Plugins />} />
+      <Route path="model-config" element={<ModelConfig />} />
       </Route>
     </Routes>
   )

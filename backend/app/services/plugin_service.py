@@ -1,10 +1,13 @@
 """Plugin management service — dynamic loading via importlib."""
 from __future__ import annotations
 import importlib
+import importlib.util
 import json
 import logging
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +17,80 @@ from app.models.models import Plugin, PluginStatus
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class BaseProtocolPlugin:
+    """Base class for all custom protocol plugins.
+
+    A plugin wraps a physical transport (serial/USB/Ethernet/...) and exposes a
+    high-level, device-specific command interface. It mirrors the
+    ``CommunicationInterface`` contract (connect/disconnect/send/receive) so the
+    device service can use a plugin instance as a drop-in communication backend
+    for ``custom`` protocol devices.
+
+    Subclasses MUST implement ``connect``, ``disconnect`` and ``send``.
+    They SHOULD set ``plugin_name``, ``protocol_name`` and ``version`` class
+    attributes, and may override ``get_config_schema``, ``get_device_template``
+    and ``get_commands``.
+    """
+
+    #: Human readable plugin name (shown in the UI).
+    plugin_name: str = "Base Protocol"
+    #: Unique protocol identifier. Devices using this plugin set their
+    #: ``protocol`` field to this value.
+    protocol_name: str = "custom"
+    #: Plugin version string.
+    version: str = "0.1.0"
+
+    async def connect(self, config: dict) -> bool:
+        """Open the underlying transport using the provided config dict."""
+        raise NotImplementedError("Plugin must implement connect()")
+
+    async def disconnect(self) -> bool:
+        """Close the underlying transport."""
+        raise NotImplementedError("Plugin must implement disconnect()")
+
+    async def send(self, data: any) -> any:
+        """Send a command and return the parsed result.
+
+        ``data`` may be:
+          * a raw protocol string (e.g. ``"@11_SYSID=;"``) — forwarded as-is, or
+          * a dict ``{"command": "SYSID", "parameters": [...]}`` — formatted by
+            the plugin.
+        """
+        raise NotImplementedError("Plugin must implement send()")
+
+    async def receive(self) -> any:
+        """Receive unsolicited data from the device (if supported)."""
+        raise NotImplementedError("Plugin must implement receive()")
+
+    def get_config_schema(self) -> dict:
+        """Return a JSON schema describing the connection config for the UI."""
+        return {"type": "object", "properties": {}}
+
+    def get_status(self) -> dict:
+        """Return a status dict for the UI."""
+        return {
+            "name": self.plugin_name,
+            "protocol": self.protocol_name,
+            "version": self.version,
+        }
+
+    def get_device_template(self) -> dict:
+        """Return a template dict used to create a Device from this plugin.
+
+        Keys map directly to ``DeviceCreate`` (name, type, protocol,
+        connection_type, config, ...). Return ``{}`` if the plugin does not
+        provide a device template.
+        """
+        return {}
+
+    def get_commands(self) -> list:
+        """Return a list of command descriptors for UI help/auto-completion.
+
+        Each descriptor: ``{"name", "syntax", "description", "parameters": [...]}``
+        """
+        return []
 
 
 class PluginService:
@@ -33,9 +110,9 @@ class PluginService:
         await db.commit()
         await db.refresh(plugin)
 
-        # Try to load the plugin
+        # Try to load the plugin (validates file path AND class resolution)
         try:
-            await self._load_plugin_module(plugin)
+            await self.load_plugin_class(plugin)
         except Exception as e:
             logger.warning(f"Plugin {plugin.name} installed but failed to load: {e}")
             plugin.error_message = str(e)
@@ -61,7 +138,7 @@ class PluginService:
             raise ValueError(f"Plugin {plugin_id} not found")
 
         try:
-            await self._load_plugin_module(plugin)
+            await self.load_plugin_class(plugin)
             plugin.status = PluginStatus.ENABLED.value
             plugin.enabled_at = datetime.utcnow()
             plugin.error_message = None
@@ -93,64 +170,289 @@ class PluginService:
         await db.commit()
         return True
 
-    async def _load_plugin_module(self, plugin: Plugin) -> Any:
-        """Dynamically load a plugin module via importlib."""
-        if not os.path.exists(plugin.file_path):
-            raise FileNotFoundError(f"Plugin file not found: {plugin.file_path}")
+    # ------------------------------------------------------------------ #
+    # Robust plugin file / module / class resolution
+    # ------------------------------------------------------------------ #
+    def _resolve_plugin_file(self, plugin: Plugin) -> str:
+        """Resolve the plugin source file to an absolute existing path.
 
-        spec = importlib.util.spec_from_file_location(
-            plugin.module_name, plugin.file_path
+        The DB may store relative paths (e.g. ``./plugins/foo.py``) that break
+        when the process CWD differs. Try, in order:
+          1. the stored path as-is (absolute or CWD-relative),
+          2. the stored path relative to the backend root,
+          3. ``PLUGIN_DIR/<basename>``,
+          4. ``PLUGIN_DIR/<module_name>.py``.
+        """
+        backend_root = Path(__file__).resolve().parents[2]  # .../backend
+        plugin_dir = Path(settings.PLUGIN_DIR)
+        if not plugin_dir.is_absolute():
+            plugin_dir = backend_root / plugin_dir
+
+        candidates = []
+        if plugin.file_path:
+            candidates.append(Path(plugin.file_path))
+            candidates.append(backend_root / plugin.file_path)
+            candidates.append(plugin_dir / Path(plugin.file_path).name)
+        if plugin.module_name:
+            candidates.append(plugin_dir / f"{plugin.module_name}.py")
+
+        for cand in candidates:
+            try:
+                if cand.is_file():
+                    return str(cand.resolve())
+            except OSError:
+                continue
+
+        raise FileNotFoundError(
+            f"Plugin file not found: {plugin.file_path} "
+            f"(also tried under {plugin_dir})"
         )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load spec for {plugin.module_name}")
 
+    def _exec_module(self, module_name: str, file_path: str) -> Any:
+        """Import a python file as a module (backend root on sys.path)."""
+        backend_root = str(Path(__file__).resolve().parents[2])
+        if backend_root not in sys.path:
+            # Plugins import ``app.services.plugin_service`` — make sure the
+            # backend package is importable regardless of process CWD.
+            sys.path.insert(0, backend_root)
+
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load spec for {module_name} ({file_path})")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        return module
 
-        # Verify the plugin class exists
-        plugin_class = getattr(module, plugin.class_name, None)
-        if plugin_class is None:
-            raise ImportError(
-                f"Class '{plugin.class_name}' not found in {plugin.module_name}"
+    @staticmethod
+    def _find_plugin_classes(module: Any) -> List[type]:
+        """Return all BaseProtocolPlugin subclasses defined in a module."""
+        classes = []
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, BaseProtocolPlugin)
+                and attr is not BaseProtocolPlugin
+            ):
+                classes.append(attr)
+        return classes
+
+    async def _load_plugin_module(self, plugin: Plugin) -> Any:
+        """Dynamically load a plugin's module via importlib (returns module)."""
+        file_path = self._resolve_plugin_file(plugin)
+        return self._exec_module(plugin.module_name, file_path)
+
+    async def load_plugin_class(self, plugin: Plugin) -> type:
+        """Load and return the plugin class for a Plugin DB record.
+
+        Resolution order:
+          1. exact ``class_name`` attribute on the module,
+          2. case-insensitive ``class_name`` match,
+          3. a unique BaseProtocolPlugin subclass in the module,
+          4. a subclass whose ``protocol_name`` matches ``plugin.protocol_type``.
+
+        This makes plugin loading resilient to minor metadata mismatches so
+        no plugin fails with a bare "class not found".
+        """
+        module = await self._load_plugin_module(plugin)
+
+        # 1. Exact match
+        cls = getattr(module, plugin.class_name, None) if plugin.class_name else None
+        if isinstance(cls, type):
+            return cls
+
+        candidates = self._find_plugin_classes(module)
+
+        # 2. Case-insensitive match
+        if plugin.class_name:
+            for c in candidates:
+                if c.__name__.lower() == plugin.class_name.lower():
+                    return c
+
+        # 3. Unique plugin subclass in the module
+        if len(candidates) == 1:
+            logger.warning(
+                f"Plugin '{plugin.name}': class '{plugin.class_name}' not found, "
+                f"falling back to sole plugin class '{candidates[0].__name__}'"
             )
+            return candidates[0]
 
-        return plugin_class
+        # 4. Match by protocol
+        for c in candidates:
+            if getattr(c, "protocol_name", None) == plugin.protocol_type:
+                logger.warning(
+                    f"Plugin '{plugin.name}': class '{plugin.class_name}' not found, "
+                    f"matched '{c.__name__}' by protocol '{plugin.protocol_type}'"
+                )
+                return c
+
+        available = [c.__name__ for c in candidates]
+        raise ImportError(
+            f"Class '{plugin.class_name}' not found in module "
+            f"'{plugin.module_name}'. Available plugin classes: {available or '(none)'}"
+        )
+
+    async def get_plugin_class_by_protocol(
+        self, db: AsyncSession, protocol_name: str
+    ) -> Any:
+        """Find an ENABLED plugin whose class ``protocol_name`` matches.
+
+        Returns the plugin class (not an instance) or ``None``.
+        """
+        plugins = await self.list_plugins(db)
+        for plugin in plugins:
+            if plugin.status != PluginStatus.ENABLED.value:
+                continue
+            try:
+                cls = await self.load_plugin_class(plugin)
+                if getattr(cls, "protocol_name", None) == protocol_name:
+                    return cls
+            except Exception as e:
+                logger.warning(
+                    f"Failed to inspect plugin {plugin.name} for protocol "
+                    f"{protocol_name}: {e}"
+                )
+                continue
+        return None
+
+    def _resolved_plugin_dir(self) -> Path:
+        """Absolute plugins directory (independent of process CWD)."""
+        backend_root = Path(__file__).resolve().parents[2]
+        plugin_dir = Path(settings.PLUGIN_DIR)
+        if not plugin_dir.is_absolute():
+            plugin_dir = backend_root / plugin_dir
+        return plugin_dir
 
     async def list_discovered_plugins(self) -> List[Dict[str, Any]]:
         """Scan the plugins directory for discoverable plugins."""
         plugins = []
-        plugin_dir = settings.PLUGIN_DIR
-        if not os.path.isdir(plugin_dir):
+        plugin_dir = self._resolved_plugin_dir()
+        if not plugin_dir.is_dir():
             return plugins
 
-        for filename in os.listdir(plugin_dir):
-            if filename.endswith(".py") and not filename.startswith("_"):
-                file_path = os.path.join(plugin_dir, filename)
-                try:
-                    spec = importlib.util.spec_from_file_location(
-                        filename[:-3], file_path
-                    )
-                    if spec and spec.loader:
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-
-                        # Look for plugin classes
-                        for attr_name in dir(module):
-                            attr = getattr(module, attr_name)
-                            if isinstance(attr, type) and hasattr(attr, "protocol_name"):
-                                plugins.append({
-                                    "name": getattr(attr, "plugin_name", attr_name),
-                                    "version": getattr(attr, "plugin_version", "0.1.0"),
-                                    "description": getattr(attr, "__doc__", ""),
-                                    "protocol_name": getattr(attr, "protocol_name", "custom"),
-                                    "module_name": filename[:-3],
-                                    "class_name": attr_name,
-                                    "file_path": file_path,
-                                })
-                except Exception as e:
-                    logger.warning(f"Failed to scan plugin {filename}: {e}")
+        for filename in sorted(os.listdir(plugin_dir)):
+            if not filename.endswith(".py") or filename.startswith("_"):
+                continue
+            file_path = str(plugin_dir / filename)
+            try:
+                module = self._exec_module(filename[:-3], file_path)
+                # Only real plugin classes (BaseProtocolPlugin subclasses)
+                for cls in self._find_plugin_classes(module):
+                    plugins.append({
+                        "name": getattr(cls, "plugin_name", cls.__name__),
+                        "version": getattr(
+                            cls, "version",
+                            getattr(cls, "plugin_version", "0.1.0"),
+                        ),
+                        "description": (cls.__doc__ or "").strip(),
+                        "protocol_name": getattr(cls, "protocol_name", "custom"),
+                        "module_name": filename[:-3],
+                        "class_name": cls.__name__,
+                        "file_path": file_path,
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to scan plugin {filename}: {e}")
 
         return plugins
+
+
+    # ------------------------------------------------------------------ #
+    # Plugin skills & manuals (used by the AI assistant)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _parse_frontmatter(text: str) -> tuple[Dict[str, str], str]:
+        """Parse a simple ``--- key: value ---`` frontmatter block."""
+        meta: Dict[str, str] = {}
+        body = text
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                for line in parts[1].strip().splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        meta[k.strip().lower()] = v.strip()
+                body = parts[2].lstrip("\n")
+        return meta, body
+
+    def list_plugin_skills(self) -> List[Dict[str, Any]]:
+        """Discover plugin skills (``skills/*_skill.md``) and their manuals.
+
+        Each skill markdown may carry frontmatter with ``name``, ``protocol``
+        and ``keywords`` (comma separated). The manual is looked up at
+        ``manuals/<protocol>.md``.
+        """
+        plugin_dir = self._resolved_plugin_dir()
+        skills_dir = plugin_dir / "skills"
+        manuals_dir = plugin_dir / "manuals"
+        skills: List[Dict[str, Any]] = []
+        if not skills_dir.is_dir():
+            return skills
+
+        for filename in sorted(os.listdir(skills_dir)):
+            if not filename.endswith(".md"):
+                continue
+            path = skills_dir / filename
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning(f"Failed to read skill {filename}: {e}")
+                continue
+            meta, _ = self._parse_frontmatter(text)
+            protocol = meta.get("protocol") or filename.replace("_skill.md", "").replace(".md", "")
+            name = meta.get("name") or protocol
+            keywords = [
+                kw.strip().lower()
+                for kw in meta.get("keywords", "").split(",")
+                if kw.strip()
+            ]
+            manual_path = manuals_dir / f"{protocol}.md"
+            skills.append({
+                "protocol": protocol,
+                "name": name,
+                "keywords": keywords,
+                "skill_file": str(path),
+                "manual_file": str(manual_path) if manual_path.is_file() else None,
+                "has_manual": manual_path.is_file(),
+            })
+        return skills
+
+    def get_plugin_skill_content(self, protocol: str) -> Optional[Dict[str, Any]]:
+        """Return the skill + manual markdown for a protocol, or None."""
+        for skill in self.list_plugin_skills():
+            if skill["protocol"] != protocol:
+                continue
+            try:
+                skill_text = Path(skill["skill_file"]).read_text(encoding="utf-8")
+                _, skill_body = self._parse_frontmatter(skill_text)
+            except OSError:
+                skill_body = ""
+            manual_body = ""
+            if skill["manual_file"]:
+                try:
+                    manual_body = Path(skill["manual_file"]).read_text(encoding="utf-8")
+                except OSError:
+                    pass
+            return {
+                "protocol": protocol,
+                "name": skill["name"],
+                "skill": skill_body,
+                "manual": manual_body,
+            }
+        return None
+
+    def match_skills_for_text(self, text: str) -> List[str]:
+        """Return protocols whose name/protocol/keywords appear in ``text``.
+
+        Used by the AI assistant to auto-attach relevant device skills when
+        the user mentions a device in conversation.
+        """
+        text_lower = (text or "").lower()
+        matched: List[str] = []
+        for skill in self.list_plugin_skills():
+            needles = [skill["protocol"].lower(), skill["name"].lower(), *skill["keywords"]]
+            if any(n and n in text_lower for n in needles):
+                matched.append(skill["protocol"])
+        return matched
 
 
 plugin_service = PluginService()

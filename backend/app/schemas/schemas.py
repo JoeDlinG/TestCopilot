@@ -83,15 +83,18 @@ class AIModelConfigCreate(BaseModel):
     model_config = {"protected_namespaces": ()}
 
     name: str
-    provider: str  # openai, anthropic, ollama, localai, vllm, hunyuan, qwen, ernie, custom
-    model_name: str  # e.g., gpt-4o, claude-3-opus, llama3:8b
+    provider: str  # openai, anthropic, ollama, localai, vllm, hunyuan, qwen, ernie, deepseek, minimax, custom
+    model_name: str  # e.g., gpt-4o, claude-3-opus, llama3:8b, deepseek-chat
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    is_default: Optional[bool] = False
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 class AIModelConfigUpdate(BaseModel):
     name: Optional[str] = None
+    provider: Optional[str] = None
+    model_name: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
@@ -121,6 +124,8 @@ class AIChatRequest(BaseModel):
     input_type: str = "text"  # text or voice
     session_id: Optional[str] = None
     system_prompt: Optional[str] = None
+    # Plugin skills to import into the conversation context (protocol names).
+    skill_protocols: List[str] = Field(default_factory=list)
 
 
 class AIChatResponse(BaseModel):
@@ -154,6 +159,8 @@ class TestCaseGenerateRequest(BaseModel):
     input_type: str = "text"  # text or voice
     model_id: Optional[str] = None
     available_devices: List[Dict[str, Any]] = Field(default_factory=list)
+    # Plugin skills to use for generation (protocol names).
+    skill_protocols: List[str] = Field(default_factory=list)
 
 
 class TestCaseGenerateResponse(BaseModel):

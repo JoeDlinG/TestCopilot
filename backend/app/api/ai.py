@@ -130,6 +130,7 @@ async def chat(data: AIChatRequest, db: AsyncSession = Depends(get_db)):
         result = await ai_service.chat(
             db, data.model_id, data.message, session_id,
             data.system_prompt, data.input_type,
+            skill_protocols=data.skill_protocols,
         )
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
@@ -145,6 +146,7 @@ async def generate_test_cases(data: TestCaseGenerateRequest, db: AsyncSession = 
     try:
         result = await ai_service.generate_test_cases(
             db, data.model_id, data.requirements, data.available_devices,
+            skill_protocols=data.skill_protocols,
         )
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:

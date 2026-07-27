@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Card, Input, Button, Select, Space, Typography, message, Spin, Tag,
   Upload, Collapse, Empty, List, Tabs
@@ -6,10 +7,10 @@ import {
 import {
   SendOutlined, AudioOutlined, RobotOutlined, UserOutlined,
   ExperimentOutlined, SearchOutlined, SettingOutlined,
-  CloudOutlined, HomeOutlined, ClearOutlined
+  CloudOutlined, HomeOutlined, ClearOutlined, ApiOutlined
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
-import { aiAPI, testCaseAPI } from '../services/api'
+import { aiAPI, testCaseAPI, pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
 import type { AIModel, AIChatMessage, TestCase } from '../types'
 
@@ -17,6 +18,7 @@ const { Title, Text } = Typography
 const { TextArea } = Input
 
 export default function AIChat() {
+  const navigate = useNavigate()
   const [models, setModels] = useState<AIModel[]>([])
   const [activeModel, setActiveModel] = useState<string>('')
   const [messages, setMessages] = useState<AIChatMessage[]>([])
@@ -26,10 +28,13 @@ export default function AIChat() {
   const [testCaseResult, setTestCaseResult] = useState<any>(null)
   const [activeTab, setActiveTab] = useState('chat')
   const [queryResult, setQueryResult] = useState<any>(null)
+  const [pluginSkills, setPluginSkills] = useState<any[]>([])
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadModels()
+    loadPluginSkills()
   }, [])
 
   useEffect(() => {
@@ -41,10 +46,24 @@ export default function AIChat() {
       const res = await aiAPI.listModels()
       const modelList = extractData(res, [])
       setModels(modelList)
-      const active: any = modelList.find((m: any) => m.is_default || m.status === 'active')
+      // Auto-select: prefer default, then an active one, then the first model
+      // so the chat is usable even if no model is explicitly marked default.
+      const active: any =
+        modelList.find((m: any) => m.is_default) ||
+        modelList.find((m: any) => m.status === 'active') ||
+        modelList[0]
       if (active?.id) setActiveModel(active.id)
     } catch (err) {
       console.error('Failed to load models:', err)
+    }
+  }
+
+  const loadPluginSkills = async () => {
+    try {
+      const res = await pluginAPI.listSkills()
+      setPluginSkills(extractData(res, []))
+    } catch (err) {
+      console.error('Failed to load plugin skills:', err)
     }
   }
 
@@ -61,12 +80,18 @@ export default function AIChat() {
         message: userMsg.content,
         session_id: sessionId || undefined,
         input_type: 'text',
+        skill_protocols: selectedSkills,
       })
-      const data = res.data.data || res.data
-      setSessionId(data.session_id)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.response }])
+      const data: any = res.data?.data || res.data
+      setSessionId(data?.session_id)
+      setMessages(prev => [...prev, { role: 'assistant', content: data?.response ?? '（无响应内容）' }])
     } catch (err) {
-      handleApiError(err, 'AI 请求失败，请检查模型配置')
+      // Surface the real error detail (backend returns detail as a string or {message})
+      const detail = (err as any)?.response?.data?.detail
+      const errMsg = (typeof detail === 'string' ? detail : detail?.message) || 'AI 请求失败，请检查模型配置与网络'
+      message.error(errMsg)
+      // Also show the error inline so the user always gets a visible response
+      setMessages(prev => [...prev, { role: 'assistant', content: `⚠️ 请求失败：${errMsg}` }])
     } finally {
       setLoading(false)
     }
@@ -80,6 +105,7 @@ export default function AIChat() {
         requirements: input,
         model_id: activeModel,
         input_type: 'text',
+        skill_protocols: selectedSkills,
       })
       setTestCaseResult(res.data.data || res.data)
       setActiveTab('result')
@@ -150,7 +176,14 @@ export default function AIChat() {
               value: m.id,
             }))}
             notFoundContent={
-              <Empty description="暂无模型，请先配置" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              <Empty
+                description="暂无模型，请先配置"
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              >
+                <Button type="primary" size="small" onClick={() => navigate('/model-config')}>
+                  去配置模型
+                </Button>
+              </Empty>
             }
           />
           <Button icon={<ClearOutlined />} onClick={handleClear}>清空对话</Button>
@@ -180,6 +213,25 @@ export default function AIChat() {
             >
               语音输入
             </Button>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder={
+                <span><ApiOutlined /> 导入插件 Skill（设备手册）</span>
+              }
+              value={selectedSkills}
+              onChange={setSelectedSkills}
+              style={{ minWidth: 260 }}
+              maxTagCount="responsive"
+              options={pluginSkills.map((s: any) => ({
+                label: `${s.name} (${s.protocol})`,
+                value: s.protocol,
+              }))}
+              notFoundContent={<Empty description="暂无插件 Skill" image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+            />
+            {selectedSkills.length > 0 && (
+              <Tag color="blue">已导入 {selectedSkills.length} 个设备 Skill</Tag>
+            )}
           </Space>
           <Space>
             <Button

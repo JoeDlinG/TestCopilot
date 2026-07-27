@@ -21,10 +21,36 @@ export interface AIModel {
   name: string
   provider: string
   model_name: string
-  is_local: boolean
-  is_active: boolean
-  config: Record<string, any>
+  base_url?: string
+  is_default: boolean
+  status: string
+  parameters?: Record<string, any>
+  last_tested_at?: string
   created_at: string
+}
+
+export interface AIModelConfigRequest {
+  name: string
+  provider: string
+  model_name: string
+  api_key?: string
+  base_url?: string
+  parameters?: Record<string, any>
+  is_default?: boolean
+}
+
+export const PROVIDERS: Record<string, { label: string; default_base_url?: string; hint: string }> = {
+  openai: { label: 'OpenAI', default_base_url: 'https://api.openai.com/v1', hint: 'GPT-4o / GPT-4o-mini 等' },
+  anthropic: { label: 'Anthropic Claude', default_base_url: 'https://api.anthropic.com/v1', hint: 'claude-3-opus / claude-3-sonnet 等' },
+  ollama: { label: 'Ollama (本地)', default_base_url: 'http://localhost:11434/v1', hint: '本地部署，无需 API Key' },
+  localai: { label: 'LocalAI', default_base_url: 'http://localhost:8080/v1', hint: 'OpenAI 兼容本地服务' },
+  vllm: { label: 'vLLM', default_base_url: 'http://localhost:8000/v1', hint: 'OpenAI 兼容推理服务' },
+  hunyuan: { label: '腾讯混元', default_base_url: 'https://api.hunyuan.cloud.tencent.com/v1', hint: 'hunyuan-pro 等' },
+  qwen: { label: '阿里通义千问', default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', hint: 'qwen-max / qwen-plus 等' },
+  ernie: { label: '百度文心一言', default_base_url: 'https://qianfan.baidubce.com/v2', hint: 'ernie-4.0 等' },
+  deepseek: { label: 'DeepSeek', default_base_url: 'https://api.deepseek.com/v1', hint: 'deepseek-v4-pro / deepseek-v4-flash（注意：deepseek-chat 已弃用）' },
+  minimax: { label: 'MiniMax', default_base_url: 'https://api.minimax.chat/v1', hint: 'abab6.5-chat / MiniMax-Text-01' },
+  custom: { label: '自定义 (OpenAI 兼容)', default_base_url: '', hint: '任意 OpenAI 兼容端点' },
 }
 
 export interface TestStep {
@@ -133,6 +159,7 @@ export const DEVICE_TYPES: Record<string, string> = {
   signal_generator: '信号发生器',
   spectrum_analyzer: '频谱分析仪',
   can_tool: 'CAN 工具',
+  gateway: '网关',
   generic: '通用设备',
 }
 
@@ -144,4 +171,5 @@ export const INTERFACE_TYPES: Record<string, string> = {
   ethernet: '以太网',
   gpib: 'GPIB',
   custom: '自定义',
+  mini_gateway100: 'Mini Gateway 100',
 }
