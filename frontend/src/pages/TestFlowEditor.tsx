@@ -195,6 +195,65 @@ export default function TestFlowEditor() {
 
   const reactFlowRef = useRef<ReactFlowInstance | null>(null)
 
+  // ---- Undo / Redo history stack ----
+  const historyRef = useRef<{ nodes: Node[]; edges: Edge[] }[]>([])
+  const historyPosRef = useRef(-1)
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+  const _skipHistoryRef = useRef(false) // skip recording when undoing/redoing
+
+  const pushHistory = useCallback(() => {
+    if (_skipHistoryRef.current) return
+    // Truncate any future history when a new action is taken
+    const stack = historyRef.current
+    historyRef.current = stack.slice(0, historyPosRef.current + 1)
+    historyRef.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    })
+    historyPosRef.current = historyRef.current.length - 1
+    // Cap at 50 entries to save memory
+    if (historyRef.current.length > 50) {
+      historyRef.current = historyRef.current.slice(-50)
+      historyPosRef.current = historyRef.current.length - 1
+    }
+    setCanUndo(historyPosRef.current > 0)
+    setCanRedo(false)
+  }, [nodes, edges])
+
+  const undo = useCallback(() => {
+    const stack = historyRef.current
+    if (historyPosRef.current <= 0) return
+    // Save current state at top of stack before moving back
+    if (historyPosRef.current === stack.length - 1) {
+      stack.push({
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges)),
+      })
+    }
+    historyPosRef.current--
+    const snap = stack[historyPosRef.current]
+    _skipHistoryRef.current = true
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    _skipHistoryRef.current = false
+    setCanUndo(historyPosRef.current > 0)
+    setCanRedo(true)
+  }, [nodes, edges, setNodes, setEdges])
+
+  const redo = useCallback(() => {
+    const stack = historyRef.current
+    if (historyPosRef.current >= stack.length - 1) return
+    historyPosRef.current++
+    const snap = stack[historyPosRef.current]
+    _skipHistoryRef.current = true
+    setNodes(snap.nodes)
+    setEdges(snap.edges)
+    _skipHistoryRef.current = false
+    setCanUndo(true)
+    setCanRedo(historyPosRef.current < stack.length - 1)
+  }, [setNodes, setEdges])
+
   // ---- Load test case and flow ----
   const loadTestCase = useCallback(async () => {
     if (!id) return
@@ -229,12 +288,15 @@ export default function TestFlowEditor() {
 
   // ---- Connect handler ----
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge({
-      ...connection,
-      id: newEdgeId(),
-      label: '',
-    }, eds)),
-    [setEdges],
+    (connection: Connection) => {
+      pushHistory()
+      setEdges((eds) => addEdge({
+        ...connection,
+        id: newEdgeId(),
+        label: '',
+      }, eds))
+    },
+    [setEdges, pushHistory],
   )
 
   // ---- Node double-click → edit ----
@@ -260,6 +322,7 @@ export default function TestFlowEditor() {
   const handleEditSave = () => {
     const vals = editForm.getFieldsValue()
     if (!editNode) return
+    pushHistory()
     setNodes((nds) => nds.map((n) => {
       if (n.id !== editNode.id) return n
       const updated = {
@@ -287,18 +350,21 @@ export default function TestFlowEditor() {
   }
 
   // ---- Delete selected nodes/edges ----
-  const handleDelete = () => {
+  const handleDelete = useCallback(() => {
     const selectedNodes = nodes.filter((n) => n.selected && n.type !== 'start' && n.type !== 'end' && n.type !== 'input' && n.type !== 'output')
     const selectedEdges = edges.filter((e) => e.selected)
     if (selectedNodes.length === 0 && selectedEdges.length === 0) {
       message.info('选中节点或边后按 Delete 删除（开始/结束节点不可删）')
       return
     }
+    // Save snapshot before mutation
+    pushHistory()
     const nodeIds = new Set(selectedNodes.map((n) => n.id))
     setNodes((nds) => nds.filter((n) => !nodeIds.has(n.id)))
-    setEdges((eds) => eds.filter((e) => e.selected || (!nodeIds.has(e.source) && !nodeIds.has(e.target))))
+    // FIXED: was e.selected (kept selected edges), now !e.selected (removes selected edges)
+    setEdges((eds) => eds.filter((e) => !e.selected && !nodeIds.has(e.source) && !nodeIds.has(e.target)))
     message.success(`已删除 ${selectedNodes.length} 节点, ${selectedEdges.length} 边`)
-  }
+  }, [nodes, edges, setNodes, setEdges])
 
   // ---- Drag-over from palette ----
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -328,10 +394,11 @@ export default function TestFlowEditor() {
             ? { loop_type: 'for', variable: 'i', condition: '3' }
             : { command: '', expected: '' },
       } as FlowNode
+      pushHistory()
       setNodes((nds) => [...nds, newNode])
       message.info(`已添加「${labelMap[paletteType] || paletteType}」节点`)
     },
-    [setNodes],
+    [setNodes, pushHistory],
   )
 
   // ---- Save flow ----
@@ -372,21 +439,31 @@ export default function TestFlowEditor() {
   const onEdgeDoubleClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     const label = prompt('输入边的标签（如 true / false / exit）：', edge.label as string || '')
     if (label !== null) {
+      pushHistory()
       setEdges((eds) => eds.map((e) => (e.id === edge.id ? { ...e, label } : e)))
     }
-  }, [setEdges])
+  }, [setEdges, pushHistory])
 
   // ---- Keyboard shortcuts ----
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Let ReactFlow handle selection first; we handle in handleDelete button
-        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const isMod = e.ctrlKey || e.metaKey
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !isMod) {
+        handleDelete()
+      }
+      if (isMod && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+      }
+      if (isMod && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        redo()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [handleDelete, undo, redo])
 
   // ---- Render ----
   return (
@@ -408,6 +485,13 @@ export default function TestFlowEditor() {
           <Tag color="green">{edges.length} 边</Tag>
         </Space>
         <Space wrap>
+          <Tooltip title="撤销 Ctrl+Z">
+            <Button icon={<ArrowLeftOutlined />} disabled={!canUndo} onClick={undo}>撤销</Button>
+          </Tooltip>
+          <Tooltip title="重做 Ctrl+Y">
+            <Button icon={<ArrowLeftOutlined style={{ display: 'inline-block', transform: 'scaleX(-1)' }} />} disabled={!canRedo} onClick={redo}>重做</Button>
+          </Tooltip>
+          <Divider type="vertical" />
           <Tooltip title="选中节点或边后点击删除（开始/结束不可删）">
             <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>删除选中</Button>
           </Tooltip>

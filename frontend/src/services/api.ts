@@ -60,6 +60,8 @@ export const testCaseAPI = {
   update: (id: string, data: any) => api.put(`/testcases/${id}`, data),
   delete: (id: string) => api.delete(`/testcases/${id}`),
   generate: (data: any) => api.post('/testcases/generate', data),
+  // Import AI-generated test cases with flows
+  importAiResult: (data: any) => api.post('/testcases/import-ai-result', data),
   // Flowchart
   getFlow: (id: string) => api.get(`/testcases/${id}/flow`),
   createFlow: (id: string, data: any) => api.post(`/testcases/${id}/flow`, data),

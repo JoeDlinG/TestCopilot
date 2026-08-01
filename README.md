@@ -10,7 +10,7 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 | **多接口通信** | SCPI (PyVISA)、CAN/CAN FD (python-can)、串口 RS232/RS485 (pyserial)、以太网 TCP/UDP |
 | **插件扩展** | Python 插件 SDK（`BaseProtocolPlugin` 基类），动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱；支持自定义协议一键创建设备 |
 | **AI 大模型** | 支持 OpenAI/Ollama/Anthropic 及国产模型（混元/通义千问/文心/LocalAI/vLLM 等），Provider 抽象 + Fallback 机制；前端模型管理页（API Key 配置/测试/默认切换） |
-| **测试用例生成** | 文字/语音输入需求 → AI 自动生成结构化测试用例 → ReactFlow 流程图可视化编辑 |
+| **测试用例生成** | 文字/语音输入需求 → AI 自动生成结构化测试用例 → ReactFlow 流程图可视化编辑（支持拖拽、撤销/重做、条件分支、循环） |
 | **测试执行引擎** | 顺序/并行/条件/循环执行，变量系统，钩子系统，WebSocket 实时仪表盘监控 |
 | **通信日志** | SQLite + CSV 双写，通信数据实时记录，keyset 分页查询，CSV 批量导出 |
 | **自然语言查询** | 文字/语音自然语言查询测试数据（NL2SQL），查询历史管理 |
@@ -104,7 +104,7 @@ AITestLab/
 │   │   │   ├── DashboardPage.tsx      # 主页仪表盘
 │   │   │   ├── DevicesPage.tsx        # 设备管理
 │   │   │   ├── TestCasesPage.tsx      # 测试用例管理
-│   │   │   ├── TestCaseFlowPage.tsx   # 流程图编辑器
+│   │   │   ├── TestFlowEditor.tsx  # 流程图编辑器（拖拽/撤销/重做/代码生成）
 │   │   │   ├── ExecutionsPage.tsx     # 测试执行
 │   │   │   ├── ExecutionMonitorPage.tsx # 实时执行监控
 │   │   │   ├── LogsPage.tsx           # 通信日志查询

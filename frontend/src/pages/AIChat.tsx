@@ -161,16 +161,12 @@ export default function AIChat() {
   const handleSaveOne = async (tc: any) => {
     setImportingIds((prev) => new Set(prev).add(tc.name))
     try {
-      await testCaseAPI.create({
-        name: tc.name,
-        description: tc.description || '',
-        steps: tc.steps || [],
-        expected_result: tc.expected_result || '',
-        parameters: tc.parameters || {},
-        devices_required: tc.devices_required || [],
-        tags: tc.tags || [],
+      await testCaseAPI.importAiResult({
+        test_cases: [tc],
+        requirements: input || '',
+        model_id: activeModel,
       })
-      message.success(`「${tc.name}」已导入测试用例列表`)
+      message.success(`「${tc.name}」已导入测试用例列表（含流程图）`)
     } catch (err) {
       message.error(`「${tc.name}」导入失败`)
     } finally {
@@ -190,24 +186,21 @@ export default function AIChat() {
       return
     }
     setImportingAll(true)
-    let ok = 0
-    for (const tc of cases) {
-      try {
-        await testCaseAPI.create({
-          name: tc.name,
-          description: tc.description || '',
-          steps: tc.steps || [],
-          expected_result: tc.expected_result || '',
-          parameters: tc.parameters || {},
-          devices_required: tc.devices_required || [],
-          tags: tc.tags || [],
-        })
-        ok++
-      } catch { /* skip failures */ }
+    try {
+      const res = await testCaseAPI.importAiResult({
+        test_cases: cases,
+        requirements: input || '',
+        model_id: activeModel,
+      })
+      const data: any = res.data?.data || res.data
+      const total = data.total_imported || data.saved_cases?.length || 0
+      message.success(`已导入 ${total} 个测试用例（含流程图）`)
+      if (total > 0) navigate('/testcases')
+    } catch (err) {
+      handleApiError(err, '批量导入失败')
+    } finally {
+      setImportingAll(false)
     }
-    setImportingAll(false)
-    message.success(`已导入 ${ok}/${cases.length} 个测试用例`)
-    if (ok > 0) navigate('/testcases')
   }
 
   // --- Clear ---

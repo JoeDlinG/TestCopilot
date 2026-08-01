@@ -77,8 +77,13 @@ class CodeGenService:
         def _edge_label(src: str, tgt: str) -> str:
             return _edge_label_cache.get(f"{src}->{tgt}", "")
 
-        def walk(node_id: str, indent: int, branch_stack: Set[str]) -> None:
-            """Recursive DFS code generation."""
+        def walk(node_id: str, indent: int, branch_stack: Set[str], no_remaining: bool = False) -> None:
+            """Recursive DFS code generation.
+
+            When *no_remaining* is True (used inside condition branches), the node
+            emits its own code but does NOT walk successor/"remaining" neighbours.
+            This keeps convergence points outside the if/else block.
+            """
             if node_id in branch_stack:
                 return  # cycle guard
             node = node_map.get(node_id)
@@ -119,7 +124,7 @@ class CodeGenService:
                 else:
                     body_lines.append(f"{prefix}# response = send_command({cmd!r})  # TODO: wire real device")
                 if expected:
-                    body_lines.append(f"{prefix}assert response == {expected!r}, f'Expected {expected!r}, got {{response}}'")
+                    body_lines.append(f"{prefix}assert response == {expected!r}, f\"Expected {expected}, got {{response}}\"")
                 body_lines.append(f"{prefix}time.sleep({timeout_ms})")
                 body_lines.append(f"{prefix}results['steps'].append({{'step': {cmd!r}, 'status': 'passed'}})")
                 body_lines.append(f"{prefix}results['passed'] += 1")
@@ -139,18 +144,32 @@ class CodeGenService:
                     if len(nbrs) >= 2:
                         false_nbrs = [nbrs[1]]
 
+                true_tgt = true_nbrs[0]["target"] if true_nbrs else None
+                false_tgt = false_nbrs[0]["target"] if false_nbrs else None
+
+                # Walk branches WITHOUT following remaining neighbours so the
+                # convergence point stays outside the if/else block.
                 body_lines.append(f"{prefix}if {expr}:")
-                if true_nbrs:
-                    walk(true_nbrs[0]["target"], indent + 1, branch_stack | {node_id})
+                if true_tgt:
+                    walk(true_tgt, indent + 1, branch_stack | {node_id}, no_remaining=True)
                 else:
                     body_lines.append(f"{prefix}    pass  # true (no target)")
 
-                if false_nbrs:
+                if false_tgt:
                     body_lines.append(f"{prefix}else:")
-                    walk(false_nbrs[0]["target"], indent + 1, branch_stack | {node_id})
+                    walk(false_tgt, indent + 1, branch_stack | {node_id}, no_remaining=True)
                 else:
                     body_lines.append(f"{prefix}else:")
                     body_lines.append(f"{prefix}    pass")
+
+                # Find convergence: first node reachable from BOTH branch targets
+                if true_tgt and false_tgt:
+                    true_succ_ids = {nb["target"] for nb in adj.get(true_tgt, [])}
+                    false_succ_ids = {nb["target"] for nb in adj.get(false_tgt, [])}
+                    convergence = [cid for cid in true_succ_ids & false_succ_ids
+                                   if cid not in visited_global]
+                    for cid in convergence:
+                        walk(cid, indent, branch_stack | {node_id})
 
             elif ntype == "loop":
                 visited_global.add(node_id)
@@ -186,7 +205,10 @@ class CodeGenService:
                 if exit_nbrs:
                     walk(exit_nbrs[0]["target"], indent, branch_stack | {node_id})
 
-            # After processing current node, walk remaining unvisited neighbours
+            # ---- Walk remaining unvisited successors (unless suppressed) ----
+            if no_remaining:
+                return
+
             remaining = []
             for nb in adj.get(node_id, []):
                 # Skip condition branches (already walked inside the condition branch)
@@ -204,14 +226,14 @@ class CodeGenService:
                     walk(nb["target"], indent, branch_stack | {node_id})
 
         if start_id:
-            walk(start_id, indent=2, branch_stack=set())
+            walk(start_id, indent=1, branch_stack=set())
 
         if not visited_global:
-            body_lines.append("        log.warning('Empty flow — no steps to execute.')")
+            body_lines.append("    log.warning('Empty flow — no steps to execute.')")
 
         body_lines.append("")
-        body_lines.append("        log.info(f'Results: {results[\"passed\"]} passed, {results[\"failed\"]} failed')")
-        body_lines.append("        return results")
+        body_lines.append("    log.info(f'Results: {results[\"passed\"]} passed, {results[\"failed\"]} failed')")
+        body_lines.append("    return results")
         body_lines.append("")
         body_lines.append("")
         body_lines.append("if __name__ == '__main__':")

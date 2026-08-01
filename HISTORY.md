@@ -475,6 +475,37 @@
 
 ---
 
+## 2026-08-01: 流程图编辑器 Bug 修复 + 撤销/重做 + 代码生成器修复
+
+### Bug 修复: 连线选中后无法删除
+
+- **根因**：`TestFlowEditor.tsx` 中 `handleDelete` 的边过滤条件写反 — `eds.filter((e) => e.selected || ...)` 意图删除已选中的边，但逻辑上是「保留」已选中的边，导致选中边后按 Delete 无反应
+- **修复**：`e.selected` → `!e.selected`（删除选中的边而非保留），同时修复 `handleDelete` 的回调依赖使其在键盘快捷键中正常工作
+- **快捷键增强**：Delete/Backspace 键现在直接触发删除（不受输入框聚焦影响），Ctrl+Z 撤销、Ctrl+Y 重做
+
+### 新功能: 撤销/重做 (Undo/Redo)
+
+- **历史栈**：`useRef` 存储 nodes/edges 快照数组，最大 50 步上限
+- **快照时机**：拖拽添加节点、连线、编辑节点配置、编辑边标签、删除操作前自动 push
+- **撤销/重做**：`_skipHistoryRef` 防止还原时的二次记录；`canUndo`/`canRedo` 控制按钮状态
+- **UI**：工具栏新增「撤销」「重做」按钮（ArrowLeftOutlined 图标，重做按钮水平翻转显示）
+
+### 代码生成器修复 (backend/app/services/codegen_service.py)
+
+修复了 3 个 bug：
+
+1. **函数体缩进错误**：初始 `walk()` 调用 `indent=2`（8 空格）→ 改为 `indent=1`（4 空格），末尾 `log.info`/`return results` 缩进同步修正
+2. **f-string 引号嵌套语法错误**：断言消息 `f'Expected {expected!r}...'` 在 expected 为 `'OK'` 时生成 `f'Expected 'OK'...'` → 语法错误；改为双引号外层 `f\"Expected {expected}...\"`
+3. **条件分支汇聚点错误嵌套**：`walk(true_target)` 会继续递归 walk 其剩余邻居 → 汇聚点（如 loop_repeat）被写入 if 分支内部；新增 `no_remaining` 参数，条件分支 walk 时 `no_remaining=True`，汇聚点由 condition handler 在 if/else 后通过取两个分支目标的直接后继交集显式 walk
+
+### 测试验证
+
+- 5 类流程图全覆盖测试全部通过：顺序流 / while 循环 / 中文标签(是/否) / YesNo 标签 / 无标签 fallback
+- API 端到端验证：`POST /api/testcases/{id}/generate-code` → 生成代码编译为合法 Python
+- 前端 `tsc --noEmit` 类型检查通过
+
+---
+
 ## 下一步计划
 - [ ] 端到端集成测试（AI → 流程图 → 编辑 → 代码 → 执行）
 - [ ] 性能优化（启动速度、大数据渲染）
@@ -485,4 +516,4 @@
 
 ---
 
-> 最后更新：2026-07-27
+> 最后更新：2026-08-01

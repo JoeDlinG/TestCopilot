@@ -23,16 +23,52 @@ class TestGenService:
         model_id: Optional[str] = None,
         available_devices: Optional[List[Dict[str, Any]]] = None,
         input_type: str = "text",
+        skill_protocols: Optional[List[str]] = None,
     ) -> dict:
         """Generate test cases from requirements and save to database."""
         # Generate via AI
         gen_result = await ai_service.generate_test_cases(
-            db, model_id, requirements, available_devices
+            db, model_id, requirements, available_devices,
+            skill_protocols=skill_protocols,
         )
 
         parsed = gen_result.get("parsed", {})
         test_cases_data = parsed.get("test_cases", [])
 
+        saved_cases = await self._save_cases(
+            db, test_cases_data, requirements, model_id
+        )
+
+        return {
+            "raw_response": gen_result.get("raw_response", ""),
+            "saved_cases": saved_cases,
+            "total_generated": len(saved_cases),
+        }
+
+    async def import_from_ai(
+        self,
+        db: AsyncSession,
+        test_cases_data: List[Dict[str, Any]],
+        requirements: str = "",
+        model_id: Optional[str] = None,
+    ) -> dict:
+        """Import pre-generated AI test cases and create flows for each."""
+        saved_cases = await self._save_cases(
+            db, test_cases_data, requirements, model_id
+        )
+        return {
+            "saved_cases": saved_cases,
+            "total_imported": len(saved_cases),
+        }
+
+    async def _save_cases(
+        self,
+        db: AsyncSession,
+        test_cases_data: List[Dict[str, Any]],
+        requirements: str = "",
+        model_id: Optional[str] = None,
+    ) -> list:
+        """Save test cases and create flows for each."""
         saved_cases = []
         for tc_data in test_cases_data:
             # Create test case
@@ -74,11 +110,7 @@ class TestGenService:
                 "tags": tc_data.get("tags", []),
             })
 
-        return {
-            "raw_response": gen_result.get("raw_response", ""),
-            "saved_cases": saved_cases,
-            "total_generated": len(saved_cases),
-        }
+        return saved_cases
 
     def _description_to_flow(
         self, steps: List[Dict[str, Any]], flow_description: str

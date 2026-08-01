@@ -197,11 +197,36 @@ async def generate_test_cases(data: TestCaseGenerateRequest, db: AsyncSession = 
             model_id=data.model_id,
             available_devices=data.available_devices,
             input_type=data.input_type,
+            skill_protocols=data.skill_protocols,
         )
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail={
             "code": 40007, "message": "Generation failed", "detail": str(e),
+        })
+
+
+# ============ Import AI-Generated Test Cases (with flows) ============
+
+@router.post("/import-ai-result")
+async def import_ai_result(data: dict, db: AsyncSession = Depends(get_db)):
+    """Import AI-generated test cases and create flows for each.
+
+    Request body: {"test_cases": [...], "requirements": "...", "model_id": "..."}
+    Each test case: {"name", "description", "steps", "expected_result", ...}
+    """
+    try:
+        test_cases_data = data.get("test_cases", [])
+        result = await testgen_service.import_from_ai(
+            db,
+            test_cases_data=test_cases_data,
+            requirements=data.get("requirements", ""),
+            model_id=data.get("model_id"),
+        )
+        return {"code": 0, "message": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={
+            "code": 40007, "message": "Import failed", "detail": str(e),
         })
 
 
