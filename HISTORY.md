@@ -506,6 +506,35 @@
 
 ---
 
+## 2026-08-05: AI Token 预算与 JSON 输出优化
+
+### 问题背景
+
+DeepSeek V4 是推理模型，`max_tokens` 在 `reasoning_content`（内部推理）和 `content`（最终输出）之间共享。模型优先将 token 分配给推理过程，导致 JSON 输出被截断，测试用例生成为空。
+
+### 实施方案（5 项优化）
+
+1. **System Prompt 优化**：`ai_service.py` 中 `generate_test_cases` 的 system prompt 从约 2500 字符压缩到紧凑 schema 描述（~800 字符），节省约 700 tokens，直接让渡给 JSON 输出。
+
+2. **前端默认 max_tokens 提升**：`ModelConfig.tsx` 新建模型时默认 `max_tokens` 从 2048 提升到 16384，placeholder 同步更新。
+
+3. **Chat 场景 min_tokens 提升**：`ai_service.py` 中 `chat` 方法的 token 下限从 4096 提升到 16384。
+
+4. **reasoning_content 提取**：`OpenAIProvider.chat()` 返回结果增加 `reasoning_content` 字段，便于日志观测。
+
+5. **生成用例保持 32768**：压缩后的 system prompt 配合 32768 token 预算已足够。
+
+### 关键文件变更
+| 文件 | 变更 |
+|------|------|
+| `backend/app/services/ai_service.py` | System prompt 压缩 + chat min_tokens 4096→16384 |
+| `backend/app/ai/__init__.py` | `OpenAIProvider.chat()` 增加 `reasoning_content` |
+| `frontend/src/pages/ModelConfig.tsx` | 默认 max_tokens 2048→16384 + placeholder 更新 |
+| `KANBAN.md` | 新增优化记录 |
+| `HISTORY.md` | 本记录 |
+
+---
+
 ## 下一步计划
 - [ ] 端到端集成测试（AI → 流程图 → 编辑 → 代码 → 执行）
 - [ ] 性能优化（启动速度、大数据渲染）
@@ -516,4 +545,4 @@
 
 ---
 
-> 最后更新：2026-08-01
+> 最后更新：2026-08-05

@@ -113,6 +113,7 @@ class OpenAIProvider(AIProvider):
 
         return {
             "content": data["choices"][0]["message"]["content"],
+            "reasoning_content": data["choices"][0]["message"].get("reasoning_content"),
             "usage": data.get("usage", {}),
             "model": data.get("model", self.model_name),
         }

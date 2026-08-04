@@ -54,7 +54,7 @@ export default function ModelConfig() {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ provider: 'openai', is_default: false, parameters: { temperature: 0.7, max_tokens: 2048 } })
+    form.setFieldsValue({ provider: 'openai', is_default: false, parameters: { temperature: 0.7, max_tokens: 16384 } })
     setModalVisible(true)
   }
 
@@ -71,7 +71,7 @@ export default function ModelConfig() {
       // is never sent back to the client; an unchanged mask keeps the existing
       // key on the server (see handleSubmit).
       api_key: API_KEY_MASK,
-      parameters: model.parameters || { temperature: 0.7, max_tokens: 2048 },
+      parameters: model.parameters || { temperature: 0.7, max_tokens: 16384 },
     })
     setModalVisible(true)
   }
@@ -358,7 +358,7 @@ export default function ModelConfig() {
             <Switch />
           </Form.Item>
           <Form.Item name="parameters" label="高级参数" extra="temperature / max_tokens 等">
-            <Input.TextArea rows={3} placeholder='{"temperature": 0.7, "max_tokens": 2048}' />
+            <Input.TextArea rows={3} placeholder='{"temperature": 0.7, "max_tokens": 16384}' />
           </Form.Item>
         </Form>
       </Modal>

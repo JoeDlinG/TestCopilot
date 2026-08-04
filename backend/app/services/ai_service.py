@@ -512,7 +512,7 @@ class AIService:
             session_id = generate_short_id("sess")
 
         # Reasoning models need headroom or long answers get truncated.
-        provider = _provider_with_min_tokens(model, 4096)
+        provider = _provider_with_min_tokens(model, 16384)
 
         # Save user message
         chat_msg = ChatHistory(
@@ -587,59 +587,17 @@ class AIService:
         # guarantees the model always has room for a complete answer.
         provider = _provider_with_min_tokens(model, 32768)
 
-        system_prompt = """You are a test automation expert. Generate structured test cases from the given requirements.
-Output MUST be valid JSON in the following format:
-{
-    "test_cases": [
-        {
-            "name": "Test case name",
-            "description": "Detailed description of what this test verifies",
-            "steps": [
-                {
-                    "step_number": 1,
-                    "action": "Specific action to perform (e.g., Set power supply to 12V)",
-                    "expected_result": "Expected outcome of this step",
-                    "parameters": {},
-                    "device_type": "Type of device used (optional)",
-                    "flow_type": "action"
-                },
-                {
-                    "step_number": 2,
-                    "action": "Check if voltage > 10V",
-                    "expected_result": "Condition is true",
-                    "flow_type": "condition",
-                    "condition": "voltage > 10",
-                    "true_branch": "Proceed to step 3",
-                    "false_branch": "Report low voltage error"
-                },
-                {
-                    "step_number": 3,
-                    "action": "Repeat measurement 3 times",
-                    "flow_type": "loop",
-                    "loop_type": "for",
-                    "loop_variable": "i",
-                    "loop_expression": "3",
-                    "loop_body": "Measure and log voltage"
-                }
-            ],
-            "expected_result": "Overall expected test result",
-            "parameters": {},
-            "devices_required": ["power_supply", "multimeter"],
-            "tags": ["functional", "voltage"],
-            "flow_description": "Description of test flow suitable for flowchart creation"
-        }
-    ]
-}
+        system_prompt = """You are a test automation expert. Generate structured test cases as a single JSON object: {"test_cases": [...]}.
 
-Flow type rules:
-- "action" — a normal sequential step (send command, read value, log, etc.).
-- "condition" — an if/else branch point. Must include "condition" (Python expression), "true_branch" (what to do if true), and "false_branch" (what to do if false).
-- "loop" — a repeating block. Must include "loop_type" ("for" or "while"), "loop_variable" (for "for" loops), "loop_expression" (the range or while condition), and "loop_body" (what to repeat).
-- Omit "flow_type" for normal steps; defaults to "action".
+Each test case object: {name, description, steps, expected_result, parameters, devices_required, tags, flow_description}
+Each step object: {step_number, action, expected_result, parameters, device_type?, flow_type?}
 
-Use condition/loop nodes wherever the requirements naturally involve decisions or repetitions.
+Flow node types:
+- "action" (default): sequential step. No extra fields needed.
+- "condition": if/else branch. Include "condition" (Python expr), "true_branch" (action), "false_branch" (action).
+- "loop": repeating block. Include "loop_type" ("for"|"while"), "loop_variable" (for loop var name), "loop_expression" (range or while cond), "loop_body" (action description).
 
-IMPORTANT: Output ONLY a single JSON object whose top-level key is "test_cases" (an array). Do NOT output a bare JSON array, do NOT wrap the output in markdown code fences, and do NOT include any explanatory text outside the JSON object."""
+Output ONLY the JSON object. No markdown fences, no explanatory text. Preserve this exact top-level key: "test_cases" (array)."""
 
         # Attach plugin skills (explicit + auto-detected from requirements) so
         # generated test cases follow the device's real command protocol.
