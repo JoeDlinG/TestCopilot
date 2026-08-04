@@ -12,8 +12,20 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const message = error.response?.data?.detail || error.message || '请求失败'
-    console.error('API Error:', message)
+    // Unwrap FastAPI detail payload to log the actual reason, not just
+    // the generic outer "message" string (e.g. log "API key invalid"
+    // instead of "AI chat failed").
+    const body = error.response?.data
+    const detail = body?.detail
+    let msg: string
+    if (typeof detail === 'string') {
+      msg = detail
+    } else if (detail && typeof detail === 'object') {
+      msg = detail.detail || detail.message || error.message || '请求失败'
+    } else {
+      msg = body?.message || error.message || '请求失败'
+    }
+    console.error('API Error:', msg, error.response?.status)
     return Promise.reject(error)
   }
 )

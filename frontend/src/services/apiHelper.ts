@@ -34,8 +34,31 @@ export function extractTotal(response: any, fallback: number = 0): number {
   return fallback
 }
 
+/** Unwrap the actual error detail from a FastAPI HTTPException response.
+ *
+ * FastAPI ``HTTPException(detail={...})`` serialises as:
+ *   ``{"detail": {"code": ..., "message": "generic", "detail": "actual"}}``
+ *
+ * We prefer the innermost ``detail.detail`` (the real reason) and fall back
+ * through the generic ``detail.message``, the top-level ``message``, and
+ * finally the caller-supplied default.
+ */
+function _errorMessage(err: any, defaultMsg: string): string {
+  const body = err?.response?.data
+  if (!body) return defaultMsg
+  const detail = body.detail
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object') {
+    // Innermost detail is the most useful diagnostic
+    return detail.detail || detail.message || defaultMsg
+  }
+  return body.message || defaultMsg
+}
+
 // Handle API error with user-friendly message
 export function handleApiError(err: any, defaultMsg: string = '操作失败'): void {
-  const msg = err?.response?.data?.detail?.message || err?.response?.data?.message || defaultMsg
+  const msg = _errorMessage(err, defaultMsg)
   message.error(msg)
 }
+
+export { _errorMessage }

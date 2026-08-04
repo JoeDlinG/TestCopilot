@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { aiAPI, testCaseAPI, pluginAPI } from '../services/api'
-import { extractData, handleApiError } from '../services/apiHelper'
+import { extractData, handleApiError, _errorMessage } from '../services/apiHelper'
 import { useChatStore } from '../stores/chatStore'
 import type { AIModel, TestCase } from '../types'
 
@@ -112,8 +112,7 @@ export default function AIChat() {
       setSessionId(data?.session_id ?? '')
       addMessage({ role: 'assistant', content: data?.response ?? '（无响应内容）' })
     } catch (err) {
-      const detail = (err as any)?.response?.data?.detail
-      const errMsg = (typeof detail === 'string' ? detail : detail?.message) || 'AI 请求失败'
+      const errMsg = _errorMessage(err, 'AI 请求失败')
       message.error(errMsg)
       addMessage({ role: 'assistant', content: `⚠️ 请求失败：${errMsg}` })
     } finally {

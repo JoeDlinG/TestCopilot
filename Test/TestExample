@@ -1,0 +1,2 @@
+通过mini Gateway 100发送每隔200ms发送一条CAN消息 0x850201,ID:0x13，并显示回复的消息。
+链接mini-Gateway100，通过mini-Gateway100读取数字通道1，如果读到是0，则通过CAN1，发送CAN消息 0x850102，CAN ID=0x10，并读取回复的消息，如果没有回复，提示time out

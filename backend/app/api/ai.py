@@ -59,7 +59,7 @@ async def create_model(data: AIModelConfigCreate, db: AsyncSession = Depends(get
         model = await ai_service.configure_model(db, data.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40008, "message": "配置验证失败", "detail": str(e),
+            "code": 40008, "message": "配置验证失败", "detail": _unwrap_error(e),
         })
     return {"code": 0, "message": "success", "data": _model_to_dict(model)}
 
@@ -90,7 +90,7 @@ async def update_model(model_id: str, data: AIModelConfigUpdate, db: AsyncSessio
         model = await ai_service.update_model(db, model_id, data.model_dump(exclude_unset=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40008, "message": "配置验证失败", "detail": str(e),
+            "code": 40008, "message": "配置验证失败", "detail": _unwrap_error(e),
         })
     if not model:
         raise HTTPException(status_code=404, detail={
@@ -116,7 +116,7 @@ async def activate_model(model_id: str, db: AsyncSession = Depends(get_db)):
         return {"code": 0, "message": "success", "data": _model_to_dict(model)}
     except Exception as e:
         raise HTTPException(status_code=404, detail={
-            "code": 40006, "message": "AI model not found", "detail": str(e),
+            "code": 40006, "message": "AI model not found", "detail": _unwrap_error(e),
         })
 
 
@@ -127,11 +127,21 @@ async def test_model(model_id: str, db: AsyncSession = Depends(get_db)):
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40007, "message": "Model test failed", "detail": str(e),
+            "code": 40007, "message": "Model test failed", "detail": _unwrap_error(e),
         })
 
 
 # ============ Chat ============
+
+def _unwrap_error(e: Exception) -> str:
+    """Extract the most useful diagnostic string from an exception.
+
+    Custom ``AITestLabException`` subclasses carry a ``detail`` attribute
+    with the concrete failure reason (e.g. "Invalid API key").  We prefer
+    that over ``str(e)`` (which returns the generic ``message``).
+    """
+    return getattr(e, "detail", None) or str(e)
+
 
 @router.post("/chat")
 async def chat(data: AIChatRequest, db: AsyncSession = Depends(get_db)):
@@ -145,7 +155,7 @@ async def chat(data: AIChatRequest, db: AsyncSession = Depends(get_db)):
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40007, "message": "AI chat failed", "detail": str(e),
+            "code": 40007, "message": "AI chat failed", "detail": _unwrap_error(e),
         })
 
 
@@ -161,7 +171,7 @@ async def generate_test_cases(data: TestCaseGenerateRequest, db: AsyncSession = 
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40007, "message": "Generation failed", "detail": str(e),
+            "code": 40007, "message": "Generation failed", "detail": _unwrap_error(e),
         })
 
 
@@ -174,7 +184,7 @@ async def natural_language_query(data: NLQueryRequest, db: AsyncSession = Depend
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail={
-            "code": 40007, "message": "Query failed", "detail": str(e),
+            "code": 40007, "message": "Query failed", "detail": _unwrap_error(e),
         })
 
 

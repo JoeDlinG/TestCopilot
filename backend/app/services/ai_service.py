@@ -184,6 +184,49 @@ def _extract_json_object(text: str) -> Optional[dict]:
             except (json.JSONDecodeError, ValueError):
                 pass
 
+    # 5) Salvage truncated JSON — reasoning models may exhaust their token
+    #    budget on reasoning_content, leaving the final JSON payload truncated
+    #    (missing closing braces / brackets).  We count unmatched open tokens
+    #    and append the needed closers, then try to parse the result.
+    m = re.search(r'\{\s*"test_cases"\s*:\s*\[', s)
+    if m:
+        salvage = s[m.start():]
+        # Count unmatched braces and brackets
+        depth_obj = 0
+        depth_arr = 0
+        in_str = False
+        esc = False
+        for ch in salvage:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth_obj += 1
+            elif ch == "}":
+                depth_obj -= 1
+            elif ch == "[":
+                depth_arr += 1
+            elif ch == "]":
+                depth_arr -= 1
+        # Close unmatched brackets
+        suffix = "]" * max(depth_arr, 0) + "}" * max(depth_obj, 0)
+        if suffix:
+            candidate = salvage + suffix
+            try:
+                obj = json.loads(candidate)
+                if isinstance(obj, dict):
+                    return obj
+            except (json.JSONDecodeError, ValueError):
+                pass
+
     return None
 
 
@@ -537,9 +580,12 @@ class AIService:
         if not model:
             raise AIModelNotFoundError(model_id or "default")
 
-        # Reasoning models burn tokens on reasoning_content; give generation a
-        # large budget so the JSON payload is never truncated.
-        provider = _provider_with_min_tokens(model, 8192)
+        # Reasoning models (DeepSeek-V4/R1) split max_tokens between
+        # reasoning_content and the final content.  With a large system
+        # prompt the model can exhaust most of the budget on reasoning,
+        # leaving an empty or truncated JSON payload.  A generous floor
+        # guarantees the model always has room for a complete answer.
+        provider = _provider_with_min_tokens(model, 32768)
 
         system_prompt = """You are a test automation expert. Generate structured test cases from the given requirements.
 Output MUST be valid JSON in the following format:
@@ -651,9 +697,12 @@ IMPORTANT: Output ONLY a single JSON object whose top-level key is "test_cases" 
         if not model:
             raise AIModelNotFoundError(model_id or "default")
 
-        # Reasoning models burn tokens on reasoning_content; give generation a
-        # large budget so the JSON payload is never truncated.
-        provider = _provider_with_min_tokens(model, 8192)
+        # Reasoning models (DeepSeek-V4/R1) split max_tokens between
+        # reasoning_content and the final content.  With a large system
+        # prompt the model can exhaust most of the budget on reasoning,
+        # leaving an empty or truncated JSON payload.  A generous floor
+        # guarantees the model always has room for a complete answer.
+        provider = _provider_with_min_tokens(model, 32768)
 
         schema_info = """
 Database tables:

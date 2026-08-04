@@ -8,6 +8,7 @@ import {
   CheckCircleOutlined, ThunderboltOutlined, ApiOutlined, MessageOutlined,
 } from '@ant-design/icons'
 import { aiAPI } from '../services/api'
+import { _errorMessage } from '../services/apiHelper'
 import { extractData, handleApiError } from '../services/apiHelper'
 import { PROVIDERS, type AIModel, type AIModelConfigRequest, type AIChatMessage } from '../types'
 
@@ -190,8 +191,7 @@ export default function ModelConfig() {
       const data: any = res.data?.data || res.data
       setChatMessages(prev => [...prev, { role: 'assistant', content: data?.response || '（无响应内容）' }])
     } catch (err) {
-      const detail = (err as any)?.response?.data?.detail
-      const errMsg = (typeof detail === 'string' ? detail : detail?.message) || '对话失败'
+      const errMsg = _errorMessage(err, '对话失败')
       setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ 错误：${errMsg}` }])
     } finally {
       setChatLoading(false)
