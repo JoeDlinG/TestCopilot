@@ -102,7 +102,10 @@ class OpenAIProvider(AIProvider):
             **self.parameters,
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        # Reasoning models (DeepSeek-V4/R1) can spend 60-180s generating
+        # reasoning_content before emitting the final answer. A 300 s ceiling
+        # avoids premature socket-level timeouts on long generations.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers=headers,

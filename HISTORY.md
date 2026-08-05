@@ -535,6 +535,44 @@ DeepSeek V4 是推理模型，`max_tokens` 在 `reasoning_content`（内部推�
 
 ---
 
+## 2026-08-05 (上午): AI 测试用例生成超时修复 + 鲁棒性增强
+
+### 问题现象
+
+AI 模型配置正常，对话有回复。但 AI 助手中点击「生成测试用例」时提示 "AI请求失败"（前端 30s 超时），而后端直接调用 curl 却能成功（耗时约 70 秒）。
+
+### 根因定位
+
+**前端 axios 默认超时 30 秒**。DeepSeek V4 是推理模型，`completion_tokens` 的约 70% 被 `reasoning_content`（内部推理）消耗。例如用"mini-Gateway100 读 DIG1 → CAN1 发送 0x850102"测试时，实际 API 调用：`prompt_tokens=2558, completion_tokens=14928, reasoning_tokens=10510`，耗时约 70 秒——远超前端 30s 超时。
+
+这是一个**之前未被发现的系统性 bug**：上次 Token 预算优化已增加后端 min_tokens（32768）和 httpx 超时（120s），但未同步更新前端 axios 超时。
+
+### 修复（4 项 + 日志增强）
+
+1. **前端 axios 超时分层**：新增 `apiLongTimeout` 实例（300s）；AI 类 API（chat/generate/query/test/speech）全部切到长超时；基础 API 保持 120s
+2. **后端 httpx 分层超时**：`OpenAIProvider.chat()` 超时从 `timeout=120.0` → `httpx.Timeout(300.0, connect=30.0)`（总超时 5 分钟，连接超时 30 秒）
+3. **超时友好提示**：`apiHelper.ts` 检测 `ECONNABORTED`/`ETIMEDOUT`，提示"推理模型可能需要 1-3 分钟生成回复"，避免用户困惑
+4. **日志增强**：`generate_test_cases` 增加 `elapsed` 耗时 + `reasoning_tokens` 单独计数日志，便于后续排查
+
+### 关键文件变更
+
+| 文件 | 变更 |
+|------|------|
+| `frontend/src/services/api.ts` | 新增 `apiLongTimeout`（300s），AI API 全部切到此实例 |
+| `frontend/src/services/apiHelper.ts` | 超时/网络错误特殊提示 |
+| `backend/app/ai/__init__.py` | httpx 超时 `httpx.Timeout(300, connect=30)` |
+| `backend/app/services/ai_service.py` | 导入 `time`，`generate_test_cases` 耗时+token 日志 |
+| `KANBAN.md` | 新增优化记录 |
+| `HISTORY.md` | 本记录 |
+
+### 验证
+
+- 用户需求文本"链接mini-Gateway100，通过mini-Gateway100读取数字通道1，如果读到是0，则通过CAN1，发送CAN消息 0x850102，CAN ID=0x10，并读取回复的消息，如果没有回复，提示time out" → 生成 7 个测试用例（正常/异常/边界全覆盖）
+- 后端 Python 编译 ✅ | 前端 TypeScript 编译 ✅
+- 耗时 ~70s，`completion_tokens=14928, reasoning_tokens=10510`
+
+---
+
 ## 下一步计划
 - [ ] 端到端集成测试（AI → 流程图 → 编辑 → 代码 → 执行）
 - [ ] 性能优化（启动速度、大数据渲染）

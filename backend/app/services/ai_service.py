@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -617,8 +618,18 @@ Output ONLY the JSON object. No markdown fences, no explanatory text. Preserve t
         ]
 
         try:
+            t0 = time.monotonic()
             result = await provider.chat(messages)
+            elapsed = time.monotonic() - t0
             response_text = result["content"]
+            usage = result.get("usage", {})
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens", 0)
+            logger.info(
+                "generate_test_cases: model=%s elapsed=%.1fs tokens={prompt=%s completion=%s total=%s reasoning=%s}",
+                model.model_name, elapsed,
+                usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                usage.get("total_tokens"), reasoning,
+            )
         except Exception as e:
             raise AICallError(model.provider, str(e))
 

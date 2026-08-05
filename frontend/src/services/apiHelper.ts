@@ -42,10 +42,22 @@ export function extractTotal(response: any, fallback: number = 0): number {
  * We prefer the innermost ``detail.detail`` (the real reason) and fall back
  * through the generic ``detail.message``, the top-level ``message``, and
  * finally the caller-supplied default.
+ *
+ * Timeout errors (axios ECONNABORTED / ETIMEDOUT) receive a descriptive
+ * message that explains the likely cause (reasoning model is still thinking).
  */
 function _errorMessage(err: any, defaultMsg: string): string {
   const body = err?.response?.data
-  if (!body) return defaultMsg
+  if (!body) {
+    // No response at all — most likely a timeout or network error
+    if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+      return `${defaultMsg}（请求超时：AI 模型正在推理中，请稍后重试。推理模型可能需要 1-3 分钟生成回复。）`
+    }
+    if (err?.code === 'ERR_NETWORK' || err?.message?.includes('Network')) {
+      return `${defaultMsg}（网络错误：请检查后端服务是否正常运行）`
+    }
+    return defaultMsg
+  }
   const detail = body.detail
   if (typeof detail === 'string') return detail
   if (detail && typeof detail === 'object') {

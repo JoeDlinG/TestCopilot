@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-08-05
+> 最后更新：2026-08-05 (上午)
 
 ---
 
@@ -113,6 +113,14 @@
 - [x] **前端默认 max_tokens 提升**：新建模型默认值 2048 → 16384，placeholder 同步更新
 - [x] **Chat min_tokens 提升**：对话场景 token 下限 4096 → 16384
 - [x] **reasoning_content 提取**：`OpenAIProvider.chat()` 返回结果增加 `reasoning_content` 字段，增强可观测性
+
+### AI 测试用例生成超时修复 + 鲁棒性增强 (2026-08-05)
+- [x] **根因定位**：前端 axios 默认超时 30s，DeepSeek V4 推理模型生成用例耗时 60-120s（reasoning_tokens 占比 70%+），前端提前 timeout
+- [x] **前端超时优化**：AI 类 API（chat/generate/query/test）切换为 300s 长超时实例；基础 API 超时 120s
+- [x] **后端 httpx 超时**：OpenAIProvider SDK 调用超时 120s → `httpx.Timeout(300s, connect=30s)`
+- [x] **超时友好提示**：`apiHelper.ts` 检测 ECONNABORTED/ETIMEDOUT，提示"推理模型可能需要 1-3 分钟"
+- [x] **日志增强**：`generate_test_cases` 增加耗时 + token 统计日志（含 reasoning_tokens 单独计数）
+- [x] **验证**：用户需求"mini-Gateway100 读 DIG1 → CAN1 发送 0x850102 → 超时提示"生成 7 个测试用例验证通过
 
 ---
 
