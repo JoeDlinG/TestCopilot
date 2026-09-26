@@ -116,6 +116,9 @@ export const testCaseAPI = {
   // Result parsing preview (uses the same engine as the execution)
   parsePreview: (raw: string, parsers: any[]) =>
     api.post('/testcases/parse-preview', { raw, parsers }),
+  // Historical trend of parsed values (read back from stored step results)
+  parsedTrend: (id: string, limit = 50) =>
+    api.get(`/testcases/${id}/parsed-trend`, { params: { limit } }),
 }
 
 // Execution APIs

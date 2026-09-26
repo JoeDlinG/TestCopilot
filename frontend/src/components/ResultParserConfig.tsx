@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Modal, Button, Space, Table, Tag, Input, InputNumber, Select,
-  Card, Row, Col, Empty, Alert, Typography, Tooltip, Divider
+  Card, Row, Col, Empty, Alert, Typography, Tooltip, Divider, message
 } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, ExperimentOutlined, CopyOutlined
@@ -43,6 +43,10 @@ type Props = {
   parsers: ParserSpec[]
   /** A real response captured from a previous run, used to seed the preview */
   initialSample?: string
+  /** Names already used by OTHER steps of the same test case.
+   *  Parsed field names must be unique across the whole test case because
+   *  they identify a value in the trend view. */
+  otherNames?: string[]
   saving?: boolean
   onCancel: () => void
   onSave: (parsers: ParserSpec[]) => void
@@ -71,7 +75,7 @@ function normalise(p: ParserSpec): ParserSpec {
 }
 
 export default function ResultParserConfig({
-  open, stepLabel, parsers, initialSample, saving, onCancel, onSave,
+  open, stepLabel, parsers, initialSample, otherNames, saving, onCancel, onSave,
 }: Props) {
   const [items, setItems] = useState<ParserSpec[]>([])
   const [sample, setSample] = useState('')
@@ -102,8 +106,47 @@ export default function ResultParserConfig({
     )))
   }
 
-  const addItem = () => setItems(prev => [...prev, blankParser(prev.length)])
+  // ---- name uniqueness: within this step AND against other steps ----
+  const taken = (otherNames || []).map(n => String(n).trim()).filter(Boolean)
+  const nameErrors: string[] = (() => {
+    const counts: Record<string, number> = {}
+    items.forEach(it => {
+      const n = String(it.name || '').trim()
+      if (n) counts[n] = (counts[n] || 0) + 1
+    })
+    return items.map(it => {
+      const n = String(it.name || '').trim()
+      if (!n) return '名称不能为空'
+      if (counts[n] > 1) return '名称重复，请重新命名'
+      if (taken.includes(n)) return '该名称已被其他步骤使用，请重新命名'
+      return ''
+    })
+  })()
+  const firstError = nameErrors.find(e => e)
+
+  const suggestName = (list: ParserSpec[]) => {
+    const used = new Set([
+      ...list.map(i => String(i.name || '').trim()),
+      ...taken,
+    ])
+    let n = list.length + 1
+    while (used.has(`字段${n}`)) n += 1
+    return `字段${n}`
+  }
+
+  const addItem = () => setItems(prev => [
+    ...prev,
+    { ...blankParser(prev.length), name: suggestName(prev) },
+  ])
   const removeItem = (index: number) => setItems(prev => prev.filter((_, i) => i !== index))
+
+  const handleSave = () => {
+    if (firstError) {
+      message.error(`解析项名称无效：${firstError}`)
+      return
+    }
+    onSave(items.map(normalise))
+  }
 
   const runPreview = async () => {
     if (!items.length) return
@@ -131,7 +174,7 @@ export default function ResultParserConfig({
       width={900}
       open={open}
       onCancel={onCancel}
-      onOk={() => onSave(items.map(normalise))}
+      onOk={handleSave}
       confirmLoading={saving}
       okText="保存解析配置"
       cancelText="取消"
@@ -156,14 +199,20 @@ export default function ResultParserConfig({
         >
           <Row gutter={8}>
             <Col span={7}>
-              <Text type="secondary" style={{ fontSize: 12 }}>名称</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>名称（全用例唯一）</Text>
               <Input
                 size="small"
+                status={nameErrors[index] ? 'error' : undefined}
                 style={{ marginTop: 2 }}
                 placeholder="如：母线电压"
                 value={item.name}
                 onChange={e => update(index, { name: e.target.value })}
               />
+              {nameErrors[index] && (
+                <Text type="danger" style={{ fontSize: 11 }}>
+                  {nameErrors[index]}
+                </Text>
+              )}
             </Col>
             <Col span={7}>
               <Text type="secondary" style={{ fontSize: 12 }}>数据类型</Text>

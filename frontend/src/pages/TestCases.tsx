@@ -42,7 +42,8 @@ export default function TestCases() {
   const [parserOpen, setParserOpen] = useState(false)
   const [parserSaving, setParserSaving] = useState(false)
   const [parserTarget, setParserTarget] = useState<{
-    tcId: string; nodeId: string; label: string; parsers: ParserSpec[]; sample: string
+    tcId: string; nodeId: string; label: string; parsers: ParserSpec[]
+    sample: string; otherNames: string[]
   } | null>(null)
 
   const loadTestCases = async () => {
@@ -92,12 +93,21 @@ export default function TestCases() {
 
   const openParserConfig = (tcId: string, node: any, stepIndex: number) => {
     const cfg = node?.config || {}
+    // names already taken by the other steps - parsed field names must be
+    // unique across the whole test case (they identify a value in trends)
+    const otherNames: string[] = ((flows[tcId]?.nodes || []) as any[])
+      .filter((n: any) => n.id !== node.id)
+      .flatMap((n: any) =>
+        ((n?.config?.parsers || []) as any[]).map((p: any) => String(p?.name || '').trim())
+      )
+      .filter(Boolean)
     setParserTarget({
       tcId,
       nodeId: node.id,
       label: node?.data?.label || node?.label || `步骤 ${stepIndex}`,
       parsers: cfg.parsers || [],
       sample: stepSamples[tcId]?.[stepIndex] || '',
+      otherNames,
     })
     setParserOpen(true)
   }
@@ -389,6 +399,7 @@ export default function TestCases() {
           stepLabel={parserTarget.label}
           parsers={parserTarget.parsers}
           initialSample={parserTarget.sample}
+          otherNames={parserTarget.otherNames}
           saving={parserSaving}
           onCancel={() => setParserOpen(false)}
           onSave={saveParsers}

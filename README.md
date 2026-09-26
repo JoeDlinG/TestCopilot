@@ -11,7 +11,9 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 | **插件扩展** | Python 插件 SDK（`BaseProtocolPlugin` 基类），动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱；支持自定义协议一键创建设备 |
 | **AI 大模型** | 支持 OpenAI/Ollama/Anthropic 及国产模型（混元/通义千问/文心/LocalAI/vLLM 等），Provider 抽象 + Fallback 机制；前端模型管理页（API Key 配置/测试/默认切换） |
 | **测试用例生成** | 文字/语音输入需求 → AI 自动生成结构化测试用例 → ReactFlow 流程图可视化编辑（支持拖拽、撤销/重做、条件分支、循环） |
-| **测试执行引擎** | 顺序/并行/条件/循环执行，变量系统，钩子系统，WebSocket 实时仪表盘监控 |
+| **测试执行引擎** | 顺序/并行/条件/循环执行，变量系统，钩子系统；执行页内置实时通信监控（暂停/继续/清空）、步骤状态窗口与解析数据曲线 |
+| **结果解析与判定** | 每个测试步骤可配置多个解析项：数据类型（十六进制 / 二进制 / 布尔 / 十进制 / 字符串）+ 起始位 + 数据长度 + 单位（bit / byte）；判定条件支持最小值 / 最大值、等于（可多选，即或运算）。解析值超出上下限即判定 **FAIL** —— 这是判定结果，不是系统或设备告警 —— 并驱动该步骤失败。解析项名称在用例内必须唯一，重复时提示重新命名 |
+| **解析数据趋势** | 解析值随步骤结果一起落库，可随时打开选择查看历史趋势曲线（不单独建趋势表）；用例执行时可勾选需要实时显示的曲线，支持大屏模式 |
 | **通信日志** | SQLite + CSV 双写，通信数据实时记录，keyset 分页查询，CSV 批量导出 |
 | **自然语言查询** | 文字/语音自然语言查询测试数据（NL2SQL），查询历史管理 |
 | **测试报告** | 自定义字段模板，支持 PDF/HTML/Markdown 输出，AI 生成测试结论 |
@@ -99,7 +101,9 @@ AITestLab/
 │   ├── src/
 │   │   ├── components/                # 通用 UI 组件
 │   │   │   ├── Layout.tsx             # 主布局（侧栏 + 头部 + 内容区）
-│   │   │   └── WebSocketProvider.tsx   # WebSocket 连接管理
+│   │   │   ├── WebSocketProvider.tsx   # WebSocket 连接管理
+│   │   │   ├── ResultParserConfig.tsx  # 测试结果解析配置界面（数据类型/起始位/长度/单位/判定条件）
+│   │   │   └── ParsedTrendChart.tsx    # 解析数据趋势曲线（支持大屏模式）
 │   │   ├── pages/                     # 页面组件
 │   │   │   ├── DashboardPage.tsx      # 主页仪表盘
 │   │   │   ├── DevicesPage.tsx        # 设备管理
@@ -142,6 +146,7 @@ AITestLab/
 │   │   │   ├── schemas.py             # 业务 Schema
 │   │   │   └── common.py              # 通用分页/错误响应
 │   │   ├── services/                  # 业务逻辑层
+│   │   │   ├── response_parser.py     # 结果解析与判定引擎（执行与代码生成共用）
 │   │   │   ├── device_service.py      # 设备连接/状态管理
 │   │   │   ├── testgen_service.py     # AI 测试用例生成
 │   │   │   ├── execution_service.py   # 测试执行引擎
@@ -177,7 +182,7 @@ AITestLab/
 |------|------|----------|
 | 设备管理 | `/api/devices` | CRUD、连接/断开、发送命令、可用设备发现 |
 | AI | `/api/ai` | 模型配置 CRUD、对话补全、用例生成、语音转写、NL 查询 |
-| 测试用例 | `/api/testcases` | 用例 CRUD、流程图同步 |
+| 测试用例 | `/api/testcases` | 用例 CRUD、流程图同步、解析预览 `parse-preview`、解析历史趋势 `parsed-trend`、代码生成 `generate-code` |
 | 测试执行 | `/api/executions` | 创建执行、启动/停止、状态查询、步骤结果 |
 | 通信日志 | `/api/logs` | 日志查询（分页/筛选）、CSV 导出 |
 | 测试报告 | `/api/reports` | 报告生成、模板 CRUD、报告下载 |
@@ -197,7 +202,7 @@ AITestLab/
 | `test_cases` | 测试用例 | 名称、需求描述、参数配置、关联流程图 |
 | `test_flows` | 流程图数据 | ReactFlow nodes/edges JSON |
 | `test_executions` | 测试执行记录 | 状态、开始/结束时间、变量上下文 |
-| `test_step_results` | 步骤执行结果 | 步骤序号、输入/输出值、耗时、状态 |
+| `test_step_results` | 步骤执行结果 | 步骤序号、输入/输出值、耗时、状态、解析判定结果（`parsed_results` JSON） |
 | `communication_logs` | 设备通信日志 | 原始命令、响应、时间戳、方向 |
 | `ai_models` | AI 模型配置 | Provider 类型、API Key、模型名 |
 | `plugins` | 插件注册信息 | 名称、版本、类型、状态、配置 |
@@ -299,6 +304,7 @@ curl -X POST http://localhost:8000/api/plugins/install \
 | [DB_DESIGN.md](docs/DB_DESIGN.md) | 数据库设计：11 张表、字段定义、索引策略、迁移方案 |
 | [TECH_DECISIONS.md](docs/TECH_DECISIONS.md) | 技术决策：9 项选型分析、5 条 ADR、性能目标、安全设计 |
 | [USER_MANUAL.md](docs/USER_MANUAL.md) | 使用手册：详细操作指南 |
+| [CUSTOM_DASHBOARD_IDEAS.md](docs/CUSTOM_DASHBOARD_IDEAS.md) | 自定义仪表盘：设计草案与头脑风暴（待办功能） |
 
 ## License
 

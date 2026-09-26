@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Empty, Statistic,
-  Row, Col, Drawer, Descriptions, Select, List, Alert, Tooltip
+  Row, Col, Drawer, Descriptions, Select, List, Alert, Tooltip,
+  Checkbox, Modal, Spin
 } from 'antd'
 import {
   PlayCircleOutlined, PauseCircleOutlined, CheckCircleOutlined,
   CloseCircleOutlined, SyncOutlined, ReloadOutlined, ExclamationCircleOutlined,
   EyeOutlined, ClearOutlined, ApiOutlined, OrderedListOutlined,
-  ArrowDownOutlined, ArrowUpOutlined, MinusCircleOutlined, AimOutlined
+  ArrowDownOutlined, ArrowUpOutlined, MinusCircleOutlined, AimOutlined,
+  LineChartOutlined, FullscreenOutlined, FullscreenExitOutlined
 } from '@ant-design/icons'
 import { executionAPI, deviceAPI, testCaseAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
+import ParsedTrendChart, { toNumber } from '../components/ParsedTrendChart'
 import type { TestExecution } from '../types'
 
 const { Title, Text } = Typography
@@ -68,6 +71,23 @@ function normalizeParsed(v: any): any[] {
   }
 }
 
+/** One chart row per step: { label: '#N', <field name>: numeric value } */
+function buildCurveRow(stepIndex: number, parsed: any): any | null {
+  const list = normalizeParsed(parsed)
+  if (!list.length) return null
+  const row: any = { label: `#${stepIndex}` }
+  let any = false
+  for (const p of list) {
+    const name = String(p?.name || '').trim()
+    if (!name) continue
+    row[name] = toNumber(p?.value)
+    any = true
+  }
+  return any ? row : null
+}
+
+const stepNo = (label: any) => Number(String(label ?? '').replace('#', '')) || 0
+
 export default function Executions() {
   const [executions, setExecutions] = useState<TestExecution[]>([])
   const [loading, setLoading] = useState(false)
@@ -90,6 +110,16 @@ export default function Executions() {
   const [execSteps, setExecSteps] = useState<any[]>([])
   // all steps of the flow, so the window shows the whole plan while running
   const [flowSteps, setFlowSteps] = useState<any[]>([])
+
+  // ---- parsed value curves (real-time + historical) ----
+  const [curvePoints, setCurvePoints] = useState<any[]>([])
+  const [selectedFields, setSelectedFields] = useState<string[]>([])
+  const knownFieldsRef = useRef<string[]>([])
+  const [trendOpen, setTrendOpen] = useState(false)
+  const [trendData, setTrendData] = useState<any>(null)
+  const [trendFields, setTrendFields] = useState<string[]>([])
+  const [trendLoading, setTrendLoading] = useState(false)
+  const [bigScreen, setBigScreen] = useState(false)
 
   const handleViewDetail = async (id: string) => {
     try {
@@ -288,6 +318,11 @@ export default function Executions() {
     if (!trackedId) return
     let cancelled = false
 
+    // each execution starts with a clean curve + selection
+    setCurvePoints([])
+    setSelectedFields([])
+    knownFieldsRef.current = []
+
     const loadDetail = async () => {
       try {
         const res = await executionAPI.get(trackedId)
@@ -303,6 +338,14 @@ export default function Executions() {
         } else if (d?.status !== 'running') {
           setExecSteps([])
         }
+        // chart points come straight from the stored parsed results
+        setCurvePoints(
+          (d?.step_results || [])
+            .slice()
+            .sort((a: any, b: any) => Number(a.step_index) - Number(b.step_index))
+            .map((s: any) => buildCurveRow(s.step_index, s.parsed_results))
+            .filter(Boolean) as any[]
+        )
       } catch {
         /* ignore transient failures */
       }
@@ -316,7 +359,18 @@ export default function Executions() {
       if (msg.type === 'step_started') {
         upsertStep(msg.step_index, { status: 'running', label: msg.label })
       } else if (msg.type === 'step_completed') {
-        upsertStep(msg.step_index, { status: msg.status })
+        upsertStep(msg.step_index, {
+          status: msg.status,
+          actual: msg.actual,
+          parsed_results: msg.parsed_results,
+        })
+        const row = buildCurveRow(msg.step_index, msg.parsed_results)
+        if (row) {
+          setCurvePoints(prev =>
+            [...prev.filter(r => r.label !== row.label), row]
+              .sort((a, b) => stepNo(a.label) - stepNo(b.label))
+          )
+        }
       } else if (msg.type === 'step_failed') {
         upsertStep(msg.step_index, { status: 'failed', error_message: msg.error })
       } else if (msg.type === 'execution_completed') {
@@ -377,6 +431,90 @@ export default function Executions() {
         }
       })
     : execSteps.map((s: any) => ({ ...s, parsed: normalizeParsed(s.parsed_results) }))
+
+  // ---- parsed fields that can be plotted ----
+  const availableFields = (() => {
+    const set = new Set<string>()
+    mergedSteps.forEach(s => (s.parsed || []).forEach((p: any) => {
+      const n = String(p?.name || '').trim()
+      if (n) set.add(n)
+    }))
+    curvePoints.forEach(r => Object.keys(r).forEach(k => {
+      if (k !== 'label') set.add(k)
+    }))
+    return Array.from(set)
+  })()
+
+  // newly discovered fields start selected; user can uncheck them anytime
+  useEffect(() => {
+    const fresh = availableFields.filter(f => !knownFieldsRef.current.includes(f))
+    if (!fresh.length) return
+    knownFieldsRef.current = [...knownFieldsRef.current, ...fresh]
+    setSelectedFields(prev => Array.from(new Set([...prev, ...fresh])))
+  }, [availableFields])
+
+  // per-field summary: last / min / max and how many judgements failed
+  const fieldStats = selectedFields.map(f => {
+    const vals = curvePoints
+      .map(r => r[f])
+      .filter(v => typeof v === 'number' && Number.isFinite(v)) as number[]
+    const fails = mergedSteps.reduce(
+      (n, s) => n + (s.parsed || []).filter(
+        (p: any) => String(p?.name || '').trim() === f && p?.ok === false
+      ).length,
+      0,
+    )
+    return {
+      field: f,
+      last: vals.length ? vals[vals.length - 1] : null,
+      min: vals.length ? Math.min(...vals) : null,
+      max: vals.length ? Math.max(...vals) : null,
+      fails,
+    }
+  })
+
+  const openTrend = async () => {
+    const tcId = trackedInfo?.testcase_id
+    if (!tcId) {
+      message.info('请先选择一次执行记录')
+      return
+    }
+    setTrendOpen(true)
+    setTrendLoading(true)
+    try {
+      const res = await testCaseAPI.parsedTrend(tcId, 50)
+      const data = res.data?.data ?? res.data
+      setTrendData(data)
+      setTrendFields((data?.fields || []).slice(0, 5))
+    } catch (err) {
+      handleApiError(err, '加载历史趋势失败')
+    } finally {
+      setTrendLoading(false)
+    }
+  }
+
+  // flatten historical series into chart rows, ordered by execution then step
+  const trendRows = (() => {
+    if (!trendData?.series) return []
+    const order: Record<string, number> = {}
+    ;(trendData.executions || []).forEach((e: any, i: number) => { order[e.id] = i })
+    const rowByKey: Record<string, any> = {}
+    const slots: Array<{ key: string; exec: string; step: number }> = []
+    for (const f of trendFields) {
+      for (const p of (trendData.series[f] || [])) {
+        const key = `${p.execution_id}#${p.step_index}`
+        if (!rowByKey[key]) {
+          rowByKey[key] = { label: `#${p.step_index}` }
+          slots.push({ key, exec: p.execution_id, step: p.step_index })
+        }
+        rowByKey[key][f] = p.num
+      }
+    }
+    slots.sort(
+      (a, b) => (order[a.exec] ?? 0) - (order[b.exec] ?? 0) || a.step - b.step
+    )
+    return slots.map(s => rowByKey[s.key])
+  })()
 
   const currentStep = mergedSteps.find(s => s.status === 'running')
   const trackedExec = executions.find(e => e.id === trackedId)
@@ -713,6 +851,84 @@ export default function Executions() {
         </Col>
       </Row>
 
+      {/* ---------- parsed data curves (real time + historical) ---------- */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <Space>
+                <LineChartOutlined />
+                <span>解析数据曲线</span>
+                <Tag color="purple">{curvePoints.length} 点</Tag>
+                {selectedFields.length > 0 && (
+                  <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
+                    已选 {selectedFields.length} 项
+                  </Text>
+                )}
+              </Space>
+            }
+            extra={
+              <Space>
+                <Button size="small" icon={<LineChartOutlined />} onClick={openTrend}>
+                  历史趋势
+                </Button>
+                <Tooltip title={bigScreen ? '退出大屏模式' : '大屏模式'}>
+                  <Button
+                    size="small"
+                    icon={bigScreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                    onClick={() => setBigScreen(v => !v)}
+                  >
+                    {bigScreen ? '退出大屏' : '大屏'}
+                  </Button>
+                </Tooltip>
+              </Space>
+            }
+          >
+            {availableFields.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="该用例尚未配置结果解析 — 在「测试用例」页展开步骤即可配置，执行后这里会画出数据曲线"
+              />
+            ) : (
+              <>
+                <div style={{ marginBottom: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>
+                    选择需要实时显示的数据：
+                  </Text>
+                  <Checkbox.Group
+                    options={availableFields.map(f => ({ label: f, value: f }))}
+                    value={selectedFields}
+                    onChange={(v) => setSelectedFields(v as string[])}
+                  />
+                </div>
+                <ParsedTrendChart
+                  data={curvePoints}
+                  fields={selectedFields}
+                  height={bigScreen ? 420 : 260}
+                  big={bigScreen}
+                />
+                {fieldStats.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Space wrap size={[12, 6]}>
+                      {fieldStats.map(s => (
+                        <Tag
+                          key={s.field}
+                          color={s.fails ? 'red' : 'blue'}
+                          style={{ fontSize: bigScreen ? 15 : 12 }}
+                        >
+                          {s.field}：最新 {s.last ?? '-'} · 最小 {s.min ?? '-'} · 最大 {s.max ?? '-'}
+                          {s.fails ? ` · 判定 FAIL ${s.fails} 次` : ' · 全部 PASS'}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </Col>
+      </Row>
+
       <Card>
         <Table
           columns={columns}
@@ -723,6 +939,61 @@ export default function Executions() {
           locale={{ emptyText: <Empty description="暂无执行记录" /> }}
         />
       </Card>
+
+      <Modal
+        title={
+          <Space>
+            <LineChartOutlined />
+            <span>历史解析数据趋势</span>
+            <Tag color="blue">最近 {trendData?.executions?.length ?? 0} 次执行</Tag>
+          </Space>
+        }
+        open={trendOpen}
+        onCancel={() => setTrendOpen(false)}
+        footer={null}
+        width={bigScreen ? '96vw' : 900}
+        style={{ top: bigScreen ? 16 : 40 }}
+      >
+        {trendLoading ? (
+          <div style={{ textAlign: 'center', padding: 50 }}><Spin /></div>
+        ) : (
+          <>
+            <Space style={{ marginBottom: 10 }} wrap>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                选择查看的数据：
+              </Text>
+              <Checkbox.Group
+                options={(trendData?.fields || []).map((f: string) => ({ label: f, value: f }))}
+                value={trendFields}
+                onChange={(v) => setTrendFields(v as string[])}
+              />
+              <Tooltip title="大屏模式">
+                <Button
+                  size="small"
+                  icon={bigScreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                  onClick={() => setBigScreen(v => !v)}
+                >
+                  {bigScreen ? '退出大屏' : '大屏'}
+                </Button>
+              </Tooltip>
+            </Space>
+
+            <ParsedTrendChart
+              data={trendRows}
+              fields={trendFields}
+              height={bigScreen ? 520 : 340}
+              big={bigScreen}
+            />
+
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                趋势数据直接来自已落库的步骤解析结果（共 {trendData?.total_points ?? 0} 个采样点），
+                无需额外建表。判定 FAIL 的点同样记录在案 —— FAIL 是判定结果，不是系统/设备告警。
+              </Text>
+            </div>
+          </>
+        )}
+      </Modal>
 
       <Drawer
         title="执行详情 — 每步真实收发"

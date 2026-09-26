@@ -11,14 +11,14 @@ POST   /api/testcases/{id}/flow    - Create/update test case flow
 PUT    /api/testcases/{id}/flow    - Update test case flow
 """
 import json
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
-from app.models.models import TestCase, TestFlow
+from app.models.models import TestCase, TestFlow, TestExecution, TestStepResult
 from app.schemas.schemas import (
     TestCaseCreate, TestCaseResponse, TestCaseUpdateRequest,
     TestCaseGenerateRequest, TestCaseGenerateResponse,
@@ -259,6 +259,8 @@ async def get_test_flow(test_case_id: str, db: AsyncSession = Depends(get_db)):
 async def create_test_flow(
     test_case_id: str, data: TestFlowCreate, db: AsyncSession = Depends(get_db),
 ):
+    _validate_parser_names(data.nodes)
+
     # Verify test case exists
     tc_result = await db.execute(select(TestCase).where(TestCase.id == test_case_id))
     if not tc_result.scalar_one_or_none():
@@ -304,6 +306,8 @@ async def create_test_flow(
 async def update_test_flow(
     test_case_id: str, data: TestFlowUpdate, db: AsyncSession = Depends(get_db),
 ):
+    _validate_parser_names(data.nodes)
+
     result = await db.execute(select(TestFlow).where(TestFlow.testcase_id == test_case_id))
     flow = result.scalar_one_or_none()
     if not flow:
@@ -331,6 +335,42 @@ async def update_test_flow(
     }
 
 
+# ============ Result Parsing ============
+
+def _validate_parser_names(nodes: Optional[List[Dict[str, Any]]]) -> None:
+    """Parsed field names must be unique across the whole test case.
+
+    A name is how a parsed value is identified in the trend view, so a
+    duplicate would be ambiguous - reject it and let the user rename.
+    """
+    if not nodes:
+        return
+    seen: Dict[str, str] = {}  # name -> owning step label
+    for node in nodes:
+        cfg = node.get("config") or {}
+        label = (
+            (node.get("data") or {}).get("label")
+            or node.get("label")
+            or str(node.get("id") or "?")
+        )
+        for spec in cfg.get("parsers") or []:
+            name = str(spec.get("name") or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail={
+                    "code": 40011,
+                    "message": f"步骤「{label}」的解析项名称不能为空",
+                })
+            if name in seen:
+                raise HTTPException(status_code=400, detail={
+                    "code": 40012,
+                    "message": (
+                        f"解析项名称「{name}」重复"
+                        f"（步骤「{seen[name]}」与「{label}」），请重新命名"
+                    ),
+                })
+            seen[name] = label
+
+
 # ============ Result Parsing Preview ============
 
 @router.post("/parse-preview")
@@ -356,6 +396,106 @@ async def preview_result_parsing(payload: dict):
             "all_passed": all_passed,
             "summary": summary,
             "raw_bytes": list(response_parser.to_bytes(raw)),
+        },
+    }
+
+
+@router.get("/{test_case_id}/parsed-trend")
+async def get_parsed_trend(
+    test_case_id: str,
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """Historical trend of parsed result values for a test case.
+
+    Values are read back from the ``parsed_results`` already stored on each
+    step, so no separate metrics table is needed. ``num`` is the numeric view
+    used for plotting (null for values that are not numeric, e.g. strings).
+    """
+    exec_rows = await db.execute(
+        select(
+            TestExecution.id,
+            TestExecution.created_at,
+            TestExecution.started_at,
+            TestExecution.status,
+            TestExecution.result,
+        )
+        .where(TestExecution.testcase_id == test_case_id)
+        .order_by(TestExecution.created_at.desc())
+        .limit(limit)
+    )
+    executions = list(exec_rows.all())
+    if not executions:
+        return {
+            "code": 0, "message": "success",
+            "data": {"fields": [], "series": {}, "executions": []},
+        }
+
+    # chronological order for plotting
+    executions.reverse()
+    exec_ids = [e[0] for e in executions]
+    exec_meta = {
+        e[0]: {
+            "created_at": e[1].isoformat() if e[1] else None,
+            "started_at": e[2].isoformat() if e[2] else None,
+            "status": e[3],
+            "result": e[4],
+        }
+        for e in executions
+    }
+
+    step_rows = await db.execute(
+        select(TestStepResult)
+        .where(
+            TestStepResult.execution_id.in_(exec_ids),
+            TestStepResult.parsed_results.isnot(None),
+        )
+        .order_by(TestStepResult.step_index.asc())
+    )
+    steps = list(step_rows.scalars().all())
+
+    series: Dict[str, List[Dict[str, Any]]] = {}
+    for s in steps:
+        try:
+            parsed = json.loads(s.parsed_results or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(parsed, list):
+            continue
+        meta = exec_meta.get(s.execution_id, {})
+        for p in parsed:
+            if not isinstance(p, dict):
+                continue
+            name = str(p.get("name") or "").strip()
+            if not name:
+                continue
+            value = p.get("value")
+            num = response_parser.to_number(value)
+            series.setdefault(name, []).append({
+                "execution_id": s.execution_id,
+                "step_index": s.step_index,
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                "started_at": meta.get("started_at"),
+                "value": value,
+                "num": num,
+                "ok": bool(p.get("ok")),
+                "detail": p.get("detail"),
+            })
+
+    # keep each field's points in chronological order
+    order = {e[0]: i for i, e in enumerate(executions)}
+    for points in series.values():
+        points.sort(key=lambda pt: (order.get(pt["execution_id"], 0), pt["step_index"]))
+
+    return {
+        "code": 0, "message": "success",
+        "data": {
+            "fields": list(series.keys()),
+            "series": series,
+            "executions": [
+                {"id": e[0], **exec_meta[e[0]]} for e in executions
+            ],
+            "total_points": sum(len(v) for v in series.values()),
         },
     }
 
