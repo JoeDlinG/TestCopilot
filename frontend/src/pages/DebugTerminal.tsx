@@ -7,10 +7,11 @@ import {
   PauseCircleOutlined, ApiOutlined, ReloadOutlined,
   CloseOutlined
 } from '@ant-design/icons'
-import { deviceAPI } from '../services/api'
+import { deviceAPI, logAPI } from '../services/api'
 import { extractItems } from '../services/apiHelper'
 import type { Device } from '../types'
 import { useTerminalStore, nextMsgId } from '../stores/terminalStore'
+import type { TerminalMessage } from '../stores/terminalStore'
 
 const { Title, Text } = Typography
 
@@ -21,6 +22,19 @@ function formatTime() {
   const s = String(now.getSeconds()).padStart(2, '0')
   const ms = String(now.getMilliseconds()).padStart(3, '0')
   return `${h}:${m}:${s}.${ms}`
+}
+
+// Render message content (CAN frames arrive as objects -> stringify them)
+function formatContent(content: any): string {
+  if (content === null || content === undefined) return ''
+  if (typeof content === 'object') {
+    try {
+      return JSON.stringify(content)
+    } catch {
+      return String(content)
+    }
+  }
+  return String(content)
 }
 
 function formatTimestamp(isoStr?: string): string {
@@ -73,18 +87,26 @@ function createWebSocket(deviceId: string): WebSocket {
             content: msg.message || '已连接到设备',
           })
           break
+        case 'command_sent':
+          store.addMessage(deviceId, {
+            id: nextMsgId(),
+            timestamp: ts,
+            type: 'sent',
+            content: formatContent(msg.command),
+          })
+          break
         case 'command_response':
           store.addMessage(deviceId, {
             id: nextMsgId(),
             timestamp: ts,
             type: 'sent',
-            content: msg.command,
+            content: formatContent(msg.command),
           })
           store.addMessage(deviceId, {
             id: nextMsgId(),
             timestamp: ts,
             type: 'received',
-            content: `${msg.response}  (${msg.duration_ms}ms)`,
+            content: `${formatContent(msg.response)}  (${msg.duration_ms}ms)`,
           })
           break
         case 'command_error':
@@ -106,7 +128,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'data',
-            content: msg.data,
+            content: formatContent(msg.data),
           })
           break
         case 'receive_started':
@@ -430,6 +452,49 @@ export default function DebugTerminal() {
     const interval = setInterval(loadDevices, 5000)
     return () => clearInterval(interval)
   }, [loadDevices])
+
+  // Load recent communication history from the DB once per opened device tab,
+  // so the terminal shows past traffic even before new frames arrive.
+  const historyLoadedRef = useRef<Set<string>>(new Set())
+  const loadHistory = useCallback(async (did: string) => {
+    try {
+      const res = await logAPI.list({ device_id: did, limit: 100 })
+      const items: any[] = extractItems(res)
+      const msgs: TerminalMessage[] = items
+        .filter((it) => it.direction === 'sent' || it.direction === 'received')
+        .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)))
+        .map((it) => ({
+          id: nextMsgId(),
+          timestamp: formatTimestamp(it.timestamp) || '',
+          type: it.direction === 'sent' ? 'sent' : 'received',
+          content: it.direction === 'sent'
+            ? formatContent(it.raw_data)
+            : `${formatContent(it.raw_data)}${it.duration_ms != null ? `  (${it.duration_ms}ms)` : ''}`,
+        }))
+      if (msgs.length > 0) {
+        useTerminalStore.setState((state) => {
+          const tab = state.tabs[did]
+          if (!tab) return {}
+          return {
+            tabs: {
+              ...state.tabs,
+              [did]: { ...tab, messages: [...msgs, ...tab.messages] },
+            },
+          }
+        })
+      }
+    } catch {
+      // ignore history load errors
+    }
+  }, [])
+
+  useEffect(() => {
+    Object.values(tabs).forEach((tab) => {
+      if (historyLoadedRef.current.has(tab.deviceId)) return
+      historyLoadedRef.current.add(tab.deviceId)
+      loadHistory(tab.deviceId)
+    })
+  }, [tabs, loadHistory])
 
   // On mount, re-establish any WebSocket connections that were kept in the
   // global store while navigating away (e.g. the component was unmounted).

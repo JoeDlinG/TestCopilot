@@ -249,26 +249,50 @@ class SerialInterface(CommunicationInterface):
         # Send the command
         await _run_in_thread(self._serial.write, (data + "\r\n").encode())
 
-        # Try to read until terminator first
+        # Read all response lines with a per-line timeout.
+        # Some devices (e.g. mini-Gateway-100) return multi-line responses,
+        # and some commands (e.g. @11_TSTRT) start with an empty line before
+        # the actual payload — a single read_until('\n') would only catch
+        # the leading empty line and miss the real data.
         terminator = self.config.get("termination_char", "\n").encode()
+        read_timeout = float(self.config.get("read_timeout", 0.3))
+        max_lines = int(self.config.get("max_response_lines", 50))
+        inter_line_grace = float(self.config.get("inter_line_grace", 0.05))
+
+        lines: list[str] = []
+        original_timeout = self._serial.timeout
+
         try:
-            response = await _run_in_thread(
-                self._serial.read_until, terminator
-            )
-        except Exception:
-            response = b""
+            for _ in range(max_lines):
+                self._serial.timeout = read_timeout
+                try:
+                    line = await _run_in_thread(self._serial.read_until, terminator)
+                except Exception:
+                    break
 
-        # If no response or response doesn't end with terminator,
-        # do a short read of whatever is available
-        if not response.strip():
-            try:
-                await asyncio.sleep(0.1)
-                response = await _run_in_thread(self._serial.read, 1024)
-            except Exception:
-                response = b""
+                decoded = line.decode(errors="replace").rstrip("\r\n")
+                lines.append(decoded)
 
-        result = response.decode(errors="replace").strip()
-        logger.debug(f"Serial[{self.port}] TX: {data!r}  RX: {result!r}")
+                # Check if more data is already buffered.
+                # in_waiting is a non-blocking property, not a method.
+                remaining = self._serial.in_waiting
+                if remaining == 0:
+                    # Small grace period: device may still be transmitting
+                    await asyncio.sleep(inter_line_grace)
+                    remaining = self._serial.in_waiting
+                    if remaining == 0:
+                        break
+        finally:
+            self._serial.timeout = original_timeout
+
+        # Remove trailing empty lines (but keep internal structure)
+        while lines and lines[-1] == "":
+            lines.pop()
+
+        result = "\n".join(lines)
+        logger.debug(
+            f"Serial[{self.port}] TX: {data!r}  RX: {result!r} (lines={len(lines)})"
+        )
         return result
 
     async def receive(self, timeout: float = 5.0) -> str:

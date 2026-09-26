@@ -49,7 +49,9 @@ export default function AIChat() {
   // --- local UI-only state ---
   const [models, setModels] = useState<AIModel[]>([])
   const [activeModel, setActiveModel] = useState<string>('')
-  const [loading, setLoading] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
+  const [genLoading, setGenLoading] = useState(false)
+  const [queryLoading, setQueryLoading] = useState(false)
   const [pluginSkills, setPluginSkills] = useState<any[]>([])
   const [importingIds, setImportingIds] = useState<Set<string>>(new Set())
   const [importingAll, setImportingAll] = useState(false)
@@ -98,7 +100,7 @@ export default function AIChat() {
     const msg = input.trim()
     addMessage({ role: 'user', content: msg })
     setInput('')
-    setLoading(true)
+    setChatLoading(true)
 
     try {
       const res = await aiAPI.chat({
@@ -116,34 +118,41 @@ export default function AIChat() {
       message.error(errMsg)
       addMessage({ role: 'assistant', content: `⚠️ 请求失败：${errMsg}` })
     } finally {
-      setLoading(false)
+      setChatLoading(false)
     }
   }
 
   // --- Generate test cases ---
   const handleGenerateTestCases = async () => {
     if (!input.trim() || !activeModel) return
-    setLoading(true)
+    const msg = input.trim()
+    addMessage({ role: 'user', content: msg })
+    setGenLoading(true)
     try {
       const res = await aiAPI.generateTestCases({
-        requirements: input,
+        requirements: msg,
         model_id: activeModel,
         input_type: 'text',
         skill_protocols: selectedSkills.filter((s) => !s.startsWith('__builtin_')),
       })
       const data: any = res.data?.data || res.data
       setTestCaseResult(data)
+      // Also add AI's raw response to chat history so users can see the full conversation
+      if (data?.raw_response) {
+        addMessage({ role: 'assistant', content: data.raw_response })
+      }
       setActiveTab('result')
     } catch (err) {
       handleApiError(err, '生成测试用例失败')
+      addMessage({ role: 'assistant', content: `⚠️ 生成测试用例失败：${_errorMessage(err, '生成测试用例失败')}` })
     } finally {
-      setLoading(false)
+      setGenLoading(false)
     }
   }
 
   const handleNaturalQuery = async () => {
     if (!input.trim() || !activeModel) return
-    setLoading(true)
+    setQueryLoading(true)
     try {
       const res = await aiAPI.naturalLanguageQuery({ query: input, model_id: activeModel })
       const data: any = res.data?.data || res.data
@@ -152,7 +161,7 @@ export default function AIChat() {
     } catch (err) {
       handleApiError(err, '查询失败')
     } finally {
-      setLoading(false)
+      setQueryLoading(false)
     }
   }
 
@@ -286,6 +295,7 @@ export default function AIChat() {
               icon={<SearchOutlined />}
               onClick={handleNaturalQuery}
               disabled={!activeModel || !input.trim()}
+              loading={queryLoading}
             >
               查询数据库
             </Button>
@@ -293,7 +303,7 @@ export default function AIChat() {
               icon={<ExperimentOutlined />}
               onClick={handleGenerateTestCases}
               disabled={!activeModel || !input.trim()}
-              loading={loading}
+              loading={genLoading}
             >
               生成测试用例
             </Button>
@@ -302,7 +312,7 @@ export default function AIChat() {
               icon={<SendOutlined />}
               onClick={handleChat}
               disabled={!activeModel || !input.trim()}
-              loading={loading}
+              loading={chatLoading}
             >
               发送
             </Button>
@@ -377,6 +387,37 @@ export default function AIChat() {
                         </Button>
                       )}
                     </div>
+
+                    {/* Show AI raw response / conversation content */}
+                    {testCaseResult?.raw_response && (
+                      <Collapse
+                        ghost
+                        style={{ marginBottom: 12 }}
+                        items={[
+                          {
+                            key: 'raw',
+                            label: <Text strong style={{ color: '#1677ff' }}>查看 AI 完整对话内容（原始响应）</Text>,
+                            children: (
+                              <div
+                                style={{
+                                  maxHeight: 400,
+                                  overflow: 'auto',
+                                  background: '#fafafa',
+                                  padding: 16,
+                                  borderRadius: 8,
+                                  whiteSpace: 'pre-wrap',
+                                  fontSize: 13,
+                                  lineHeight: 1.7,
+                                }}
+                              >
+                                {testCaseResult.raw_response}
+                              </div>
+                            ),
+                          },
+                        ]}
+                      />
+                    )}
+
                     {caseCount > 0 ? (
                       <List
                         dataSource={testCaseResult.parsed.test_cases}

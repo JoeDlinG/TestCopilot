@@ -19,6 +19,11 @@ from app.communication import (
 )
 from app.services.plugin_service import plugin_service
 from app.services.com_logger import com_logger
+from app.api.websocket import (
+    start_device_monitor,
+    stop_device_monitor,
+    broadcast_device_update,
+)
 
 # Protocols handled natively by the communication layer (not by plugins).
 _STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
@@ -27,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 # In-memory device connections
 _active_connections: Dict[str, CommunicationInterface] = {}
+
+# Devices with a command/response exchange currently in flight. The global
+# device monitor skips polling these so it can never consume reply bytes.
+_command_in_flight: Dict[str, bool] = {}
 
 
 class DeviceService:
@@ -238,6 +247,10 @@ class DeviceService:
                 await interface.connect(merged_config or {})
             _active_connections[device.id] = interface
 
+            # Start the global receive monitor so ALL device traffic is captured
+            # (persisted to DB + pushed to the terminal) automatically.
+            start_device_monitor(device.id, protocol=device.protocol or "unknown")
+
             device.status = DeviceStatus.CONNECTED.value
             device.connected_at = datetime.utcnow()
             device.last_seen = datetime.utcnow()
@@ -263,6 +276,9 @@ class DeviceService:
                 await interface.disconnect()
             except Exception as e:
                 logger.warning(f"Error disconnecting {device_id}: {e}")
+
+        # Stop the global receive monitor for this device
+        stop_device_monitor(device_id)
 
         device.status = DeviceStatus.DISCONNECTED.value
         device.disconnected_at = datetime.utcnow()
@@ -294,6 +310,20 @@ class DeviceService:
         # Log sent command to file
         com_logger.log_sent(device_id, command, timestamp=start_time.isoformat())
 
+        # Push the sent command to the communication terminal in real time
+        await broadcast_device_update(device_id, {
+            "type": "command_sent",
+            "command": command,
+            "timestamp": start_time.isoformat(),
+        })
+
+        # Normalize command to a persistable string (CAN sends may be dicts)
+        cmd_raw = command if isinstance(command, str) else (
+            json.dumps(command, ensure_ascii=False) if isinstance(command, (dict, list)) else str(command)
+        )
+        cmd_hex = command.encode().hex() if isinstance(command, str) else None
+        cmd_size = len(command.encode()) if isinstance(command, str) else 0
+
         # Log sent command
         sent_log = CommunicationLog(
             device_id=device_id,
@@ -301,14 +331,15 @@ class DeviceService:
             step_result_id=step_result_id,
             direction=LogDirection.SENT.value,
             protocol=device.protocol,
-            raw_data=command,
-            raw_data_hex=command.encode().hex() if isinstance(command, str) else None,
-            raw_data_size=len(command.encode()) if isinstance(command, str) else 0,
+            raw_data=cmd_raw,
+            raw_data_hex=cmd_hex,
+            raw_data_size=cmd_size,
             status=LogStatus.SUCCESS.value,
         )
         db.add(sent_log)
         await db.commit()
 
+        _command_in_flight[device_id] = True
         try:
             # Execute command
             response = await interface.send(command)
@@ -317,8 +348,34 @@ class DeviceService:
             # Log received response to file
             com_logger.log_received(device_id, response)
 
+            # Push the received response to the communication terminal in real time
+            recv_ts = datetime.utcnow().isoformat()
+            await broadcast_device_update(device_id, {
+                "type": "command_response",
+                "command": command,
+                "response": response,
+                "duration_ms": duration_ms,
+                "timestamp": recv_ts,
+            })
+
             # Update sent log with timing
             sent_log.duration_ms = duration_ms
+
+            # Normalize response to a persistable string (CAN responses are dicts)
+            resp_raw = response if isinstance(response, str) else (
+                json.dumps(response, ensure_ascii=False) if isinstance(response, (dict, list)) else str(response)
+            )
+            resp_hex = None
+            resp_size = 0
+            if isinstance(response, dict):
+                resp_hex = response.get("data") if isinstance(response.get("data"), str) else None
+                d = response.get("dlc")
+                resp_size = d if isinstance(d, int) else (
+                    len(resp_hex.replace(" ", "")) // 2 if resp_hex else 0
+                )
+            elif isinstance(response, str):
+                resp_hex = response.encode().hex()
+                resp_size = len(response.encode())
 
             # Log received response
             recv_log = CommunicationLog(
@@ -327,9 +384,9 @@ class DeviceService:
                 step_result_id=step_result_id,
                 direction=LogDirection.RECEIVED.value,
                 protocol=device.protocol,
-                raw_data=response,
-                raw_data_hex=response.encode().hex() if isinstance(response, str) else None,
-                raw_data_size=len(response.encode()) if isinstance(response, str) else 0,
+                raw_data=resp_raw,
+                raw_data_hex=resp_hex,
+                raw_data_size=resp_size,
                 status=LogStatus.SUCCESS.value,
                 duration_ms=duration_ms,
                 response_log_id=sent_log.id,
@@ -362,6 +419,8 @@ class DeviceService:
             logger.warning(f"Connection to {device_id} broken, auto-disconnected: {e}")
 
             raise ConnectionError(f"Communication error with device {device.name}: {e}") from e
+        finally:
+            _command_in_flight.pop(device_id, None)
 
     async def get_active_connections(self) -> List[str]:
         """Get list of currently connected device IDs."""

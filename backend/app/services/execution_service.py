@@ -7,14 +7,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.core.database import async_session
 from app.models.models import (
-    TestCase, TestFlow, TestExecution, TestStepResult,
+    TestCase, TestFlow, TestExecution, TestStepResult, Device,
     ExecutionStatus, ExecutionResult, StepStatus,
 )
 from app.services.device_service import device_service
@@ -26,8 +28,105 @@ logger = logging.getLogger(__name__)
 class ExecutionEngine:
     """Engine for executing test flows."""
 
+    # Node types that must be run as real device commands. AI-generated flows
+    # use "action"; manually built ones use "test_step"/"command".
+    COMMAND_NODE_TYPES = ("action", "test_step", "command")
+
     def __init__(self):
         self._running_executions: Dict[str, asyncio.Task] = {}
+
+    # ------------------------------------------------------------------ #
+    # Command / device resolution helpers
+    # ------------------------------------------------------------------ #
+
+    # Commands look like "@11_MSGRX=CAN1,RPLY1,8;" - the parameter part may
+    # contain commas (all device parameters are comma separated), so only ";"
+    # whitespace/quotes and CJK punctuation may terminate a command.
+    _CMD_RE = re.compile(r"@\d+_[A-Z]+(?:=[^;\s\"'，。]+)?;")
+    _CMD_RE_LOOSE = re.compile(r"@\d+_[A-Z]+(?:=[^;\s\"'，。]+)?")
+    # "循环读取回复(例如 100 次)" -> repeat the command that many times
+    _REPEAT_RE = re.compile(r"(?:循环|重复)[^0-9]{0,15}?(\d+)\s*次")
+    MAX_REPEAT = 50
+
+    @classmethod
+    def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
+        """Extract the real device command(s) carried by a flow node.
+
+        The generator writes structured commands into ``config.parameters``
+        (``command`` or ``commands``), while ``config.command`` is usually a
+        natural-language sentence that merely embeds them - so it is parsed as
+        a fallback.
+        """
+        config = node.get("config") or {}
+        params = config.get("parameters") or {}
+        found: List[str] = []
+
+        raw_list = params.get("commands")
+        if isinstance(raw_list, list):
+            found.extend(str(c).strip() for c in raw_list if c)
+        single = params.get("command")
+        if single:
+            found.append(str(single).strip())
+
+        text = " ".join([
+            str(config.get("command") or ""),
+            str((node.get("data") or {}).get("label") or ""),
+        ])
+        found.extend(cls._CMD_RE.findall(text))
+        if not found:
+            # tolerate commands written without the trailing ";"
+            found.extend(cls._CMD_RE_LOOSE.findall(text))
+
+        ordered: List[str] = []
+        seen = set()
+        for cmd in found:
+            if cmd and cmd not in seen:
+                seen.add(cmd)
+                ordered.append(cmd)
+
+        # A single command described as "循环读取 N 次" is executed N times.
+        m = cls._REPEAT_RE.search(text)
+        if m and len(ordered) == 1:
+            ordered = ordered * min(int(m.group(1)), cls.MAX_REPEAT)
+
+        return ordered
+
+    @staticmethod
+    def _infer_protocol(command: str) -> Optional[str]:
+        """Guess the device protocol from a command string."""
+        if re.match(r"^@\d+_", command):
+            return "mini_gateway100"
+        return None
+
+    async def _resolve_device(
+        self,
+        config: Dict[str, Any],
+        options: Optional[Dict[str, Any]],
+        commands: List[str],
+    ) -> Optional[str]:
+        """Pick the connected device that should execute these commands."""
+        for source in (config or {}, options or {}):
+            did = source.get("device_id")
+            if did:
+                return did
+
+        protocols = {
+            p for p in (self._infer_protocol(c) for c in commands) if p
+        }
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(Device).where(Device.status == "connected")
+            )
+            devices = result.scalars().all()
+
+        if not devices:
+            return None
+        if protocols:
+            for dev in devices:
+                if dev.protocol in protocols:
+                    return dev.id
+        return devices[0].id
 
     async def start_execution(
         self,
@@ -62,7 +161,7 @@ class ExecutionEngine:
             testcase_id=testcase_id,
             status=ExecutionStatus.RUNNING.value,
             options=options_json,
-            total_steps=len([n for n in nodes if n.get("type") in ("test_step", "command")]),
+            total_steps=len([n for n in nodes if n.get("type") not in ("start", "end")]),
             started_at=datetime.utcnow(),
         )
         db.add(execution)
@@ -133,8 +232,13 @@ class ExecutionEngine:
             for idx, node in enumerate(step_nodes):
                 node_id = node.get("id", f"node_{idx}")
                 node_type = node.get("type", "test_step")
-                label = node.get("label", f"Step {idx + 1}")
-                config = node.get("config", {})
+                label = (
+                    node.get("label")
+                    or (node.get("data") or {}).get("label")
+                    or f"Step {idx + 1}"
+                )
+                config = node.get("config", {}) or {}
+                commands = self._extract_commands(node)
 
                 # Create step result
                 step_result = TestStepResult(
@@ -144,7 +248,7 @@ class ExecutionEngine:
                     node_type=node_type,
                     label=label,
                     status=StepStatus.RUNNING.value,
-                    command=config.get("command", ""),
+                    command=" | ".join(commands) or config.get("command", ""),
                     expected=config.get("expected", ""),
                     started_at=datetime.utcnow(),
                 )
@@ -163,22 +267,45 @@ class ExecutionEngine:
 
                 # Execute step
                 try:
-                    if node_type == "test_step" or node_type == "command":
-                        device_id = config.get("device_id")
-                        command = config.get("command", "")
-                        if device_id and command:
-                            response = await device_service.send_command(
-                                db, device_id, command,
-                                execution_id=execution_id,
-                                step_result_id=step_result.id,
-                            )
-                            step_result.actual = response.get("response", "")
-                        else:
-                            # Simulated step
-                            await asyncio.sleep(0.5)
-                            step_result.actual = f"[Simulated] {command}"
+                    if node_type in self.COMMAND_NODE_TYPES:
+                        device_id = await self._resolve_device(config, options, commands)
 
-                        step_result.status = StepStatus.PASSED.value
+                        if not commands:
+                            # Steps like "汇总显示结果" carry no device command.
+                            # They are presentation-only: skip them instead of
+                            # marking the whole case failed.
+                            step_result.status = StepStatus.SKIPPED.value
+                            step_result.actual = "[跳过] 该步骤不含可下发的设备指令"
+                        elif not device_id:
+                            # Never report success for a step that did not
+                            # actually run - that is how tests "passed" while
+                            # nothing was ever sent to the device.
+                            reason = "没有已连接的设备可下发指令"
+                            step_result.status = StepStatus.FAILED.value
+                            step_result.actual = f"[未执行] {reason}"
+                            step_result.error_message = reason
+                            logger.warning(
+                                f"Step {idx + 1} of {execution_id} not executed: {reason}"
+                            )
+                        else:
+                            results = []
+                            for cmd in commands:
+                                response = await device_service.send_command(
+                                    db, device_id, cmd,
+                                    execution_id=execution_id,
+                                    step_result_id=step_result.id,
+                                )
+                                results.append(f"{cmd} -> {response.get('response', '')}")
+                            # Keep the stored result readable when a command
+                            # was repeated many times (e.g. "循环读取 100 次").
+                            if len(results) > 8:
+                                results = (
+                                    results[:5]
+                                    + [f"...(共 {len(results)} 条)"]
+                                    + results[-3:]
+                                )
+                            step_result.actual = " | ".join(results)
+                            step_result.status = StepStatus.PASSED.value
                     elif node_type == "condition":
                         step_result.status = StepStatus.PASSED.value
                         step_result.actual = "Condition evaluated"

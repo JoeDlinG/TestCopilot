@@ -28,6 +28,14 @@ Mini Gateway 100 是一款多功能测试网关，通过 USB-C（CDC 虚拟串�
 - 响应帧：`[yy/mm/dd,hh:mm:ss.msec,size]#<ID>_<COMMAND>=<RESULT>;`
 - 请求 / 应答模式：必须收到上一条命令的应答后才能发送下一条（设备侧超时 1.5 s）。
 
+### 3.1 取值格式硬性要求（已在真机验证）
+
+- **十六进制必须大写 `0X` 前缀**：`0X13`、`0X850201`。小写 `0x13` 设备不识别（无应答）。
+- **CAN 波特率只支持**：`10K / 20K / 33.3K / 40K / 83.3K / 100K / 125K / 250K / 500K / 1000K(1M)`，
+  必须大写 K。`500000` 或 `500k` 均返回 `NOT_SUPPORT`。
+- **CONFIG 之前必须先 `TSTOP`**；`TSTRT` 生效后再 `CONFIG` 会返回 `UNAVAILABLE`。
+- `MSGTX` 的数据必须带 `0X`；`MSGRX` 必须使用 `CONFIG` 定义为 `RX` 的别名。
+
 ## 4. 命令参考
 
 | 命令 | 语法 | 说明 |
@@ -54,8 +62,21 @@ Mini Gateway 100 是一款多功能测试网关，通过 USB-C（CDC 虚拟串�
 | TSTOP | `@<ID>_TSTOP;` | 复位当前配置 |
 | MSGTX | `@<ID>_MSGTX=CAN<ch>,<alias>,<message>;` | 在指定 CAN 通道发送消息 |
 | MSGRX | `@<ID>_MSGRX=CAN<ch>,<alias>,<size>;` | 在指定 CAN 通道接收消息 |
+| PROCESS | `@<ID>_PROCESS=<id>,DEFINE,<granularity>,<totalsteps>;` | 定义实时进程（周期 = granularity × totalsteps） |
+| PROCESS | `@<ID>_PROCESS=<id>,<step>,<command>;` | 添加进程动作（命令不带 `@11_` 与 `;`；step 取 1..totalsteps-1） |
+| PROCESS | `@<ID>_PROCESS=<id>,END\|START\|STOP\|DELETE\|DEFINE;` | 结束定义 / 启动 / 停止 / 删除 / 查询进程 |
+| SYNCHRO | `@<ID>_SYNCHRO=<OUT\|IN>,<START\|STOP>;` | 硬件同步（OUT 主模式 / IN 从模式）。**注意：V1.4.8 固件实测无应答，暂不可用，不要下发。** |
 
 注：RS-232 外接电源 ON/OFF 命令（PSU）当前未实现（暂无应用场景）。
+
+### 4.1 PROCESS（定时 / 周期执行）说明
+
+- 可用动作命令：`CLOSE`、`OPEN`、`SETDIG`、`CLRDIG`、`GETDIG`、`SETVOLT`、`GETVOLT`、`MSGTX`、`MSGRX`。
+- 动作命令在 PROCESS 中**不带** `@11_` 前缀，也**不带**结尾 `;`，例如：
+  `@11_PROCESS=1,1,MSGTX,CAN1,MSG13,0X850201;`
+- `<step>` 有效范围 `1` ~ `<totalsteps>-1`：`0` 返回 `WRONGPARA`，`>= totalsteps` 返回 `OUTOFRANGE`。
+- `END` 必须在 `START` 之前发送；`DEFINE` 查询返回 `...,LOOP=<n>`（已执行循环数）。
+- 「每 200 ms 发送一帧」示例：`@11_PROCESS=1,DEFINE,100,2;`（100 × 2 = 200 ms）+ 第 1 步动作。
 
 ## 5. 典型使用流程
 

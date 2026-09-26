@@ -24,8 +24,8 @@ export default function Logs() {
     interface_type: undefined as string | undefined,
   })
 
-  const loadLogs = async () => {
-    setLoading(true)
+  const loadLogs = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const params: any = { limit: 200 }
       if (filters.device_id) params.device_id = filters.device_id
@@ -35,7 +35,7 @@ export default function Logs() {
     } catch (err) {
       handleApiError(err, '加载日志失败')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -52,6 +52,12 @@ export default function Logs() {
   }, [])
 
   useEffect(() => { loadLogs() }, [filters])
+
+  // Auto-refresh every 5s so the terminal shows live traffic during tests
+  useEffect(() => {
+    const timer = setInterval(() => loadLogs(true), 5000)
+    return () => clearInterval(timer)
+  }, [filters])
 
   const handleExportCSV = async () => {
     try {
@@ -103,8 +109,8 @@ export default function Logs() {
       key: 'direction',
       width: 80,
       render: (dir: string) => (
-        <Tag color={dir === 'send' ? 'blue' : 'green'} icon={dir === 'send' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}>
-          {dir === 'send' ? '发送' : '接收'}
+        <Tag color={dir === 'sent' ? 'blue' : 'green'} icon={dir === 'sent' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}>
+          {dir === 'sent' ? '发送' : '接收'}
         </Tag>
       ),
     },
@@ -120,8 +126,8 @@ export default function Logs() {
     },
     {
       title: 'Hex',
-      dataIndex: 'data_hex',
-      key: 'data_hex',
+      dataIndex: 'raw_data_hex',
+      key: 'raw_data_hex',
       width: 150,
       render: (hex: string) => (
         <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{hex || '-'}</code>
@@ -134,7 +140,7 @@ export default function Logs() {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>通信日志</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadLogs}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>刷新</Button>
           <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>导出 CSV</Button>
         </Space>
       </div>

@@ -29,6 +29,7 @@ the plugin ("添加设备").
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +54,16 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         self._serial = None  # pyserial.Serial instance
         self._board_id = 11
         self._config: Dict[str, Any] = {}
+        # Serialises access to the single serial port so that background
+        # polling (unsolicited frames) can never steal the bytes of a
+        # command/response exchange. Created lazily (Python 3.8 binds asyncio
+        # primitives to the running loop at creation time).
+        self._io_lock = None
+
+    def _get_lock(self) -> "asyncio.Lock":
+        if self._io_lock is None:
+            self._io_lock = asyncio.Lock()
+        return self._io_lock
 
     # ------------------------------------------------------------------ #
     # Connection management
@@ -170,40 +181,57 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         else:
             raise ValueError(f"Unsupported send payload: {type(data)}")
 
-        try:
-            self._serial.reset_input_buffer()
-            self._serial.write((raw_cmd + "\r\n").encode())
+        # Serialise with background polling so responses are never consumed
+        # by a concurrent read.
+        async with self._get_lock():
+            try:
+                self._serial.reset_input_buffer()
+                self._serial.write((raw_cmd + "\r\n").encode())
 
-            # Read until the terminating ';' (response has no newline).
-            buf = bytearray()
-            while True:
-                chunk = self._serial.read(1)
-                if not chunk:
-                    break
-                buf += chunk
-                if chunk == b";":
-                    break
+                # Read until the terminating ';' (response has no newline).
+                buf = bytearray()
+                while True:
+                    chunk = self._serial.read(1)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    if chunk == b";":
+                        break
 
-            raw_response = bytes(buf).decode(errors="replace").strip()
-            logger.debug(f"MG100 TX: {raw_cmd!r}  RX: {raw_response!r}")
-            return self._parse_response(raw_response)
-        except Exception as e:
-            logger.error(f"Mini Gateway 100 send error: {e}")
-            raise
+                raw_response = bytes(buf).decode(errors="replace").strip()
+                logger.debug(f"MG100 TX: {raw_cmd!r}  RX: {raw_response!r}")
+                return self._parse_response(raw_response)
+            except Exception as e:
+                logger.error(f"Mini Gateway 100 send error: {e}")
+                raise
 
-    async def receive(self) -> Any:
-        """Read one unsolicited frame (terminated by ';')."""
+    async def receive(self, timeout: float = 0.05) -> Any:
+        """Read one unsolicited frame (terminated by ';').
+
+        Uses a short read timeout so an idle poll returns quickly and never
+        delays a pending command; access is serialised with :meth:`send`.
+        """
         if not self._connected or self._serial is None:
             raise ConnectionError("Mini Gateway 100 is not connected")
-        buf = bytearray()
-        while True:
-            chunk = self._serial.read(1)
-            if not chunk:
-                break
-            buf += chunk
-            if chunk == b";":
-                break
+
+        async with self._get_lock():
+            old_timeout = self._serial.timeout
+            self._serial.timeout = max(0.01, min(float(timeout), 0.2))
+            try:
+                buf = bytearray()
+                while True:
+                    chunk = self._serial.read(1)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    if chunk == b";":
+                        break
+            finally:
+                self._serial.timeout = old_timeout
+
         raw = bytes(buf).decode(errors="replace").strip()
+        if not raw:
+            return None
         return self._parse_response(raw)
 
     # ------------------------------------------------------------------ #
@@ -318,22 +346,30 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
              "description": "闭合一个或多个继电器 (1-96)",
              "parameters": [{"name": "channels", "type": "string"}]},
             {"name": "CONFIG", "syntax": "@<ID>_CONFIG=CAN<ch>,BAUDRATE,<baud>; 或 @<ID>_CONFIG=CAN<ch>,<dir>,<alias>,<IDtype>,<ID>;",
-             "description": "配置 CAN 总线波特率 / 消息 ID",
+             "description": "配置 CAN 总线波特率 / 消息 ID（波特率只支持 10K/20K/33.3K/40K/83.3K/100K/125K/250K/500K/1000K(1M)，大写 K；ID 用大写 0X 前缀；配置前需先 TSTOP）",
              "parameters": [{"name": "args", "type": "string"}]},
             {"name": "TSTRT", "syntax": "@<ID>_TSTRT;",
              "description": "验证并启动当前配置", "parameters": []},
             {"name": "TSTOP", "syntax": "@<ID>_TSTOP;",
              "description": "复位当前配置", "parameters": []},
             {"name": "MSGTX", "syntax": "@<ID>_MSGTX=CAN<ch>,<alias>,<message>;",
-             "description": "在指定 CAN 通道发送消息",
+             "description": "在指定 CAN 通道发送消息（alias 需先配置为 TX；message 必须以大写 0X 开头，最长 8 字节）",
              "parameters": [{"name": "channel", "type": "string"},
                             {"name": "alias", "type": "string"},
                             {"name": "message", "type": "string"}]},
             {"name": "MSGRX", "syntax": "@<ID>_MSGRX=CAN<ch>,<alias>,<size>;",
-             "description": "在指定 CAN 通道接收消息",
+             "description": "在指定 CAN 通道接收消息（alias 需先配置为 RX；返回空数据 0X 表示未收到报文）",
              "parameters": [{"name": "channel", "type": "string"},
                             {"name": "alias", "type": "string"},
                             {"name": "size", "type": "integer"}]},
+            {"name": "PROCESS", "syntax": "@<ID>_PROCESS=<id>,DEFINE,<granularity>,<totalsteps>; / @<ID>_PROCESS=<id>,<step>,<command>; / @<ID>_PROCESS=<id>,END|START|STOP|DELETE|DEFINE;",
+             "description": "实时进程（定时/周期执行）：周期 = granularity x totalsteps；动作命令不带 @11_ 前缀与结尾 ;，step 取 1..totalsteps-1",
+             "parameters": [{"name": "id", "type": "integer"},
+                            {"name": "args", "type": "string"}]},
+            {"name": "SYNCHRO", "syntax": "@<ID>_SYNCHRO=<OUT|IN>,<START|STOP>; 或 @<ID>_SYNCHRO=<OUT|IN>;",
+             "description": "硬件同步：OUT 主模式 / IN 从模式；START 启用、STOP 禁用（注意：V1.4.8 固件实测无应答，暂不可用）",
+             "parameters": [{"name": "mode", "type": "string"},
+                            {"name": "state", "type": "string"}]},
         ]
 
     def get_status(self) -> dict:

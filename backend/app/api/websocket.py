@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.database import async_session
+from app.models.models import CommunicationLog, LogDirection, LogStatus
 from app.services.com_logger import com_logger
 
 logger = logging.getLogger(__name__)
@@ -17,8 +19,130 @@ router = APIRouter()
 _execution_connections: Dict[str, set] = {}  # execution_id -> set of websockets
 _device_connections: Dict[str, set] = {}  # device_id -> set of websockets
 
-# Background receive tasks per device WebSocket connection
-_receive_tasks: Dict[str, asyncio.Task] = {}
+
+def _get_device_interface(device_id: str):
+    """Get the active communication interface for a device."""
+    try:
+        from app.services.device_service import _active_connections
+        return _active_connections.get(device_id)
+    except ImportError:
+        return None
+
+
+async def _safe_receive(interface, timeout: float = 0.1):
+    """Receive data from an interface.
+
+    Plugin-based interfaces (e.g. PeakCAN) may not accept a ``timeout`` kwarg,
+    so fall back to calling ``receive()`` without arguments.
+    """
+    try:
+        return await interface.receive(timeout=timeout)
+    except TypeError:
+        return await interface.receive()
+
+
+async def _log_rx_to_db(device_id: str, protocol: str, data: Any, timestamp: str):
+    """Persist an unsolicited received message to the communication_logs table."""
+    try:
+        raw = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+        raw_hex = None
+        raw_size = None
+        if isinstance(data, dict):
+            raw_hex = data.get("data") or data.get("hex")
+            if isinstance(raw_hex, list):
+                raw_hex = "".join(f"{b:02X}" for b in raw_hex)
+            raw_size = data.get("dlc") or data.get("size")
+            if raw_hex is not None and raw_size is None and isinstance(raw_hex, str):
+                raw_size = len(raw_hex.replace(" ", "")) // 2
+        async with async_session() as db:
+            db.add(CommunicationLog(
+                timestamp=datetime.fromisoformat(timestamp),
+                device_id=device_id,
+                direction=LogDirection.RECEIVED.value,
+                protocol=protocol,
+                raw_data=raw,
+                raw_data_hex=raw_hex,
+                raw_data_size=raw_size,
+                status=LogStatus.SUCCESS.value,
+            ))
+            await db.commit()
+    except Exception as e:
+        logger.debug(f"Failed to persist received log for {device_id}: {e}")
+
+
+# Global per-device receive monitors, independent of any WebSocket.
+# Started when a device connects and stopped when it disconnects, so that
+# ALL traffic of every connected device is captured, persisted and shown in
+# the communication terminal even without manually clicking "start listening".
+_device_monitor_tasks: Dict[str, asyncio.Task] = {}
+_device_protocols: Dict[str, str] = {}
+
+
+async def _device_monitor_loop(device_id: str, protocol: str, interval_ms: int = 100):
+    """Continuously poll a connected device and broadcast/persist all traffic."""
+    logger.info(f"Starting device monitor for {device_id}")
+    try:
+        while True:
+            interface = _get_device_interface(device_id)
+            if interface is None:
+                logger.info(f"Device monitor: {device_id} disconnected, stopping")
+                break
+
+            # Never poll while a command/response exchange is in flight:
+            # reading concurrently would steal the reply bytes.
+            try:
+                from app.services.device_service import _command_in_flight
+                if _command_in_flight.get(device_id):
+                    await asyncio.sleep(interval_ms / 1000.0)
+                    continue
+            except Exception:
+                pass
+
+            try:
+                data = await _safe_receive(interface, timeout=0.1)
+                if data:
+                    ts = datetime.utcnow().isoformat()
+                    com_logger.log_received(device_id, data, timestamp=ts)
+                    await _log_rx_to_db(device_id, protocol, data, ts)
+                    await broadcast_device_update(device_id, {
+                        "type": "device_data",
+                        "data": data,
+                        "timestamp": ts,
+                    })
+            except asyncio.TimeoutError:
+                pass
+            except Exception as e:
+                logger.debug(f"Device monitor transient error for {device_id}: {e}")
+            await asyncio.sleep(interval_ms / 1000.0)
+    finally:
+        _device_monitor_tasks.pop(device_id, None)
+        logger.info(f"Device monitor stopped for {device_id}")
+
+
+def start_device_monitor(device_id: str, protocol: str = "unknown"):
+    """Start the global receive monitor for a connected device (idempotent)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if protocol and protocol != "unknown":
+        _device_protocols[device_id] = protocol
+    existing = _device_monitor_tasks.get(device_id)
+    if existing and not existing.done():
+        return
+    task = asyncio.create_task(
+        _device_monitor_loop(device_id, _device_protocols.get(device_id, protocol))
+    )
+    _device_monitor_tasks[device_id] = task
+    logger.info(f"Device monitor started for {device_id}")
+
+
+def stop_device_monitor(device_id: str):
+    """Stop the global receive monitor for a device."""
+    task = _device_monitor_tasks.pop(device_id, None)
+    if task and not task.done():
+        task.cancel()
+        logger.info(f"Device monitor stopped for {device_id}")
 
 
 async def broadcast_execution_update(execution_id: str, message: Dict[str, Any]):
@@ -43,73 +167,6 @@ async def broadcast_device_update(device_id: str, message: Dict[str, Any]):
             except Exception:
                 dead.add(ws)
         _device_connections[device_id] -= dead
-
-
-def _get_device_interface(device_id: str):
-    """Get the active communication interface for a device."""
-    try:
-        from app.services.device_service import _active_connections
-        return _active_connections.get(device_id)
-    except ImportError:
-        return None
-
-
-async def _receive_loop(device_id: str, websocket: WebSocket, interval_ms: int):
-    """Background task that continuously polls device for unsolicited data."""
-    task_id = f"{device_id}_{id(websocket)}"
-    logger.info(f"Starting receive loop for {device_id} (task: {task_id})")
-    try:
-        while True:
-            interface = _get_device_interface(device_id)
-            if interface is None:
-                await websocket.send_json({
-                    "type": "device_disconnected",
-                    "message": "Device connection lost",
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
-                break
-
-            try:
-                data = await interface.receive(timeout=0.1)
-                if data:
-                    ts = datetime.utcnow().isoformat()
-                    com_logger.log_received(device_id, data, timestamp=ts)
-                    await websocket.send_json({
-                        "type": "device_data",
-                        "data": data,
-                        "timestamp": ts,
-                    })
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                logger.debug(f"Receive loop transient error for {device_id}: {e}")
-                # Continue polling despite transient errors
-
-            await asyncio.sleep(interval_ms / 1000.0)
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected during receive loop for {device_id}")
-    except Exception as e:
-        logger.error(f"Receive loop fatal error for {device_id}: {e}")
-        try:
-            await websocket.send_json({
-                "type": "receive_error",
-                "error": str(e),
-                "timestamp": datetime.utcnow().isoformat(),
-            })
-        except Exception:
-            pass
-    finally:
-        _receive_tasks.pop(task_id, None)
-        logger.info(f"Receive loop stopped for {device_id} (task: {task_id})")
-
-
-def _stop_receive_task(device_id: str, websocket: WebSocket):
-    """Stop the background receive task for a WebSocket connection."""
-    task_id = f"{device_id}_{id(websocket)}"
-    task = _receive_tasks.pop(task_id, None)
-    if task and not task.done():
-        task.cancel()
-        logger.info(f"Cancelled receive task for {device_id}")
 
 
 @router.websocket("/ws/executions/{execution_id}")
@@ -255,15 +312,10 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                         })
 
                 elif msg_type == "start_receive":
-                    # Stop any existing receive task for this WS
-                    _stop_receive_task(device_id, websocket)
-
+                    # The device-level monitor is started automatically when the
+                    # device connects; ensure it is running, then acknowledge.
+                    start_device_monitor(device_id)
                     interval_ms = msg.get("interval_ms", 200)
-                    task_id = f"{device_id}_{id(websocket)}"
-                    task = asyncio.create_task(
-                        _receive_loop(device_id, websocket, interval_ms)
-                    )
-                    _receive_tasks[task_id] = task
                     await websocket.send_json({
                         "type": "receive_started",
                         "interval_ms": interval_ms,
@@ -271,7 +323,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                     })
 
                 elif msg_type == "stop_receive":
-                    _stop_receive_task(device_id, websocket)
+                    stop_device_monitor(device_id)
                     await websocket.send_json({
                         "type": "receive_stopped",
                         "timestamp": datetime.utcnow().isoformat(),
@@ -293,5 +345,3 @@ async def device_websocket(websocket: WebSocket, device_id: str):
     finally:
         if device_id in _device_connections:
             _device_connections[device_id].discard(websocket)
-        # Clean up receive task
-        _stop_receive_task(device_id, websocket)
