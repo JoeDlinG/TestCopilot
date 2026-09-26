@@ -59,34 +59,64 @@ function wsBase(): string {
   return `${protocol}//${host}:8000`
 }
 
-/** parsed_results may arrive as a JSON string (DB) or an array (WebSocket) */
-function normalizeParsed(v: any): any[] {
+/**
+ * ``parsed_results`` may arrive as a JSON string (DB) or an object (WebSocket).
+ * It holds one sample per reply, because a step may repeat the
+ * same command N times ("循环读取 100 次").  Legacy rows hold a bare list,
+ * which is treated as a single sample.
+ */
+function normalizeSamples(v: any): any[][] {
   if (!v) return []
-  if (Array.isArray(v)) return v
-  try {
-    const parsed = JSON.parse(v)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
+  let parsed = v
+  if (typeof v === 'string') {
+    try { parsed = JSON.parse(v) } catch { return [] }
   }
+  if (Array.isArray(parsed)) return [parsed]
+  if (parsed && Array.isArray(parsed.samples)) {
+    return parsed.samples.filter((s: any) => Array.isArray(s))
+  }
+  return []
 }
 
-/** One chart row per step: { label: '#N', <field name>: numeric value } */
-function buildCurveRow(stepIndex: number, parsed: any): any | null {
-  const list = normalizeParsed(parsed)
-  if (!list.length) return null
-  const row: any = { label: `#${stepIndex}` }
-  let any = false
-  for (const p of list) {
-    const name = String(p?.name || '').trim()
-    if (!name) continue
-    row[name] = toNumber(p?.value)
-    any = true
-  }
-  return any ? row : null
+/** Fields of the last reply - what the step list shows. */
+function normalizeParsed(v: any): any[] {
+  const samples = normalizeSamples(v)
+  return samples.length ? samples[samples.length - 1] : []
 }
 
-const stepNo = (label: any) => Number(String(label ?? '').replace('#', '')) || 0
+/** One chart row per reply: { label: '#step' | '#step-seq', <field>: number } */
+function buildCurveRows(stepIndex: number, parsed: any): any[] {
+  const samples = normalizeSamples(parsed)
+  if (!samples.length) return []
+  const multi = samples.length > 1
+  const rows: any[] = []
+  samples.forEach((list, i) => {
+    if (!Array.isArray(list) || !list.length) return
+    const row: any = { label: multi ? `#${stepIndex}-${i + 1}` : `#${stepIndex}` }
+    let any = false
+    for (const p of list) {
+      const name = String(p?.name || '').trim()
+      if (!name) continue
+      // "unknown" (empty frame / timeout) has no numeric value -> gap in the line
+      row[name] = toNumber(p?.value)
+      any = true
+    }
+    if (any) rows.push(row)
+  })
+  return rows
+}
+
+/** '#4' -> [4, 1];  '#4-12' -> [4, 12] */
+function rowOrder(label: any): [number, number] {
+  const m = /^#(\d+)(?:-(\d+))?$/.exec(String(label ?? ''))
+  return m ? [Number(m[1]), Number(m[2] || 1)] : [0, 0]
+}
+
+const compareRows = (a: any, b: any) => {
+  const [astep, aseq] = rowOrder(a.label)
+  const [bstep, bseq] = rowOrder(b.label)
+  return astep - bstep || aseq - bseq
+}
 
 export default function Executions() {
   const [executions, setExecutions] = useState<TestExecution[]>([])
@@ -338,13 +368,13 @@ export default function Executions() {
         } else if (d?.status !== 'running') {
           setExecSteps([])
         }
-        // chart points come straight from the stored parsed results
+        // chart points come straight from the stored parsed results - one
+        // point per reply, so a repeated command yields a full series
         setCurvePoints(
           (d?.step_results || [])
             .slice()
             .sort((a: any, b: any) => Number(a.step_index) - Number(b.step_index))
-            .map((s: any) => buildCurveRow(s.step_index, s.parsed_results))
-            .filter(Boolean) as any[]
+            .flatMap((s: any) => buildCurveRows(s.step_index, s.parsed_results))
         )
       } catch {
         /* ignore transient failures */
@@ -364,12 +394,13 @@ export default function Executions() {
           actual: msg.actual,
           parsed_results: msg.parsed_results,
         })
-        const row = buildCurveRow(msg.step_index, msg.parsed_results)
-        if (row) {
-          setCurvePoints(prev =>
-            [...prev.filter(r => r.label !== row.label), row]
-              .sort((a, b) => stepNo(a.label) - stepNo(b.label))
-          )
+        const rows = buildCurveRows(msg.step_index, msg.parsed_results)
+        if (rows.length) {
+          setCurvePoints(prev => {
+            const fresh = new Set(rows.map(r => r.label))
+            return [...prev.filter(r => !fresh.has(r.label)), ...rows]
+              .sort(compareRows)
+          })
         }
       } else if (msg.type === 'step_failed') {
         upsertStep(msg.step_index, { status: 'failed', error_message: msg.error })
@@ -427,10 +458,15 @@ export default function Executions() {
           status: r?.status || 'pending',
           duration_ms: r?.duration_ms,
           parsed: normalizeParsed(r?.parsed_results),
+          samples: normalizeSamples(r?.parsed_results),
           actual: r?.actual,
         }
       })
-    : execSteps.map((s: any) => ({ ...s, parsed: normalizeParsed(s.parsed_results) }))
+    : execSteps.map((s: any) => ({
+        ...s,
+        parsed: normalizeParsed(s.parsed_results),
+        samples: normalizeSamples(s.parsed_results),
+      }))
 
   // ---- parsed fields that can be plotted ----
   const availableFields = (() => {
@@ -458,14 +494,28 @@ export default function Executions() {
     const vals = curvePoints
       .map(r => r[f])
       .filter(v => typeof v === 'number' && Number.isFinite(v)) as number[]
+    // count over every reply, not just the last one
     const fails = mergedSteps.reduce(
-      (n, s) => n + (s.parsed || []).filter(
-        (p: any) => String(p?.name || '').trim() === f && p?.ok === false
-      ).length,
+      (n, s) => n + (s.samples || []).reduce(
+        (m: number, sample: any) => m + (Array.isArray(sample) ? sample : []).filter(
+          (p: any) => String(p?.name || '').trim() === f && p?.ok === false
+        ).length,
+        0,
+      ),
+      0,
+    )
+    const unknowns = mergedSteps.reduce(
+      (n, s) => n + (s.samples || []).reduce(
+        (m: number, sample: any) => m + (Array.isArray(sample) ? sample : []).filter(
+          (p: any) => String(p?.name || '').trim() === f && p?.status === 'unknown'
+        ).length,
+        0,
+      ),
       0,
     )
     return {
       field: f,
+      unknowns,
       last: vals.length ? vals[vals.length - 1] : null,
       min: vals.length ? Math.min(...vals) : null,
       max: vals.length ? Math.max(...vals) : null,
@@ -499,19 +549,28 @@ export default function Executions() {
     const order: Record<string, number> = {}
     ;(trendData.executions || []).forEach((e: any, i: number) => { order[e.id] = i })
     const rowByKey: Record<string, any> = {}
-    const slots: Array<{ key: string; exec: string; step: number }> = []
+    const slots: Array<{ key: string; exec: string; step: number; seq: number }> = []
     for (const f of trendFields) {
       for (const p of (trendData.series[f] || [])) {
-        const key = `${p.execution_id}#${p.step_index}`
+        // one row per reply: a step repeating a command N times is N rows
+        const key = `${p.execution_id}#${p.step_index}#${p.seq ?? 0}`
         if (!rowByKey[key]) {
-          rowByKey[key] = { label: `#${p.step_index}` }
-          slots.push({ key, exec: p.execution_id, step: p.step_index })
+          rowByKey[key] = {
+            label: (p.seq ?? 0) > 0 || (p.total ?? 1) > 1
+              ? `#${p.step_index}-${(p.seq ?? 0) + 1}`
+              : `#${p.step_index}`,
+          }
+          slots.push({
+            key, exec: p.execution_id, step: p.step_index, seq: p.seq ?? 0,
+          })
         }
         rowByKey[key][f] = p.num
       }
     }
     slots.sort(
-      (a, b) => (order[a.exec] ?? 0) - (order[b.exec] ?? 0) || a.step - b.step
+      (a, b) => (
+        (order[a.exec] ?? 0) - (order[b.exec] ?? 0) || a.step - b.step || a.seq - b.seq
+      )
     )
     return slots.map(s => rowByKey[s.key])
   })()
@@ -825,20 +884,28 @@ export default function Executions() {
                         {/* parsed values + judgement (result parsing config) */}
                         {s.parsed && s.parsed.length > 0 && (
                           <div style={{ marginTop: 4, paddingLeft: 28 }}>
-                            {s.parsed.map((p: any, i: number) => (
-                              <Tooltip key={i} title={p.detail || ''}>
-                                <Tag
-                                  color={p.ok ? 'green' : 'red'}
-                                  style={{ marginBottom: 2, fontSize: 11 }}
-                                >
-                                  {p.name}={p.value === null || p.value === undefined
-                                    ? '解析失败'
-                                    : String(p.value)}
-                                  {' '}
-                                  {p.ok ? '✓' : '✗'}
-                                </Tag>
-                              </Tooltip>
-                            ))}
+                            {(s.samples?.length || 0) > 1 && (
+                              <Tag style={{ marginBottom: 2, fontSize: 11 }}>
+                                共 {s.samples.length} 次采样，显示最后一次
+                              </Tag>
+                            )}
+                            {s.parsed.map((p: any, i: number) => {
+                              const unknown = p.status === 'unknown'
+                              return (
+                                <Tooltip key={i} title={p.detail || ''}>
+                                  <Tag
+                                    color={unknown ? 'default' : (p.ok ? 'green' : 'red')}
+                                    style={{ marginBottom: 2, fontSize: 11 }}
+                                  >
+                                    {p.name}={p.value === null || p.value === undefined
+                                      ? '解析失败'
+                                      : String(p.value)}
+                                    {' '}
+                                    {unknown ? '?' : (p.ok ? '✓' : '✗')}
+                                  </Tag>
+                                </Tooltip>
+                              )
+                            })}
                           </div>
                         )}
                       </List.Item>
@@ -917,7 +984,8 @@ export default function Executions() {
                           style={{ fontSize: bigScreen ? 15 : 12 }}
                         >
                           {s.field}：最新 {s.last ?? '-'} · 最小 {s.min ?? '-'} · 最大 {s.max ?? '-'}
-                          {s.fails ? ` · 判定 FAIL ${s.fails} 次` : ' · 全部 PASS'}
+                          {s.unknowns ? ` · 空帧 ${s.unknowns} 次` : ''}
+                          {s.fails ? ` · 判定 FAIL ${s.fails} 次` : (s.unknowns ? '' : ' · 全部 PASS')}
                         </Tag>
                       ))}
                     </Space>
@@ -988,7 +1056,8 @@ export default function Executions() {
             <div style={{ marginTop: 8 }}>
               <Text type="secondary" style={{ fontSize: 11 }}>
                 趋势数据直接来自已落库的步骤解析结果（共 {trendData?.total_points ?? 0} 个采样点），
-                无需额外建表。判定 FAIL 的点同样记录在案 —— FAIL 是判定结果，不是系统/设备告警。
+                无需额外建表。每一步的每条应答都是一个采样点；空帧记为 unknown，不参与判定。
+                判定 FAIL 的点同样记录在案 —— FAIL 是判定结果，不是系统/设备告警。
               </Text>
             </div>
           </>

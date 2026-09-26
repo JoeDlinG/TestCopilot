@@ -74,7 +74,27 @@ def assertion_stmt(expected: str) -> str:
 # like the platform's ResponseParser does at runtime.
 PARSE_HELPER = r'''
 
-def _to_bytes(raw):
+def _pick_groups(groups, hex_field):
+    """Choose which 0x.. field(s) form the payload."""
+    if not groups:
+        return []
+    hf = str(hex_field if hex_field is not None else "all").strip().lower()
+    if hf in ("", "all", "*", "全部"):
+        return groups
+    if hf in ("first", "第一个"):
+        return groups[:1]
+    if hf in ("last", "最后", "最后一个"):
+        return groups[-1:]
+    try:
+        idx = int(hf)
+    except (TypeError, ValueError):
+        return groups
+    if idx < 0:
+        idx = len(groups) + idx
+    return groups[idx:idx + 1] if 0 <= idx < len(groups) else groups[-1:]
+
+
+def _to_bytes(raw, hex_field="all"):
     """Convert a device response into raw bytes (hex or text)."""
     if isinstance(raw, (bytes, bytearray)):
         return bytes(raw)
@@ -83,8 +103,8 @@ def _to_bytes(raw):
         return b""
     groups = re.findall(r"(?i)\b0x([0-9a-f]+)\b", s)
     if groups:
-        joined = "".join(groups)
-        if len(joined) % 2 == 0:
+        joined = "".join(_pick_groups(groups, hex_field))
+        if joined and len(joined) % 2 == 0:
             return bytes.fromhex(joined)
     compact = re.sub(r"[,\s_]+", "", s).lower().replace("0x", "")
     if compact and re.fullmatch(r"[0-9a-f]+", compact) and len(compact) % 2 == 0:
@@ -92,9 +112,27 @@ def _to_bytes(raw):
     return s.encode("utf-8", errors="replace")
 
 
-def parse_field(raw, data_type="string", start=0, length=1, unit="byte"):
+def is_empty_frame(raw):
+    """True when the reply carries no payload (e.g. 'CAN1,RPLY1,0X' = timeout)."""
+    if raw is None:
+        return True
+    if isinstance(raw, (bytes, bytearray)):
+        return len(raw) == 0
+    s = str(raw).strip()
+    if not s:
+        return True
+    for m in re.finditer(r"(?i)0x([0-9a-f]*)(?![0-9a-f])", s):
+        if not m.group(1):
+            return True
+    return False
+
+
+def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_field="all"):
     """Slice a response and convert it, mirroring the platform parser."""
-    data = _to_bytes(raw)
+    if is_empty_frame(raw):
+        # empty frame / timeout: nothing to judge
+        return "unknown"
+    data = _to_bytes(raw, hex_field)
     if unit == "bit":
         bits = "".join(f"{b:08b}" for b in data)
         if start + length > len(bits):
@@ -271,9 +309,11 @@ class CodeGenService:
                         cond = spec.get("conditions") or {}
                         var = f"parsed_{pidx}"
                         body_lines.append(f"{prefix}# 结果解析: {name}")
+                        hex_field = spec.get("hex_field") or "all"
                         body_lines.append(
                             f"{prefix}{var} = parse_field(response, data_type={dtype!r}, "
-                            f"start={start}, length={length}, unit={unit!r})"
+                            f"start={start}, length={length}, unit={unit!r}, "
+                            f"hex_field={hex_field!r})"
                         )
                         body_lines.append(f"{prefix}log.info(f'解析 {name} = {{{var}}}')")
                         body_lines.append(
@@ -282,14 +322,15 @@ class CodeGenService:
                         )
                         lo = cond.get("min")
                         hi = cond.get("max")
+                        checks: List[str] = []
                         if lo is not None:
-                            body_lines.append(
-                                f"{prefix}assert {var} >= {lo!r}, "
+                            checks.append(
+                                f"assert {var} >= {lo!r}, "
                                 f"f\"解析 {name}: {{{var}}} 低于最小值 {lo}\""
                             )
                         if hi is not None:
-                            body_lines.append(
-                                f"{prefix}assert {var} <= {hi!r}, "
+                            checks.append(
+                                f"assert {var} <= {hi!r}, "
                                 f"f\"解析 {name}: {{{var}}} 超出最大值 {hi}\""
                             )
                         equals = cond.get("equals") or []
@@ -308,10 +349,16 @@ class CodeGenService:
                             clause = f"str({var}).strip().lower() in [{str_opts}]"
                             if num_opts:
                                 clause += f" or {var} in {num_opts!r}"
-                            body_lines.append(
-                                f"{prefix}assert {clause}, "
+                            checks.append(
+                                f"assert {clause}, "
                                 f"f\"解析 {name}: {{{var}}} 不在期望值 {list(equals)} 内\""
                             )
+                        if checks:
+                            # an empty frame has no value - skip judgement
+                            body_lines.append(
+                                f"{prefix}if {var} != \"unknown\":"
+                            )
+                            body_lines.extend(f"{prefix}    {c}" for c in checks)
 
                     body_lines.append(f"{prefix}time.sleep({timeout_ms})")
                     body_lines.append(f"{prefix}results['steps'].append({{'step': {label or raw_cmd!r}, 'status': 'passed'}})")

@@ -300,15 +300,16 @@ class ExecutionEngine:
                             )
                         else:
                             results = []
-                            last_response = ""
+                            responses: List[str] = []
                             for cmd in commands:
                                 response = await device_service.send_command(
                                     db, device_id, cmd,
                                     execution_id=execution_id,
                                     step_result_id=step_result.id,
                                 )
-                                last_response = response.get("response", "") or ""
-                                results.append(f"{cmd} -> {last_response}")
+                                resp_text = response.get("response", "") or ""
+                                responses.append(resp_text)
+                                results.append(f"{cmd} -> {resp_text}")
                             # Keep the stored result readable when a command
                             # was repeated many times (e.g. "循环读取 100 次").
                             if len(results) > 8:
@@ -321,13 +322,25 @@ class ExecutionEngine:
                             step_result.status = StepStatus.PASSED.value
 
                             # ---- result parsing + judgement ----
+                            # A step may repeat the same command N times
+                            # ("循环读取 100 次"). Every reply is a sample, so
+                            # the curve gets N points instead of only the last
+                            # one. Empty frames are reported as "unknown" and
+                            # are excluded from the judgement.
                             parsers = config.get("parsers")
                             if parsers:
-                                parsed = response_parser.parse_all(last_response, parsers)
-                                passed, summary = response_parser.summarize(parsed)
-                                step_result.parsed_results = json.dumps(
-                                    parsed, ensure_ascii=False
+                                samples: List[List[Dict[str, Any]]] = [
+                                    response_parser.parse_all(r, parsers)
+                                    for r in responses
+                                ]
+                                passed, summary = response_parser.summarize_series(
+                                    samples
                                 )
+                                step_result.parsed_results = json.dumps({
+                                    "count": len(samples),
+                                    "samples": samples,
+                                    "last": samples[-1] if samples else [],
+                                }, ensure_ascii=False)
                                 step_result.actual = (
                                     f"{step_result.actual} || 解析: {summary}"
                                 )

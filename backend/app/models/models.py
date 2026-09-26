@@ -303,8 +303,14 @@ class TestStepResult(Base):
     expected = Column(Text, nullable=True)
     actual = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
-    # JSON list: result parsing + judgement outcome for this step, e.g.
-    # [{"name": "电压", "data_type": "dec", "value": 12.3, "ok": true, "detail": "..."}]
+    # Result parsing + judgement outcome for this step. One sample per reply,
+    # because a step may repeat the same command N times:
+    #   {"count": N,
+    #    "samples": [[{"name": "电压", "value": 12.3, "status": "ok",
+    #                  "ok": true, "detail": "..."}], ...],
+    #    "last": [ ... same shape as one sample ... ]}
+    # "status" is ok | fail | unknown (empty frame, judgement skipped) | error.
+    # Legacy rows may still hold a bare list (= a single sample).
     parsed_results = Column(Text, nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

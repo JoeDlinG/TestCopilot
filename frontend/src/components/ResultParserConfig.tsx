@@ -30,12 +30,23 @@ export type ParserSpec = {
   start: number
   length: number
   unit: 'bit' | 'byte'
+  /** which "0x.." field of the reply is the payload when there are several */
+  hex_field?: string
   conditions?: {
     min?: number | null
     max?: number | null
     equals?: string[]
   }
 }
+
+/** How to pick the payload when a reply carries several 0x fields. */
+export const HEX_FIELDS = [
+  { value: 'all', label: '全部拼接' },
+  { value: '0', label: '第 1 个' },
+  { value: '1', label: '第 2 个' },
+  { value: '2', label: '第 3 个' },
+  { value: 'last', label: '最后 1 个' },
+]
 
 type Props = {
   open: boolean
@@ -59,6 +70,7 @@ function blankParser(index: number): ParserSpec {
     start: 0,
     length: 1,
     unit: 'byte',
+    hex_field: 'all',
     conditions: { min: null, max: null, equals: [] },
   }
 }
@@ -66,6 +78,7 @@ function blankParser(index: number): ParserSpec {
 function normalise(p: ParserSpec): ParserSpec {
   return {
     ...p,
+    hex_field: p.hex_field || 'all',
     conditions: {
       min: p.conditions?.min ?? null,
       max: p.conditions?.max ?? null,
@@ -82,6 +95,9 @@ export default function ResultParserConfig({
   const [preview, setPreview] = useState<any[]>([])
   const [previewing, setPreviewing] = useState(false)
   const [allPassed, setAllPassed] = useState<boolean | null>(null)
+  const [previewMeta, setPreviewMeta] = useState<{
+    raw_bytes_hex?: string; empty_frame?: boolean
+  } | null>(null)
 
   // Re-seed the form every time the dialog is opened for a step
   useEffect(() => {
@@ -93,6 +109,7 @@ export default function ResultParserConfig({
     setSample(initialSample || '')
     setPreview([])
     setAllPassed(null)
+    setPreviewMeta(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -156,6 +173,10 @@ export default function ResultParserConfig({
       const data = res.data?.data ?? res.data
       setPreview(data?.parsed || [])
       setAllPassed(!!data?.all_passed)
+      setPreviewMeta({
+        raw_bytes_hex: data?.raw_bytes_hex,
+        empty_frame: !!data?.empty_frame,
+      })
     } catch (err) {
       handleApiError(err, '预览解析失败')
     } finally {
@@ -198,7 +219,7 @@ export default function ResultParserConfig({
           extra={<Button size="small" danger type="text" icon={<DeleteOutlined />} onClick={() => removeItem(index)} disabled={items.length === 1}>删除</Button>}
         >
           <Row gutter={8}>
-            <Col span={7}>
+            <Col span={6}>
               <Text type="secondary" style={{ fontSize: 12 }}>名称（全用例唯一）</Text>
               <Input
                 size="small"
@@ -214,7 +235,7 @@ export default function ResultParserConfig({
                 </Text>
               )}
             </Col>
-            <Col span={7}>
+            <Col span={5}>
               <Text type="secondary" style={{ fontSize: 12 }}>数据类型</Text>
               <Select
                 size="small"
@@ -224,7 +245,7 @@ export default function ResultParserConfig({
                 onChange={v => update(index, { data_type: v })}
               />
             </Col>
-            <Col span={4}>
+            <Col span={3}>
               <Text type="secondary" style={{ fontSize: 12 }}>起始位</Text>
               <InputNumber
                 size="small" min={0} style={{ width: '100%', marginTop: 2 }}
@@ -248,6 +269,18 @@ export default function ResultParserConfig({
                 value={item.unit}
                 options={UNITS}
                 onChange={v => update(index, { unit: v })}
+              />
+            </Col>
+            <Col span={4}>
+              <Tooltip title="返回报文含多个 0x 字段时（如 1,STD,0X11,0X0102030000000000），选择用哪一个作为数据区。默认全部拼接会整体偏移。">
+                <Text type="secondary" style={{ fontSize: 12 }}>HEX 字段</Text>
+              </Tooltip>
+              <Select
+                size="small"
+                style={{ width: '100%', marginTop: 2 }}
+                value={item.hex_field || 'all'}
+                options={HEX_FIELDS}
+                onChange={v => update(index, { hex_field: v })}
               />
             </Col>
           </Row>
@@ -303,6 +336,27 @@ export default function ResultParserConfig({
         </Button>
       </Space.Compact>
 
+      {previewMeta?.raw_bytes_hex !== undefined && (
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>实际参与切分的字节：</Text>
+          <Text code style={{ fontSize: 12 }}>
+            {previewMeta.raw_bytes_hex || '（空）'}
+          </Text>
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+            起始位 0 对应上面第 1 个字节
+          </Text>
+        </div>
+      )}
+
+      {previewMeta?.empty_frame && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="这是一条空帧（无数据 / 超时），解析值记为 unknown，判定跳过"
+        />
+      )}
+
       {preview.length > 0 ? (
         <>
           <Alert
@@ -328,10 +382,15 @@ export default function ResultParserConfig({
                 ),
               },
               {
-                title: '判定', dataIndex: 'ok', width: 80,
-                render: (ok: boolean) => (
-                  <Tag color={ok ? 'green' : 'red'}>{ok ? 'PASS' : 'FAIL'}</Tag>
-                ),
+                title: '判定', dataIndex: 'status', width: 90,
+                render: (_: any, r: any) => {
+                  const st = r?.status || (r?.ok ? 'ok' : 'fail')
+                  if (st === 'unknown') return <Tag color="default">UNKNOWN</Tag>
+                  if (st === 'error') return <Tag color="orange">ERROR</Tag>
+                  return <Tag color={st === 'ok' ? 'green' : 'red'}>
+                    {st === 'ok' ? 'PASS' : 'FAIL'}
+                  </Tag>
+                },
               },
               { title: '说明', dataIndex: 'detail' },
             ]}

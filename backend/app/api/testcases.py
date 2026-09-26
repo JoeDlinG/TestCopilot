@@ -389,13 +389,18 @@ async def preview_result_parsing(payload: dict):
             "code": 40010, "message": f"解析配置无效: {e}",
         })
     all_passed, summary = response_parser.summarize(parsed)
+    # the exact bytes the parser slices, shown in the UI so the user can see
+    # what "start/length" really points at
+    data_bytes = response_parser.to_bytes(raw)
     return {
         "code": 0, "message": "success",
         "data": {
             "parsed": parsed,
             "all_passed": all_passed,
             "summary": summary,
-            "raw_bytes": list(response_parser.to_bytes(raw)),
+            "raw_bytes": list(data_bytes),
+            "raw_bytes_hex": " ".join(f"{b:02X}" for b in data_bytes),
+            "empty_frame": response_parser.is_empty_frame(raw),
         },
     }
 
@@ -454,38 +459,62 @@ async def get_parsed_trend(
     )
     steps = list(step_rows.scalars().all())
 
+    def _samples_of(parsed: Any) -> List[List[Dict[str, Any]]]:
+        """``parsed_results`` is either the new per-reply series object or the
+        legacy flat list (one sample)."""
+        if isinstance(parsed, dict):
+            samples = parsed.get("samples")
+            if isinstance(samples, list) and samples:
+                return [s for s in samples if isinstance(s, list)]
+            last = parsed.get("last")
+            return [last] if isinstance(last, list) else []
+        if isinstance(parsed, list):
+            return [parsed]
+        return []
+
     series: Dict[str, List[Dict[str, Any]]] = {}
     for s in steps:
         try:
             parsed = json.loads(s.parsed_results or "[]")
         except (TypeError, ValueError):
             continue
-        if not isinstance(parsed, list):
+        samples = _samples_of(parsed)
+        if not samples:
             continue
         meta = exec_meta.get(s.execution_id, {})
-        for p in parsed:
-            if not isinstance(p, dict):
-                continue
-            name = str(p.get("name") or "").strip()
-            if not name:
-                continue
-            value = p.get("value")
-            num = response_parser.to_number(value)
-            series.setdefault(name, []).append({
-                "execution_id": s.execution_id,
-                "step_index": s.step_index,
-                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                "started_at": meta.get("started_at"),
-                "value": value,
-                "num": num,
-                "ok": bool(p.get("ok")),
-                "detail": p.get("detail"),
-            })
+        # one point per reply, so a step that repeated a command N times
+        # contributes N points instead of a single collapsed one
+        for seq, sample in enumerate(samples):
+            for p in sample:
+                if not isinstance(p, dict):
+                    continue
+                name = str(p.get("name") or "").strip()
+                if not name:
+                    continue
+                value = p.get("value")
+                num = response_parser.to_number(value)
+                series.setdefault(name, []).append({
+                    "execution_id": s.execution_id,
+                    "step_index": s.step_index,
+                    "seq": seq,
+                    "total": len(samples),
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                    "started_at": meta.get("started_at"),
+                    "value": value,
+                    "num": num,
+                    "ok": bool(p.get("ok")),
+                    "status": p.get("status") or ("ok" if p.get("ok") else "fail"),
+                    "detail": p.get("detail"),
+                })
 
     # keep each field's points in chronological order
     order = {e[0]: i for i, e in enumerate(executions)}
     for points in series.values():
-        points.sort(key=lambda pt: (order.get(pt["execution_id"], 0), pt["step_index"]))
+        points.sort(
+            key=lambda pt: (
+                order.get(pt["execution_id"], 0), pt["step_index"], pt["seq"]
+            )
+        )
 
     return {
         "code": 0, "message": "success",

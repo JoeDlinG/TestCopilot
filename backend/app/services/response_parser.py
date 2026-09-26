@@ -28,6 +28,17 @@ from typing import Any, Dict, List, Optional, Tuple
 DATA_TYPES = ("hex", "bin", "bool", "dec", "string")
 UNITS = ("bit", "byte")
 
+# Shown when a reply carries no payload at all (empty frame / timeout).
+# It is deliberately a string so the UI can display it and so it never
+# turns into a bogus numeric sample.
+UNKNOWN = "unknown"
+
+# status values carried by every parsed field
+STATUS_OK = "ok"        # parsed and judged, passed
+STATUS_FAIL = "fail"    # parsed and judged, failed
+STATUS_UNKNOWN = "unknown"  # empty frame - nothing to judge
+STATUS_ERROR = "error"  # configuration / out-of-range problem
+
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 
 
@@ -39,7 +50,54 @@ class ResponseParser:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def to_bytes(raw: Any) -> bytes:
+    def _pick_hex_groups(groups: List[str], hex_field: Any) -> List[str]:
+        """Choose which ``0x..`` field(s) of a reply form the payload.
+
+        A reply may carry several hex fields
+        (``1,STD,0X11,0X0102030000000000``). Joining *all* of them silently
+        shifts every offset, so the user can pin one of them.
+        """
+        if not groups:
+            return []
+        hf = str(hex_field if hex_field is not None else "all").strip().lower()
+        if hf in ("", "all", "*", "全部"):
+            return groups
+        if hf in ("first", "第一个"):
+            return groups[:1]
+        if hf in ("last", "最后", "最后一个"):
+            return groups[-1:]
+        try:
+            idx = int(hf)
+        except (TypeError, ValueError):
+            return groups
+        if idx < 0:
+            idx = len(groups) + idx
+        return groups[idx:idx + 1] if 0 <= idx < len(groups) else groups[-1:]
+
+    @classmethod
+    def is_empty_frame(cls, raw: Any) -> bool:
+        """True when the reply carries no data at all.
+
+        Mini-Gateway style replies mark the payload with ``0X``; when nothing
+        was received the field is empty (``CAN1,RPLY1,0X``), which means
+        "timeout / no frame" - **not** the value zero. Parsing those bytes
+        would slice the literal text (',' = 0x2C, 'X' = 0x58) and report
+        nonsense, so callers must detect it first.
+        """
+        if raw is None:
+            return True
+        if isinstance(raw, (bytes, bytearray)):
+            return len(raw) == 0
+        s = str(raw).strip()
+        if not s:
+            return True
+        for m in re.finditer(r"(?i)0x([0-9a-f]*)(?![0-9a-f])", s):
+            if not m.group(1):
+                return True
+        return False
+
+    @classmethod
+    def to_bytes(cls, raw: Any, hex_field: Any = "all") -> bytes:
         """Best-effort conversion of a device response into raw bytes.
 
         Handles hex strings ("0x85 02 01", "850201", "85,02,01"), byte lists
@@ -63,8 +121,8 @@ class ResponseParser:
         # gets parsed.
         hex_groups = re.findall(r"(?i)\b0x([0-9a-f]+)\b", s)
         if hex_groups:
-            joined = "".join(hex_groups)
-            if len(joined) % 2 == 0:
+            joined = "".join(cls._pick_hex_groups(hex_groups, hex_field))
+            if joined and len(joined) % 2 == 0:
                 try:
                     return bytes.fromhex(joined)
                 except ValueError:
@@ -87,7 +145,7 @@ class ResponseParser:
         Returns ``(value, error)``. ``value`` is an ``int`` for bit units and
         ``bytes`` for byte units.
         """
-        data = ResponseParser.to_bytes(raw)
+        data = ResponseParser.to_bytes(raw, spec.get("hex_field", "all"))
         try:
             start = max(0, int(spec.get("start") or 0))
             length = max(1, int(spec.get("length") or 1))
@@ -250,15 +308,32 @@ class ResponseParser:
         if data_type not in DATA_TYPES:
             data_type = "string"
 
+        base = {
+            "name": name,
+            "data_type": data_type,
+            "unit": spec.get("unit", "byte"),
+            "start": spec.get("start", 0),
+            "length": spec.get("length", 1),
+        }
+
+        # Empty frame ("CAN1,RPLY1,0X" = timeout / nothing received):
+        # there is no value to judge. Report "unknown" and skip the
+        # judgement instead of slicing the reply text into fake numbers.
+        if cls.is_empty_frame(raw):
+            return {
+                **base,
+                "value": UNKNOWN,
+                "status": "unknown",
+                "ok": True,
+                "detail": "空帧（无数据 / 超时），跳过判定",
+            }
+
         value, err = cls.extract(raw, spec)
         if err:
             return {
-                "name": name,
-                "data_type": data_type,
-                "unit": spec.get("unit", "byte"),
-                "start": spec.get("start", 0),
-                "length": spec.get("length", 1),
+                **base,
                 "value": None,
+                "status": "error",
                 "ok": False,
                 "detail": err,
             }
@@ -266,12 +341,9 @@ class ResponseParser:
         converted = cls.convert(value, data_type)
         ok, detail = cls.evaluate(converted, spec.get("conditions"))
         return {
-            "name": name,
-            "data_type": data_type,
-            "unit": spec.get("unit", "byte"),
-            "start": spec.get("start", 0),
-            "length": spec.get("length", 1),
+            **base,
             "value": converted,
+            "status": "ok" if ok else "fail",
             "ok": ok,
             "detail": detail,
         }
@@ -291,9 +363,67 @@ class ResponseParser:
         ok = all(p.get("ok") for p in parsed)
         parts = []
         for p in parsed:
-            flag = "PASS" if p.get("ok") else "FAIL"
+            flag = "UNKNOWN" if p.get("status") == STATUS_UNKNOWN else (
+                "PASS" if p.get("ok") else "FAIL"
+            )
             parts.append(f"{p.get('name')}={p.get('value')} [{flag}] {p.get('detail')}")
         return ok, "; ".join(parts)
+
+    @classmethod
+    def summarize_series(
+        cls, samples: List[List[Dict[str, Any]]]
+    ) -> Tuple[bool, str]:
+        """Aggregate *every* reply of a step into (all_passed, summary).
+
+        A step may repeat the same command N times ("read 100 times"), so one
+        sample per reply is produced. The summary stays compact: per field it
+        reports the latest value, the numeric range, and how many samples were
+        empty frames or failed judgement.
+        """
+        if not samples:
+            return True, ""
+        if len(samples) == 1:
+            return cls.summarize(samples[0])
+
+        ok = all(all(p.get("ok") for p in sample) for sample in samples)
+
+        stats: Dict[str, Dict[str, Any]] = {}
+        for sample in samples:
+            for p in sample or []:
+                name = str(p.get("name") or "?")
+                st = stats.setdefault(name, {
+                    "n": 0, "unknown": 0, "fail": 0, "last": None, "vals": [],
+                })
+                st["n"] += 1
+                if p.get("status") == STATUS_UNKNOWN:
+                    st["unknown"] += 1
+                    if st["last"] is None:
+                        st["last"] = UNKNOWN
+                    continue
+                if not p.get("ok"):
+                    st["fail"] += 1
+                    continue
+                st["last"] = p.get("value")
+                num = cls.to_number(p.get("value"))
+                if num is not None:
+                    st["vals"].append(num)
+
+        parts = []
+        for name, st in stats.items():
+            seg = f"{name}×{st['n']}"
+            if st["vals"]:
+                seg += (
+                    f" 最新={st['last']}"
+                    f" 最小={min(st['vals']):g} 最大={max(st['vals']):g}"
+                )
+            else:
+                seg += f" 最新={st['last']}"
+            if st["unknown"]:
+                seg += f" 空帧{st['unknown']}"
+            if st["fail"]:
+                seg += f" FAIL{st['fail']}"
+            parts.append(seg)
+        return ok, f"共 {len(samples)} 次采样: " + "; ".join(parts)
 
 
 response_parser = ResponseParser()
