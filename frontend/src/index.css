@@ -53,3 +53,24 @@ body {
   font-weight: 600;
   margin-bottom: 16px;
 }
+
+/* ============ 自定义仪表盘 ============ */
+/* 大屏模式：antd 组件默认深色文字在深色投屏背景上不可读，整体提亮 */
+.big-dash .ant-typography {
+  color: rgba(255, 255, 255, 0.9);
+}
+.big-dash .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+.big-dash .ant-statistic-content {
+  color: #fff !important;
+}
+.big-dash .ant-progress-text {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+.big-dash .ant-empty-description {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+.big-dash .ant-progress-inner:not(.ant-progress-circle) {
+  background: rgba(255, 255, 255, 0.14);
+}

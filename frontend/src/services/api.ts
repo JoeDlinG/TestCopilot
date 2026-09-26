@@ -146,6 +146,22 @@ export const reportAPI = {
   createTemplate: (data: any) => api.post('/reports/templates', data),
 }
 
+// Custom dashboard APIs
+export const dashboardAPI = {
+  list: () => api.get('/dashboards/'),
+  get: (id: string) => api.get(`/dashboards/${id}`),
+  create: (data: any) => api.post('/dashboards/', data),
+  update: (id: string, data: any) => api.put(`/dashboards/${id}`, data),
+  delete: (id: string) => api.delete(`/dashboards/${id}`),
+  duplicate: (id: string) => api.post(`/dashboards/${id}/duplicate`),
+  setDefault: (id: string) => api.post(`/dashboards/${id}/set-default`),
+  importJson: (data: any) => api.post('/dashboards/import', data),
+  snapshot: (testCaseId?: string | null, limit = 50) =>
+    api.get('/dashboards/snapshot', {
+      params: { test_case_id: testCaseId || undefined, limit },
+    }),
+}
+
 // System control APIs
 export const systemAPI = {
   restart: () => api.post('/system/restart'),

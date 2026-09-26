@@ -22,6 +22,7 @@ const { Header, Sider, Content } = Layout
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
+  { key: '/dashboards', icon: <AppstoreAddOutlined />, label: '自定义仪表盘' },
   { key: '/devices', icon: <ApiOutlined />, label: '设备管理' },
   { key: '/debug-terminal', icon: <CodeOutlined />, label: '调试终端' },
   { key: '/ai', icon: <RobotOutlined />, label: 'AI 助手' },

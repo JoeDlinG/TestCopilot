@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import AppLayout from './components/layout/AppLayout'
 import Dashboard from './pages/Dashboard'
+import CustomDashboard from './pages/CustomDashboard'
 import Devices from './pages/Devices'
 import DebugTerminal from './pages/DebugTerminal'
 import AIChat from './pages/AIChat'
@@ -17,6 +18,7 @@ function App() {
     <Routes>
       <Route path="/" element={<AppLayout />}>
         <Route index element={<Dashboard />} />
+        <Route path="dashboards" element={<CustomDashboard />} />
         <Route path="devices" element={<Devices />} />
         <Route path="debug-terminal" element={<DebugTerminal />} />
         <Route path="ai" element={<AIChat />} />

@@ -27,6 +27,7 @@ from app.schemas.schemas import (
 from app.services.testgen_service import testgen_service
 from app.services.codegen_service import codegen_service
 from app.services.response_parser import response_parser
+from app.services.trend_service import collect_parsed_series
 
 router = APIRouter(prefix="/api/testcases", tags=["Test Cases"])
 
@@ -417,37 +418,8 @@ async def get_parsed_trend(
     step, so no separate metrics table is needed. ``num`` is the numeric view
     used for plotting (null for values that are not numeric, e.g. strings).
     """
-    exec_rows = await db.execute(
-        select(
-            TestExecution.id,
-            TestExecution.created_at,
-            TestExecution.started_at,
-            TestExecution.status,
-            TestExecution.result,
-        )
-        .where(TestExecution.testcase_id == test_case_id)
-        .order_by(TestExecution.created_at.desc())
-        .limit(limit)
-    )
-    executions = list(exec_rows.all())
-    if not executions:
-        return {
-            "code": 0, "message": "success",
-            "data": {"fields": [], "series": {}, "executions": []},
-        }
-
-    # chronological order for plotting
-    executions.reverse()
-    exec_ids = [e[0] for e in executions]
-    exec_meta = {
-        e[0]: {
-            "created_at": e[1].isoformat() if e[1] else None,
-            "started_at": e[2].isoformat() if e[2] else None,
-            "status": e[3],
-            "result": e[4],
-        }
-        for e in executions
-    }
+    data = await collect_parsed_series(db, test_case_id, limit=limit)
+    return {"code": 0, "message": "success", "data": data}
 
     step_rows = await db.execute(
         select(TestStepResult)

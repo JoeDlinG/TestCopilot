@@ -152,6 +152,130 @@ export interface NLQueryResult {
   explanation?: string
 }
 
+// ============ Custom Dashboard ============
+
+export type WidgetType =
+  | 'parsed_value'      // 解析数值卡片
+  | 'trend_chart'       // 解析值趋势曲线
+  | 'judge_summary'     // 判定结果汇总
+  | 'device_status'     // 设备状态
+  | 'execution_stats'   // 执行统计
+  | 'comm_log'          // 通信日志
+  | 'note'              // 文本备注
+
+export interface DashboardWidget {
+  id: string
+  type: WidgetType
+  title: string
+  config: Record<string, any>
+}
+
+export interface DashboardLayoutItem {
+  i: string
+  x: number
+  y: number
+  w: number
+  h: number
+  minW?: number
+  minH?: number
+}
+
+export interface DashboardDataSource {
+  test_case_id: string | null
+  limit: number
+  refresh_sec: number
+}
+
+export interface CustomDashboard {
+  id: string
+  name: string
+  description?: string
+  layout: DashboardLayoutItem[]
+  widgets: DashboardWidget[]
+  data_source: DashboardDataSource
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** one parsed value sampled from a single reply */
+export interface ParsedPoint {
+  execution_id: string
+  step_index: number
+  step_label?: string
+  seq: number
+  total: number
+  completed_at?: string | null
+  started_at?: string | null
+  value: any
+  num: number | null
+  ok: boolean
+  status: 'ok' | 'fail' | 'unknown' | 'error'
+  detail?: string | null
+}
+
+export interface ParsedLatest {
+  field: string
+  value: any
+  num: number | null
+  status: string
+  detail?: string | null
+  points: number
+  min: number | null
+  max: number | null
+  avg: number | null
+  fail_count: number
+  updated_at?: string | null
+}
+
+export interface DashboardSnapshot {
+  generated_at: string
+  test_case_id: string | null
+  test_case_name: string | null
+  devices: {
+    total: number
+    connected: number
+    list: Array<{
+      id: string; name: string; type: string; protocol: string
+      connection_type: string; status: string; address?: string | null
+      connected_at?: string | null; last_seen?: string | null
+    }>
+  }
+  executions: {
+    total: number; passed: number; failed: number; error: number
+    running: number; pass_rate: number | null
+    by_status: Record<string, number>
+    recent: Array<{
+      id: string; test_case_id: string; status: string; result?: string | null
+      total_steps: number; passed_steps: number; failed_steps: number
+      duration_ms?: number | null; created_at?: string | null
+      completed_at?: string | null; error_message?: string | null
+    }>
+  }
+  parsed: {
+    fields: string[]
+    series: Record<string, ParsedPoint[]>
+    executions: Array<{ id: string; status?: string; result?: string; created_at?: string; started_at?: string }>
+    total_points: number
+    latest: Record<string, ParsedLatest>
+  }
+  judgement: {
+    total: number; ok: number; fail: number; unknown: number; error: number
+    pass_rate: number | null
+    by_field: Record<string, {
+      total: number; ok: number; fail: number; unknown: number; error: number
+      last_value: any; last_num: number | null; last_status: string | null
+      pass_rate: number | null
+    }>
+    failures: Array<{
+      field: string; value: any; num: number | null; detail?: string | null
+      execution_id?: string; step_index?: number; step_label?: string
+      completed_at?: string | null
+    }>
+    failure_fields: string[]
+  }
+}
+
 export const DEVICE_TYPES: Record<string, string> = {
   power_supply: '可编程电源',
   oscilloscope: '示波器',

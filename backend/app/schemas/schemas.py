@@ -426,6 +426,40 @@ class PluginUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+# ============ Custom Dashboard Schemas ============
+
+class DashboardCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    layout: Optional[Any] = None
+    widgets: Optional[Any] = None
+    data_source: Optional[Dict[str, Any]] = None
+    is_default: Optional[bool] = None
+
+
+class DashboardUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    layout: Optional[Any] = None
+    widgets: Optional[Any] = None
+    data_source: Optional[Dict[str, Any]] = None
+    is_default: Optional[bool] = None
+
+
+class DashboardResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    layout: Optional[Any] = None
+    widgets: Optional[Any] = None
+    data_source: Optional[Any] = None
+    is_default: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
 # ============ Speech Schemas ============
 
 class SpeechTranscribeResponse(BaseModel):

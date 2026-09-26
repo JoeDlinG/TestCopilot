@@ -446,6 +446,34 @@ class ChatHistory(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class Dashboard(Base):
+    """3.12 dashboards — User-assembled custom dashboard.
+
+    A dashboard is *only* a description: a grid layout plus a list of widget
+    definitions. No measured values are ever stored here — widgets reference a
+    data source (test case / device / fields) and every value is resolved at
+    request time from ``test_step_results.parsed_results``.
+    """
+    __tablename__ = "dashboards"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dash"))
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    # react-grid-layout layout array: [{i, x, y, w, h, minW, minH}, ...]
+    layout = Column(Text, nullable=True)
+    # widget definitions: [{id, type, title, config: {...}}, ...]
+    widgets = Column(Text, nullable=True)
+    # shared data source for the parsed-value widgets
+    data_source = Column(Text, nullable=True)  # JSON: {test_case_id, limit, refresh_sec}
+    is_default = Column(Boolean, nullable=False, default=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_dashboards_is_default", "is_default"),
+    )
+
+
 class SystemConfig(Base):
     """3.11 system_config — System configuration table."""
     __tablename__ = "system_config"
