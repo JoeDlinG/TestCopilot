@@ -147,6 +147,21 @@
       避免"全部拼接"导致偏移整体错位
 - [x] 解析配置预览显示实际参与切分的字节；代码生成器与运行时判定保持一致
 
+### SCPI 协议 Skill + RIGOL 示波器插件 (2026-09-26)
+- [x] **SCPI 通用协议**：下载 SCPI-1999 官方规范（IVI Foundation，卷一 Syntax & Style）到 `docs/scpi/`
+- [x] 新增 `scpi` Skill（`backend/plugins/skills/scpi_skill.md`）+ 手册（`backend/plugins/manuals/scpi.md`）：
+      命令树/语法规则、参数类型（Bool/Discrete/NR1/NR2/NR3）、单位后缀、
+      IEEE488.2 通用命令、状态报告模型、IEEE 明确长度块解析
+- [x] **RIGOL 示波器插件** `rigol_oscilloscope`：SCPI over LAN(5555) / USB-TMC / VISA，
+      含波形读取（PREamble + DATA + 电压换算）、屏幕截图、测量动作
+- [x] 下载 RIGOL 官方编程手册（DS1000Z-E、MSO5000）到 `docs/rigol/`，
+      整理为可机读手册 `backend/plugins/manuals/rigol_oscilloscope.md`
+- [x] 插件已在后端安装并启用（`plg_9410ada9`），`/api/plugins/discovered` 可见
+- [x] 排错修正：查询前清空接收缓冲（避免读到上一次应答）；
+      `:MEASure:ITEM? VPP,CHAN1` 这类 `?` 在参数前的命令也能正确识别为查询
+- 注：RIGOL 中国区支持站（supportcn.rigol.com）在当前网络不可达，
+      手册改由 rigol.com 国际站公开直链下载，**未使用账号登录**
+
 ### 仪表盘大屏模式 (2026-09-26)
 - [x] 仪表盘新增「大屏模式」入口：全视口深色投屏布局、超大字号统计卡（设备/用例/执行/通过率）
 - [x] 实时时钟 + 自动刷新（5/10/30/60 秒可选）+ 立即刷新

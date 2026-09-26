@@ -7,8 +7,8 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 | 模块 | 说明 |
 |------|------|
 | **设备连接** | 支持可编程电源、示波器、万用表、电子负载、信号发生器，集成 PCAN/Vector/CAN/LIN/串口/以太网工具链 |
-| **多接口通信** | SCPI (PyVISA)、CAN/CAN FD (python-can)、串口 RS232/RS485 (pyserial)、以太网 TCP/UDP |
-| **插件扩展** | Python 插件 SDK（`BaseProtocolPlugin` 基类），动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱；支持自定义协议一键创建设备 |
+| **多接口通信** | SCPI（PyVISA / LAN 直连 5555 / USB-TMC）、CAN/CAN FD (python-can)、串口 RS232/RS485 (pyserial)、以太网 TCP/UDP |
+| **插件扩展** | Python 插件 SDK（`BaseProtocolPlugin` 基类），动态加载/卸载协议驱动、解析器、报告插件，进程隔离安全沙箱；支持自定义协议一键创建设备。**内置插件**：Mini Gateway 100、PeakCAN USB、**RIGOL 示波器**；每个插件可配 Skill（AI 用例生成指引）与手册（`backend/plugins/skills`、`backend/plugins/manuals`） |
 | **AI 大模型** | 支持 OpenAI/Ollama/Anthropic 及国产模型（混元/通义千问/文心/LocalAI/vLLM 等），Provider 抽象 + Fallback 机制；前端模型管理页（API Key 配置/测试/默认切换） |
 | **测试用例生成** | 文字/语音输入需求 → AI 自动生成结构化测试用例 → ReactFlow 流程图可视化编辑（支持拖拽、撤销/重做、条件分支、循环） |
 | **测试执行引擎** | 顺序/并行/条件/循环执行，变量系统，钩子系统；执行页内置实时通信监控（暂停/继续/清空）、步骤状态窗口与解析数据曲线 |
@@ -172,7 +172,11 @@ AITestLab/
 │   ├── ARCHITECTURE.md                # 系统架构设计
 │   ├── API_SPEC.md                    # API 契约文档 (40+ 端点)
 │   ├── DB_DESIGN.md                   # 数据库设计 (11 张表)
-│   └── TECH_DECISIONS.md             # 技术决策 (9 项选型 + 5 条 ADR)
+│   ├── TECH_DECISIONS.md             # 技术决策 (9 项选型 + 5 条 ADR)
+│   ├── PEAKCAN_PLUGIN.md             # PeakCAN USB 插件说明
+│   ├── RIGOL_OSCILLOSCOPE_PLUGIN.md  # RIGOL 示波器插件说明
+│   ├── scpi/                         # SCPI-1999 官方规范 PDF + 速查
+│   └── rigol/                        # RIGOL 示波器官方编程手册 PDF
 │
 └── README.md                          # 本文件
 ```
@@ -306,6 +310,10 @@ curl -X POST http://localhost:8000/api/plugins/install \
 | [TECH_DECISIONS.md](docs/TECH_DECISIONS.md) | 技术决策：9 项选型分析、5 条 ADR、性能目标、安全设计 |
 | [USER_MANUAL.md](docs/USER_MANUAL.md) | 使用手册：详细操作指南 |
 | [CUSTOM_DASHBOARD_IDEAS.md](docs/CUSTOM_DASHBOARD_IDEAS.md) | 自定义仪表盘：设计草案与头脑风暴（待办功能） |
+| [PEAKCAN_PLUGIN.md](docs/PEAKCAN_PLUGIN.md) | PeakCAN USB 插件：驱动安装、配置参数、CAN/CAN FD 通信指令 |
+| [RIGOL_OSCILLOSCOPE_PLUGIN.md](docs/RIGOL_OSCILLOSCOPE_PLUGIN.md) | RIGOL 示波器插件：SCPI 远程控制（LAN/USB-TMC/VISA）、波形读取、故障排查 |
+| [scpi/](docs/scpi/) | **SCPI 协议资料**：SCPI-1999 官方规范 PDF + 语法/命令树/状态模型速查 |
+| [rigol/](docs/rigol/) | **RIGOL 示波器官方编程手册** PDF（DS1000Z-E、MSO5000） |
 
 ## License
 
