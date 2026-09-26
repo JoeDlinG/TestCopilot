@@ -9,7 +9,7 @@ import {
   EyeOutlined, ClearOutlined, ApiOutlined, OrderedListOutlined,
   ArrowDownOutlined, ArrowUpOutlined, MinusCircleOutlined, AimOutlined
 } from '@ant-design/icons'
-import { executionAPI, deviceAPI } from '../services/api'
+import { executionAPI, deviceAPI, testCaseAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import type { TestExecution } from '../types'
 
@@ -56,6 +56,18 @@ function wsBase(): string {
   return `${protocol}//${host}:8000`
 }
 
+/** parsed_results may arrive as a JSON string (DB) or an array (WebSocket) */
+function normalizeParsed(v: any): any[] {
+  if (!v) return []
+  if (Array.isArray(v)) return v
+  try {
+    const parsed = JSON.parse(v)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export default function Executions() {
   const [executions, setExecutions] = useState<TestExecution[]>([])
   const [loading, setLoading] = useState(false)
@@ -76,6 +88,8 @@ export default function Executions() {
   const [trackedId, setTrackedId] = useState<string>('')
   const [trackedInfo, setTrackedInfo] = useState<any>(null)
   const [execSteps, setExecSteps] = useState<any[]>([])
+  // all steps of the flow, so the window shows the whole plan while running
+  const [flowSteps, setFlowSteps] = useState<any[]>([])
 
   const handleViewDetail = async (id: string) => {
     try {
@@ -313,6 +327,34 @@ export default function Executions() {
     return () => { cancelled = true; ws.close() }
   }, [trackedId, upsertStep, loadExecutions])
 
+  // load the flow so every step is listed up front, not only the finished ones
+  useEffect(() => {
+    const tcId = trackedInfo?.testcase_id
+    if (!tcId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await testCaseAPI.getFlow(tcId)
+        const data: any = res.data?.data ?? res.data
+        const nodes: any[] = data?.nodes || []
+        if (cancelled) return
+        setFlowSteps(
+          nodes
+            .filter(n => n.type !== 'start' && n.type !== 'end')
+            .map(n => ({
+              id: n.id,
+              label: n?.data?.label || n?.label || '',
+              command: n?.config?.command || '',
+              hasParsers: (n?.config?.parsers || []).length > 0,
+            }))
+        )
+      } catch {
+        if (!cancelled) setFlowSteps([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [trackedInfo?.testcase_id])
+
   // poll the list while something is running
   useEffect(() => {
     if (!executions.some(e => e.status === 'running')) return
@@ -320,7 +362,23 @@ export default function Executions() {
     return () => clearInterval(timer)
   }, [executions, loadExecutions])
 
-  const currentStep = execSteps.find(s => s.status === 'running')
+  // Merge the planned flow with live results so the whole step list is visible
+  // while running, each step showing its judgement outcome once finished.
+  const mergedSteps: any[] = flowSteps.length
+    ? flowSteps.map((f: any, i: number) => {
+        const r = execSteps.find(s => Number(s.step_index) === i + 1)
+        return {
+          step_index: i + 1,
+          label: f.label || `步骤 ${i + 1}`,
+          status: r?.status || 'pending',
+          duration_ms: r?.duration_ms,
+          parsed: normalizeParsed(r?.parsed_results),
+          actual: r?.actual,
+        }
+      })
+    : execSteps.map((s: any) => ({ ...s, parsed: normalizeParsed(s.parsed_results) }))
+
+  const currentStep = mergedSteps.find(s => s.status === 'running')
   const trackedExec = executions.find(e => e.id === trackedId)
 
   const columns = [
@@ -587,7 +645,7 @@ export default function Executions() {
             )}
 
             <div style={{ height: 288, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 4 }}>
-              {execSteps.length === 0 ? (
+              {mergedSteps.length === 0 ? (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
                   description="暂无步骤（执行开始后将实时显示）"
@@ -596,7 +654,7 @@ export default function Executions() {
               ) : (
                 <List
                   size="small"
-                  dataSource={execSteps}
+                  dataSource={mergedSteps}
                   renderItem={(s: any) => {
                     const cfg = stepStatusConfig[s.status] || stepStatusConfig.pending
                     const running = s.status === 'running'
@@ -605,6 +663,8 @@ export default function Executions() {
                         style={{
                           background: running ? '#e6f4ff' : undefined,
                           padding: '6px 12px',
+                          flexDirection: 'column',
+                          alignItems: 'stretch',
                         }}
                       >
                         <Space size={8} style={{ width: '100%' }}>
@@ -623,6 +683,26 @@ export default function Executions() {
                             </Text>
                           )}
                         </Space>
+
+                        {/* parsed values + judgement (result parsing config) */}
+                        {s.parsed && s.parsed.length > 0 && (
+                          <div style={{ marginTop: 4, paddingLeft: 28 }}>
+                            {s.parsed.map((p: any, i: number) => (
+                              <Tooltip key={i} title={p.detail || ''}>
+                                <Tag
+                                  color={p.ok ? 'green' : 'red'}
+                                  style={{ marginBottom: 2, fontSize: 11 }}
+                                >
+                                  {p.name}={p.value === null || p.value === undefined
+                                    ? '解析失败'
+                                    : String(p.value)}
+                                  {' '}
+                                  {p.ok ? '✓' : '✗'}
+                                </Tag>
+                              </Tooltip>
+                            ))}
+                          </div>
+                        )}
                       </List.Item>
                     )
                   }}

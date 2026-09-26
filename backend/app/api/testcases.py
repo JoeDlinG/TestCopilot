@@ -26,6 +26,7 @@ from app.schemas.schemas import (
 )
 from app.services.testgen_service import testgen_service
 from app.services.codegen_service import codegen_service
+from app.services.response_parser import response_parser
 
 router = APIRouter(prefix="/api/testcases", tags=["Test Cases"])
 
@@ -326,6 +327,35 @@ async def update_test_flow(
             "id": flow.id, "testcase_id": flow.testcase_id,
             "nodes": _parse_json(flow.nodes), "edges": _parse_json(flow.edges),
             "viewport": _parse_json(flow.viewport),
+        },
+    }
+
+
+# ============ Result Parsing Preview ============
+
+@router.post("/parse-preview")
+async def preview_result_parsing(payload: dict):
+    """Preview how a raw response would be parsed and judged.
+
+    Lets the configuration UI show the parsed value and PASS/FAIL verdict
+    immediately, using exactly the engine that the execution will use.
+    """
+    raw = payload.get("raw", "")
+    parsers = payload.get("parsers") or []
+    try:
+        parsed = response_parser.parse_all(raw, parsers)
+    except Exception as e:  # never let a bad config break the UI
+        raise HTTPException(status_code=400, detail={
+            "code": 40010, "message": f"解析配置无效: {e}",
+        })
+    all_passed, summary = response_parser.summarize(parsed)
+    return {
+        "code": 0, "message": "success",
+        "data": {
+            "parsed": parsed,
+            "all_passed": all_passed,
+            "summary": summary,
+            "raw_bytes": list(response_parser.to_bytes(raw)),
         },
     }
 

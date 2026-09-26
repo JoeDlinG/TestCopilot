@@ -95,6 +95,8 @@ async def get_execution(execution_id: str, db: AsyncSession = Depends(get_db)):
             "status": s.status, "command": s.command,
             "expected": s.expected, "actual": s.actual,
             "error_message": s.error_message,
+            # result parsing + judgement outcome (JSON string or None)
+            "parsed_results": s.parsed_results,
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "completed_at": s.completed_at.isoformat() if s.completed_at else None,
             "duration_ms": s.duration_ms,

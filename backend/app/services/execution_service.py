@@ -20,9 +20,20 @@ from app.models.models import (
     ExecutionStatus, ExecutionResult, StepStatus,
 )
 from app.services.device_service import device_service
+from app.services.response_parser import response_parser
 from app.api.websocket import broadcast_execution_update
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_json(raw: Optional[str]) -> Optional[Any]:
+    """Decode a JSON column, tolerating NULL/empty/invalid content."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class ExecutionEngine:
@@ -289,13 +300,15 @@ class ExecutionEngine:
                             )
                         else:
                             results = []
+                            last_response = ""
                             for cmd in commands:
                                 response = await device_service.send_command(
                                     db, device_id, cmd,
                                     execution_id=execution_id,
                                     step_result_id=step_result.id,
                                 )
-                                results.append(f"{cmd} -> {response.get('response', '')}")
+                                last_response = response.get("response", "") or ""
+                                results.append(f"{cmd} -> {last_response}")
                             # Keep the stored result readable when a command
                             # was repeated many times (e.g. "循环读取 100 次").
                             if len(results) > 8:
@@ -306,6 +319,27 @@ class ExecutionEngine:
                                 )
                             step_result.actual = " | ".join(results)
                             step_result.status = StepStatus.PASSED.value
+
+                            # ---- result parsing + judgement ----
+                            parsers = config.get("parsers")
+                            if parsers:
+                                parsed = response_parser.parse_all(last_response, parsers)
+                                passed, summary = response_parser.summarize(parsed)
+                                step_result.parsed_results = json.dumps(
+                                    parsed, ensure_ascii=False
+                                )
+                                step_result.actual = (
+                                    f"{step_result.actual} || 解析: {summary}"
+                                )
+                                if not passed:
+                                    step_result.status = StepStatus.FAILED.value
+                                    step_result.error_message = (
+                                        f"结果解析判断未通过: {summary}"
+                                    )
+                                    logger.warning(
+                                        f"Step {idx + 1} of {execution_id} "
+                                        f"failed judgement: {summary}"
+                                    )
                     elif node_type == "condition":
                         step_result.status = StepStatus.PASSED.value
                         step_result.actual = "Condition evaluated"
@@ -347,6 +381,8 @@ class ExecutionEngine:
                     "execution_id": execution_id,
                     "step_index": idx + 1,
                     "status": step_result.status,
+                    "actual": step_result.actual,
+                    "parsed_results": _safe_json(step_result.parsed_results),
                 })
 
             # Finalize execution

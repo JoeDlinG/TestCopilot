@@ -2,18 +2,31 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card, Table, Button, Space, Tag, message, Modal,
-  Popconfirm, Typography, Tooltip, Form, Input, Select
+  Popconfirm, Typography, Tooltip, Form, Input, Select,
+  Row, Col, Empty, Divider, Badge
 } from 'antd'
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
   DeleteOutlined, ApartmentOutlined, ReloadOutlined,
-  ExperimentOutlined
+  ExperimentOutlined, SettingOutlined
 } from '@ant-design/icons'
 import { testCaseAPI, executionAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
+import ResultParserConfig, { DATA_TYPES } from '../components/ResultParserConfig'
+import type { ParserSpec } from '../components/ResultParserConfig'
 import type { TestCase } from '../types'
 
-const { Title } = Typography
+const { Title, Text } = Typography
+
+/** "cmd -> response | cmd2 -> resp2 || 解析: ..." -> the last response text */
+function extractResponse(actual?: string): string {
+  if (!actual) return ''
+  const main = String(actual).split('||')[0]
+  const parts = main.split('|')
+  const last = parts[parts.length - 1] || ''
+  const idx = last.indexOf('->')
+  return idx >= 0 ? last.slice(idx + 2).trim() : last.trim()
+}
 
 export default function TestCases() {
   const navigate = useNavigate()
@@ -21,6 +34,16 @@ export default function TestCases() {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [form] = Form.useForm()
+
+  // ---- expanded steps + result parsing config ----
+  const [flows, setFlows] = useState<Record<string, any>>({})
+  const [flowLoading, setFlowLoading] = useState<Record<string, boolean>>({})
+  const [stepSamples, setStepSamples] = useState<Record<string, Record<number, string>>>({})
+  const [parserOpen, setParserOpen] = useState(false)
+  const [parserSaving, setParserSaving] = useState(false)
+  const [parserTarget, setParserTarget] = useState<{
+    tcId: string; nodeId: string; label: string; parsers: ParserSpec[]; sample: string
+  } | null>(null)
 
   const loadTestCases = async () => {
     setLoading(true)
@@ -35,6 +58,153 @@ export default function TestCases() {
   }
 
   useEffect(() => { loadTestCases() }, [])
+
+  // ---- load a case's flow (steps) + last-run responses for preview ----
+  const loadFlow = async (tcId: string) => {
+    if (flows[tcId]) return
+    setFlowLoading(p => ({ ...p, [tcId]: true }))
+    try {
+      const res = await testCaseAPI.getFlow(tcId)
+      const data: any = res.data?.data ?? res.data
+      setFlows(p => ({ ...p, [tcId]: { nodes: data?.nodes || [], edges: data?.edges || [] } }))
+
+      // seed the preview box with real responses from the most recent run
+      try {
+        const ex = await executionAPI.list(tcId)
+        const list = extractItems(ex)
+        if (list.length) {
+          const dres = await executionAPI.get(list[0].id)
+          const detail: any = dres.data?.data ?? dres.data
+          const samples: Record<number, string> = {}
+          for (const s of detail?.step_results || []) {
+            const r = extractResponse(s.actual)
+            if (r) samples[s.step_index] = r
+          }
+          setStepSamples(p => ({ ...p, [tcId]: samples }))
+        }
+      } catch { /* preview sample is optional */ }
+    } catch (err) {
+      setFlows(p => ({ ...p, [tcId]: { nodes: [], edges: [] } }))
+    } finally {
+      setFlowLoading(p => ({ ...p, [tcId]: false }))
+    }
+  }
+
+  const openParserConfig = (tcId: string, node: any, stepIndex: number) => {
+    const cfg = node?.config || {}
+    setParserTarget({
+      tcId,
+      nodeId: node.id,
+      label: node?.data?.label || node?.label || `步骤 ${stepIndex}`,
+      parsers: cfg.parsers || [],
+      sample: stepSamples[tcId]?.[stepIndex] || '',
+    })
+    setParserOpen(true)
+  }
+
+  const saveParsers = async (parsers: ParserSpec[]) => {
+    if (!parserTarget) return
+    const { tcId, nodeId } = parserTarget
+    const flow = flows[tcId]
+    if (!flow) return
+    setParserSaving(true)
+    try {
+      const nodes = (flow.nodes || []).map((n: any) => (
+        n.id === nodeId ? { ...n, config: { ...(n.config || {}), parsers } } : n
+      ))
+      await testCaseAPI.updateFlow(tcId, { nodes, edges: flow.edges })
+      setFlows(p => ({ ...p, [tcId]: { ...flow, nodes } }))
+      message.success('结果解析配置已保存，执行时将按此配置解析并判定')
+      setParserOpen(false)
+    } catch (err) {
+      handleApiError(err, '保存解析配置失败')
+    } finally {
+      setParserSaving(false)
+    }
+  }
+
+  const expandedRowRender = (record: TestCase) => {
+    const flow = flows[record.id]
+    const loadingFlow = flowLoading[record.id]
+    const steps = ((flow?.nodes || []) as any[]).filter(
+      (n: any) => n.type !== 'start' && n.type !== 'end'
+    )
+
+    if (loadingFlow) return <Text type="secondary">加载步骤…</Text>
+    if (!steps.length) {
+      return (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="该用例还没有流程图步骤，请先编辑流程图"
+        />
+      )
+    }
+
+    return (
+      <Table
+        size="small"
+        rowKey="id"
+        pagination={false}
+        dataSource={steps}
+        columns={[
+          {
+            title: '#', key: 'idx', width: 45,
+            render: (_: any, __: any, i: number) => i + 1,
+          },
+          {
+            title: '步骤', dataIndex: ['data', 'label'],
+            render: (v: string, n: any) => v || n?.label || '-',
+          },
+          {
+            title: '下发指令', key: 'cmd', ellipsis: true,
+            render: (_: any, n: any) => {
+              const cmd = n?.config?.command || ''
+              return cmd ? <Text code style={{ fontSize: 11 }}>{String(cmd).slice(0, 70)}</Text> : '-'
+            },
+          },
+          {
+            title: '解析配置', key: 'parsers', width: 200,
+            render: (_: any, n: any) => {
+              const ps: ParserSpec[] = n?.config?.parsers || []
+              if (!ps.length) return <Text type="secondary" style={{ fontSize: 12 }}>未配置</Text>
+              return (
+                <Space size={4} wrap>
+                  {ps.map((p, i) => (
+                    <Tooltip
+                      key={i}
+                      title={`类型 ${p.data_type} · 起始 ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · 长度 ${p.length}`}
+                    >
+                      <Tag color="purple">
+                        {p.name || `字段${i + 1}`}({DATA_TYPES.find(d => d.value === p.data_type)?.label.split(' ')[0] || p.data_type})
+                      </Tag>
+                    </Tooltip>
+                  ))}
+                </Space>
+              )
+            },
+          },
+          {
+            title: '操作', key: 'act', width: 130,
+            render: (_: any, n: any, i: number) => (
+              <Button
+                size="small"
+                icon={<SettingOutlined />}
+                onClick={() => openParserConfig(record.id, n, i + 1)}
+              >
+                解析配置
+                {(n?.config?.parsers || []).length > 0 && (
+                  <Badge
+                    count={(n.config.parsers || []).length}
+                    style={{ marginLeft: 4, backgroundColor: '#722ed1' }}
+                  />
+                )}
+              </Button>
+            ),
+          },
+        ]}
+      />
+    )
+  }
 
   const handleCreate = async (values: any) => {
     try {
@@ -183,6 +353,13 @@ export default function TestCases() {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
+          expandable={{
+            expandedRowRender,
+            onExpand: (expanded, record) => {
+              if (expanded) loadFlow(record.id)
+            },
+            rowExpandable: () => true,
+          }}
         />
       </Card>
 
@@ -205,6 +382,18 @@ export default function TestCases() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {parserTarget && (
+        <ResultParserConfig
+          open={parserOpen}
+          stepLabel={parserTarget.label}
+          parsers={parserTarget.parsers}
+          initialSample={parserTarget.sample}
+          saving={parserSaving}
+          onCancel={() => setParserOpen(false)}
+          onSave={saveParsers}
+        />
+      )}
     </div>
   )
 }

@@ -303,6 +303,9 @@ class TestStepResult(Base):
     expected = Column(Text, nullable=True)
     actual = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
+    # JSON list: result parsing + judgement outcome for this step, e.g.
+    # [{"name": "电压", "data_type": "dec", "value": 12.3, "ok": true, "detail": "..."}]
+    parsed_results = Column(Text, nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     duration_ms = Column(Integer, nullable=True)

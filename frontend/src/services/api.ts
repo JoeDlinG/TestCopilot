@@ -113,6 +113,9 @@ export const testCaseAPI = {
   updateFlow: (id: string, data: any) => api.put(`/testcases/${id}/flow`, data),
   // Code generation
   generateCode: (id: string) => api.post(`/testcases/${id}/generate-code`),
+  // Result parsing preview (uses the same engine as the execution)
+  parsePreview: (raw: string, parsers: any[]) =>
+    api.post('/testcases/parse-preview', { raw, parsers }),
 }
 
 // Execution APIs
