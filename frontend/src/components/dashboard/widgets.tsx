@@ -398,9 +398,12 @@ export function JudgeSummaryWidget({ widget, snapshot, big }: WidgetProps) {
                   <Text type="secondary" style={{ fontSize: big ? 15 : 12 }}>
                     {item.detail || '超出阈值'}
                   </Text>
+                  <Text type="secondary" style={{ fontSize: big ? 14 : 11, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtTime(item.completed_at)}
+                  </Text>
                   <Tooltip title={item.step_label || ''}>
                     <Text type="secondary" style={{ fontSize: big ? 14 : 11 }}>
-                      步骤{item.step_index} · {fmtTime(item.completed_at)}
+                      步骤{item.step_index}
                     </Text>
                   </Tooltip>
                 </Space>

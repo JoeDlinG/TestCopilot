@@ -17,6 +17,7 @@ from app.models.models import AIModelConfig, ChatHistory, TestCase, ChatInputTyp
 from app.ai import ai_provider_factory, AIProvider
 from app.core.exceptions import AIModelNotFoundError, AICallError
 from app.services.plugin_service import plugin_service
+from app.core.crypto import encrypt_value, decrypt_value
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ def _provider_with_min_tokens(model, min_tokens: int):
     return ai_provider_factory.create(
         provider=model.provider,
         model_name=model.model_name,
-        api_key=model.api_key_encrypted,
+        api_key=decrypt_value(model.api_key_encrypted),
         base_url=model.base_url,
         parameters=params,
     )
@@ -359,7 +360,7 @@ class AIService:
 
         model = AIModelConfig(**data)
         if api_key:
-            model.api_key_encrypted = api_key  # TODO: encrypt in production
+            model.api_key_encrypted = encrypt_value(api_key)
         if parameters:
             model.parameters = json.dumps(parameters, ensure_ascii=False)
 
@@ -391,7 +392,7 @@ class AIService:
             if key == "parameters" and value is not None:
                 model.parameters = json.dumps(value, ensure_ascii=False)
             elif key == "api_key" and value is not None:
-                model.api_key_encrypted = value
+                model.api_key_encrypted = encrypt_value(value)
             elif value is not None:
                 setattr(model, key, value)
 
@@ -446,7 +447,7 @@ class AIService:
         return ai_provider_factory.create(
             provider=model.provider,
             model_name=model.model_name,
-            api_key=model.api_key_encrypted,
+            api_key=decrypt_value(model.api_key_encrypted),
             base_url=model.base_url,
             parameters=params,
         )

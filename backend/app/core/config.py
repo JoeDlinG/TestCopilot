@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
 
+    # API key encryption (at-rest). Override via ENCRYPTION_KEY in env / .env.
+    ENCRYPTION_KEY: str = "change-me-testcopilot-encryption-key"
+
     # Whisper
     WHISPER_MODEL: str = "base"
 
