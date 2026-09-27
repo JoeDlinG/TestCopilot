@@ -47,6 +47,11 @@ export default function CustomDashboard() {
   const currentRef = useRef<CustomDashboard | null>(null)
   currentRef.current = current
 
+  // live (real-time) refresh: one WebSocket per running execution of the
+  // bound test case. Execution events push an immediate debounced snapshot.
+  const wsRef = useRef<Record<string, WebSocket>>({})
+  const wsDebounceRef = useRef<number | null>(null)
+
   /* ---------------- loaders ---------------- */
   const loadDashboards = useCallback(async () => {
     setLoading(true)
@@ -129,6 +134,57 @@ export default function CustomDashboard() {
     }, Math.max(2, refreshSec) * 1000)
     return () => window.clearInterval(timer)
   }, [current?.id, refreshSec, loadSnapshot, loadLogs])
+
+  // ---- real-time: subscribe to running executions via WebSocket ----
+  const liveRefresh = useCallback(() => {
+    if (wsDebounceRef.current) window.clearTimeout(wsDebounceRef.current)
+    wsDebounceRef.current = window.setTimeout(() => {
+      loadSnapshot()
+      loadLogs()
+    }, 400)
+  }, [loadSnapshot, loadLogs])
+
+  useEffect(() => {
+    const d = currentRef.current
+    const tcId = d?.data_source?.test_case_id
+    if (!tcId) return
+    const running = (snapshot?.executions?.recent || [])
+      .filter((e: any) => e.status === 'running' && e.test_case_id === tcId)
+      .map((e: any) => e.id)
+    const want = new Set(running)
+    // close sockets for executions that finished / no longer match
+    Object.keys(wsRef.current).forEach((id) => {
+      if (!want.has(id)) {
+        try { wsRef.current[id].close() } catch { /* ignore */ }
+        delete wsRef.current[id]
+      }
+    })
+    // open sockets for newly running executions
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.hostname || 'localhost'
+    want.forEach((id) => {
+      if (wsRef.current[id]) return
+      const ws = new WebSocket(`${proto}//${host}:8000/ws/executions/${id}`)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if ([
+            'step_started', 'step_completed', 'step_failed',
+            'execution_completed', 'execution_stopped', 'execution_error',
+          ].includes(msg.type)) {
+            liveRefresh()
+          }
+        } catch { /* ignore */ }
+      }
+      wsRef.current[id] = ws
+    })
+  }, [snapshot?.executions?.recent, current?.data_source?.test_case_id, liveRefresh])
+
+  // close every socket when leaving the page
+  useEffect(() => () => {
+    Object.values(wsRef.current).forEach((ws) => { try { ws.close() } catch { /* ignore */ } })
+    if (wsDebounceRef.current) window.clearTimeout(wsDebounceRef.current)
+  }, [])
 
   /* ---------------- mutations ---------------- */
   const patchCurrent = (patch: Partial<CustomDashboard>) => {
@@ -277,7 +333,6 @@ export default function CustomDashboard() {
         }}
       >
         <div
-          className={editMode && !bigMode ? 'widget-drag-handle' : undefined}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: bigMode ? '10px 16px' : '6px 10px',
@@ -287,20 +342,24 @@ export default function CustomDashboard() {
             flexShrink: 0,
           }}
         >
-          <Space size={6}>
-            {editMode && !bigMode && <DragOutlined style={{ color: '#bfbfbf' }} />}
-            <span
-              style={{
-                fontWeight: 600,
-                fontSize: bigMode ? 20 : 14,
-                color: bigMode ? '#fff' : undefined,
-              }}
-            >
+          {/* Only the title is the drag handle — interactive buttons live
+              OUTSIDE it so react-grid-layout's drag does not swallow clicks. */}
+          <span
+            className={editMode && !bigMode ? 'widget-drag-handle' : undefined}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontWeight: 600, fontSize: bigMode ? 20 : 14,
+              color: bigMode ? '#fff' : undefined,
+              flex: 1, minWidth: 0,
+            }}
+          >
+            {editMode && !bigMode && <DragOutlined style={{ color: '#bfbfbf', flexShrink: 0 }} />}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {w.title}
             </span>
-          </Space>
+          </span>
           {editMode && !bigMode && (
-            <Space size={2}>
+            <Space className="widget-actions" size={2}>
               <Button size="small" type="text" icon={<SettingOutlined />}
                 onClick={() => setCfgWidget(w)} />
               <Button size="small" type="text" icon={<CopyOutlined />}
@@ -589,6 +648,7 @@ export default function CustomDashboard() {
             isDraggable={editMode}
             isResizable={editMode}
             draggableHandle=".widget-drag-handle"
+            draggableCancel=".widget-actions"
             onLayoutChange={onLayoutChange}
             margin={[12, 12]}
             containerPadding={[0, 0]}

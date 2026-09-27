@@ -1,0 +1,48 @@
+name: E2E Integration (manual)
+
+# 端到端集成测试：设备 -> AI 生成用例 -> 执行 -> 报告。
+# 该流水线需要：
+#   1) 一个能访问真实设备的自托管 Runner（如已连接 Mini Gateway 100 的机器），
+#      因为 GitHub 托管的 Runner 没有 USB/Can 设备透传；
+#   2) 在仓库 Secrets 中配置 DEEPSEEK_API_KEY（或所用 AI 供应商的 Key）。
+# 因此默认不随 push/PR 自动运行，仅通过 workflow_dispatch 手动触发。
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "后端基础地址，例如 http://localhost:8000"
+        required: false
+        default: "http://localhost:8000"
+
+jobs:
+  e2e:
+    name: E2E device -> AI -> execute -> report
+    runs-on: ${{ github.event.inputs.runner || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend deps
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Start backend
+        working-directory: backend
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./ci_e2e.db"
+          OPENAI_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/api/devices/ && break
+            sleep 2
+          done
+
+      - name: Run E2E integration test
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url }}
+        run: python3 Test/e2e_integration_test.py
