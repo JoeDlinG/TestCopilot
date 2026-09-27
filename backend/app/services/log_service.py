@@ -79,7 +79,11 @@ class LogService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
     ) -> tuple[io.StringIO, str]:
-        """Export logs as CSV file. Returns (buffer, filename)."""
+        """Export logs as CSV.
+
+        Rows are fetched in batches (default 5000) so memory stays bounded even
+        for very large result sets — 大数据量导出性能优化（不再一次性全量加载）。
+        """
         query = select(CommunicationLog).order_by(CommunicationLog.timestamp.desc())
 
         if device_id:
@@ -91,9 +95,6 @@ class LogService:
         if end_time:
             query = query.where(CommunicationLog.timestamp <= end_time)
 
-        result = await db.execute(query)
-        logs = result.scalars().all()
-
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
@@ -102,24 +103,35 @@ class LogService:
             "Status", "Error", "Duration (ms)", "Metadata",
         ])
 
-        for log in logs:
-            metadata_str = log.extra_meta or ""
-            writer.writerow([
-                log.id,
-                log.timestamp.isoformat() if log.timestamp else "",
-                log.device_id,
-                log.execution_id or "",
-                log.step_result_id or "",
-                log.direction,
-                log.protocol,
-                log.raw_data,
-                log.raw_data_hex or "",
-                log.raw_data_size or "",
-                log.status,
-                log.error_message or "",
-                log.duration_ms or "",
-                metadata_str,
-            ])
+        batch_size = 5000
+        offset = 0
+        while True:
+            batch_q = query.offset(offset).limit(batch_size)
+            result = await db.execute(batch_q)
+            logs = result.scalars().all()
+            if not logs:
+                break
+            for log in logs:
+                metadata_str = log.extra_meta or ""
+                writer.writerow([
+                    log.id,
+                    log.timestamp.isoformat() if log.timestamp else "",
+                    log.device_id,
+                    log.execution_id or "",
+                    log.step_result_id or "",
+                    log.direction,
+                    log.protocol,
+                    log.raw_data,
+                    log.raw_data_hex or "",
+                    log.raw_data_size or "",
+                    log.status,
+                    log.error_message or "",
+                    log.duration_ms or "",
+                    metadata_str,
+                ])
+            if len(logs) < batch_size:
+                break
+            offset += batch_size
 
         output.seek(0)
         filename = f"communication_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"

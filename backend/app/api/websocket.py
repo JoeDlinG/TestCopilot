@@ -76,6 +76,11 @@ async def _log_rx_to_db(device_id: str, protocol: str, data: Any, timestamp: str
 # the communication terminal even without manually clicking "start listening".
 _device_monitor_tasks: Dict[str, asyncio.Task] = {}
 _device_protocols: Dict[str, str] = {}
+# Per-device poll interval (ms) requested by the terminal UI.
+_device_monitor_intervals: Dict[str, int] = {}
+# Reference count of open terminal windows listening to a device, so that
+# closing one window does not stop data capture for the others.
+_ws_listeners: Dict[str, int] = {}
 
 
 async def _device_monitor_loop(device_id: str, protocol: str, interval_ms: int = 100):
@@ -83,43 +88,51 @@ async def _device_monitor_loop(device_id: str, protocol: str, interval_ms: int =
     logger.info(f"Starting device monitor for {device_id}")
     try:
         while True:
-            interface = _get_device_interface(device_id)
-            if interface is None:
-                logger.info(f"Device monitor: {device_id} disconnected, stopping")
-                break
-
-            # Never poll while a command/response exchange is in flight:
-            # reading concurrently would steal the reply bytes.
             try:
-                from app.services.device_service import _command_in_flight
-                if _command_in_flight.get(device_id):
-                    await asyncio.sleep(interval_ms / 1000.0)
-                    continue
-            except Exception:
-                pass
+                interface = _get_device_interface(device_id)
+                if interface is None:
+                    logger.info(f"Device monitor: {device_id} disconnected, stopping")
+                    break
 
-            try:
-                data = await _safe_receive(interface, timeout=0.1)
-                if data:
-                    ts = datetime.utcnow().isoformat()
-                    com_logger.log_received(device_id, data, timestamp=ts)
-                    await _log_rx_to_db(device_id, protocol, data, ts)
-                    await broadcast_device_update(device_id, {
-                        "type": "device_data",
-                        "data": data,
-                        "timestamp": ts,
-                    })
-            except asyncio.TimeoutError:
-                pass
+                interval_ms = _device_monitor_intervals.get(device_id, interval_ms)
+
+                # Never poll while a command/response exchange is in flight:
+                # reading concurrently would steal the reply bytes.
+                try:
+                    from app.services.device_service import _command_in_flight
+                    if _command_in_flight.get(device_id):
+                        await asyncio.sleep(interval_ms / 1000.0)
+                        continue
+                except Exception:
+                    pass
+
+                try:
+                    data = await _safe_receive(interface, timeout=0.1)
+                    if data:
+                        ts = datetime.utcnow().isoformat()
+                        com_logger.log_received(device_id, data, timestamp=ts)
+                        await _log_rx_to_db(device_id, protocol, data, ts)
+                        await broadcast_device_update(device_id, {
+                            "type": "device_data",
+                            "data": data,
+                            "timestamp": ts,
+                        })
+                except asyncio.TimeoutError:
+                    pass
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                logger.debug(f"Device monitor transient error for {device_id}: {e}")
+                # A transient error (DB write / broadcast / serial glitch) must
+                # never kill the monitor — recover and keep polling.
+                logger.warning(f"Device monitor recovered from error for {device_id}: {e}")
+                await asyncio.sleep(0.5)
             await asyncio.sleep(interval_ms / 1000.0)
     finally:
         _device_monitor_tasks.pop(device_id, None)
         logger.info(f"Device monitor stopped for {device_id}")
 
 
-def start_device_monitor(device_id: str, protocol: str = "unknown"):
+def start_device_monitor(device_id: str, protocol: str = "unknown", interval_ms: int = 100):
     """Start the global receive monitor for a connected device (idempotent)."""
     try:
         asyncio.get_running_loop()
@@ -127,11 +140,15 @@ def start_device_monitor(device_id: str, protocol: str = "unknown"):
         return
     if protocol and protocol != "unknown":
         _device_protocols[device_id] = protocol
+    if interval_ms:
+        _device_monitor_intervals[device_id] = interval_ms
     existing = _device_monitor_tasks.get(device_id)
     if existing and not existing.done():
         return
     task = asyncio.create_task(
-        _device_monitor_loop(device_id, _device_protocols.get(device_id, protocol))
+        _device_monitor_loop(
+            device_id, _device_protocols.get(device_id, protocol), interval_ms
+        )
     )
     _device_monitor_tasks[device_id] = task
     logger.info(f"Device monitor started for {device_id}")
@@ -314,8 +331,9 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                 elif msg_type == "start_receive":
                     # The device-level monitor is started automatically when the
                     # device connects; ensure it is running, then acknowledge.
-                    start_device_monitor(device_id)
-                    interval_ms = msg.get("interval_ms", 200)
+                    interval_ms = int(msg.get("interval_ms", 100))
+                    start_device_monitor(device_id, interval_ms=interval_ms)
+                    _ws_listeners[device_id] = _ws_listeners.get(device_id, 0) + 1
                     await websocket.send_json({
                         "type": "receive_started",
                         "interval_ms": interval_ms,
@@ -323,7 +341,13 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                     })
 
                 elif msg_type == "stop_receive":
-                    stop_device_monitor(device_id)
+                    _ws_listeners[device_id] = max(0, _ws_listeners.get(device_id, 0) - 1)
+                    # Only stop the shared device monitor when NO terminal window
+                    # is listening AND the device itself is disconnected —
+                    # otherwise closing one tab would kill capture for all tabs.
+                    interface = _get_device_interface(device_id)
+                    if _ws_listeners[device_id] <= 0 and interface is None:
+                        stop_device_monitor(device_id)
                     await websocket.send_json({
                         "type": "receive_stopped",
                         "timestamp": datetime.utcnow().isoformat(),
@@ -343,5 +367,6 @@ async def device_websocket(websocket: WebSocket, device_id: str):
     except WebSocketDisconnect:
         logger.info(f"Device WS disconnected: {device_id}")
     finally:
+        _ws_listeners[device_id] = max(0, _ws_listeners.get(device_id, 0) - 1)
         if device_id in _device_connections:
             _device_connections[device_id].discard(websocket)
