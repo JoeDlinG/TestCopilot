@@ -187,6 +187,8 @@ export default function TestFlowEditor() {
   const [editOpen, setEditOpen] = useState(false)
   const [editNode, setEditNode] = useState<Node | null>(null)
   const [editForm] = Form.useForm()
+  // 响应式监听循环类型：切换 for / while 时表单字段即时联动
+  const loopType = Form.useWatch('loop_type', editForm) || 'for'
 
   // Code generation
   const [codeDrawerOpen, setCodeDrawerOpen] = useState(false)
@@ -314,6 +316,10 @@ export default function TestFlowEditor() {
       loop_type: config.loop_type || 'for',
       loop_variable: config.variable || 'i',
       loop_expression: config.condition || '3',
+      entry_condition: config.entry_condition || '',
+      entry_fail_action: config.entry_fail_action || 'skip',
+      break_condition: config.break_condition || '',
+      max_iterations: config.max_iterations || '',
     })
     setEditOpen(true)
   }, [editForm])
@@ -337,6 +343,10 @@ export default function TestFlowEditor() {
           false_label: vals.false_label || '',
           loop_type: vals.loop_type || 'for',
           variable: vals.loop_variable || 'i',
+          entry_condition: vals.entry_condition || '',
+          entry_fail_action: vals.entry_fail_action || 'skip',
+          break_condition: vals.break_condition || '',
+          max_iterations: vals.max_iterations || '',
         },
       }
       // For loops, store expression in condition
@@ -606,15 +616,54 @@ export default function TestFlowEditor() {
               <Form.Item name="loop_type" label="循环类型" rules={[{ required: true }]}>
                 <Select options={[{ label: 'for (固定次数)', value: 'for' }, { label: 'while (条件循环)', value: 'while' }]} />
               </Form.Item>
-              {editForm.getFieldValue('loop_type') !== 'while' && (
+              {loopType !== 'while' && (
                 <Form.Item name="loop_variable" label="循环变量">
                   <Input placeholder="i" />
                 </Form.Item>
               )}
-              <Form.Item name="loop_expression" label="循环次数/条件" rules={[{ required: true }]}
-                extra="for: 循环次数 (整数); while: Python 条件表达式">
-                <Input placeholder="3" />
+              <Form.Item
+                name="loop_expression"
+                label={loopType === 'while' ? '循环条件（每轮开始前判断）' : '循环次数/条件'}
+                rules={[{ required: true }]}
+                extra={loopType === 'while'
+                  ? 'Python 条件表达式，每轮开始前判断；成立才继续下一轮。例：retry_count < 10'
+                  : 'for: 循环次数 (整数); while: Python 条件表达式'}
+              >
+                <Input placeholder={loopType === 'while' ? 'retry_count < 10' : '3'} />
               </Form.Item>
+
+              {/* 循环节点自身的执行命令 / 预期结果（与操作节点保持一致） */}
+              <Form.Item name="command" label="执行命令（每轮执行）"
+                extra="留空则循环体内不下发命令，仅执行循环体子节点">
+                <Input.TextArea rows={2} placeholder="发送到设备的命令，如 CAN1,SEND,0x850102" />
+              </Form.Item>
+              <Form.Item name="expected" label="预期结果（可选）"
+                extra="填写后每轮对该命令的返回值做断言">
+                <Input placeholder="预期返回值" />
+              </Form.Item>
+
+              {loopType === 'while' && (
+                <>
+                  <Form.Item name="entry_condition" label="进入条件（可选，循环开始前判断一次）"
+                    extra="留空表示总是进入。例：device_ready == True">
+                    <Input placeholder="device_ready == True" />
+                  </Form.Item>
+                  <Form.Item name="entry_fail_action" label="进入条件不满足时">
+                    <Select options={[
+                      { label: '跳过整个循环（继续后续节点）', value: 'skip' },
+                      { label: '判定为失败（抛错终止）', value: 'fail' },
+                    ]} />
+                  </Form.Item>
+                  <Form.Item name="break_condition" label="跳出条件（可选，每轮结束后判断）"
+                    extra="成立则提前 break 退出循环。例：response == 'OK'">
+                    <Input placeholder="response == 'OK'" />
+                  </Form.Item>
+                  <Form.Item name="max_iterations" label="最大迭代次数（可选）"
+                    extra="防止条件恒真导致死循环；达到上限强制跳出并告警">
+                    <Input placeholder="10" />
+                  </Form.Item>
+                </>
+              )}
             </>
           )}
         </Form>

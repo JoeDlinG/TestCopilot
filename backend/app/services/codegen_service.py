@@ -423,6 +423,16 @@ class CodeGenService:
                 loop_type = config.get("loop_type", "for")
                 expr = config.get("condition", "3")
                 var = config.get("variable", "i")
+                # while 增强：进入条件 / 跳出条件 / 最大迭代次数
+                entry = (config.get("entry_condition") or "").strip()
+                entry_fail = config.get("entry_fail_action", "skip")
+                break_cond = (config.get("break_condition") or "").strip()
+                max_iter = config.get("max_iterations", None)
+                # 循环节点自身的执行命令 / 预期结果（与操作节点一致）
+                raw_cmd = config.get("command", "") or ""
+                expected = config.get("expected") or config.get("expected_result") or ""
+                device = config.get("device_id") or "device"
+                cmds = node_commands(node) or ([raw_cmd] if raw_cmd else [])
                 nbrs = adj.get(node_id, [])
 
                 # Separate body edges from exit edges
@@ -438,15 +448,105 @@ class CodeGenService:
                     else:
                         exit_nbrs.append(nb)
 
+                # 进入条件：整段循环包在 if 中，不满足时跳过或判失败
+                loop_indent = indent
+                if entry:
+                    body_lines.append(
+                        f"{prefix}# 进入条件：不满足时"
+                        f"{'判定为失败' if entry_fail == 'fail' else '跳过整个循环'}"
+                    )
+                    body_lines.append(f"{prefix}if {entry}:")
+                    loop_indent = indent + 1
+                loop_prefix = "    " * loop_indent
+                body_prefix = "    " * (loop_indent + 1)
+
+                if max_iter:
+                    body_lines.append(f"{loop_prefix}_loop_iter = 0")
+
                 if loop_type == "for":
-                    body_lines.append(f"{prefix}for {var} in range(int({expr})):")
+                    body_lines.append(f"{loop_prefix}for {var} in range(int({expr})):")
                 else:
-                    body_lines.append(f"{prefix}while {expr}:")
+                    body_lines.append(f"{loop_prefix}while {expr}:")
+
+                # 最大迭代保护：条件恒真时防止卡死执行引擎
+                if max_iter:
+                    body_lines.append(f"{body_prefix}_loop_iter += 1")
+                    body_lines.append(f"{body_prefix}if _loop_iter > int({max_iter}):")
+                    body_lines.append(
+                        f"{body_prefix}    log.warning('循环已达最大迭代次数 "
+                        f"{max_iter}，强制跳出')"
+                    )
+                    body_lines.append(f"{body_prefix}    break")
+
+                # 循环节点自身携带的命令：生成 send_command + 断言 + 结果解析
+                if cmds:
+                    wired = bool(device) and device != "None"
+                    for cmd, count in collapse_runs(cmds):
+                        call = f"response = {device}.send_command({cmd!r})" if wired \
+                            else f"# response = send_command({cmd!r})  # TODO: wire real device"
+                        body_lines.append(f"{body_prefix}{call}")
+                    if expected:
+                        body_lines.append(f"{body_prefix}{assertion_stmt(expected)}")
+                    for pidx, spec in enumerate(config.get("parsers") or []):
+                        name = spec.get("name") or f"字段{pidx + 1}"
+                        dtype = spec.get("data_type") or "string"
+                        start = spec.get("start", 0)
+                        length = spec.get("length", 1)
+                        unit = spec.get("unit") or "byte"
+                        cond = spec.get("conditions") or {}
+                        pvar = f"parsed_{pidx}"
+                        hex_field = spec.get("hex_field") or "all"
+                        body_lines.append(f"{body_prefix}# 结果解析: {name}")
+                        body_lines.append(
+                            f"{body_prefix}{pvar} = parse_field(response, data_type={dtype!r}, "
+                            f"start={start}, length={length}, unit={unit!r}, "
+                            f"hex_field={hex_field!r})"
+                        )
+                        body_lines.append(
+                            f"{body_prefix}results['steps'].append({{'step': {name!r}, "
+                            f"'parsed': {pvar}}})"
+                        )
+                        lo = cond.get("min")
+                        hi = cond.get("max")
+                        pchecks: List[str] = []
+                        if lo is not None:
+                            pchecks.append(
+                                f"assert {pvar} >= {lo!r}, "
+                                f"f\"解析 {name}: {{{pvar}}} 低于最小值 {lo}\""
+                            )
+                        if hi is not None:
+                            pchecks.append(
+                                f"assert {pvar} <= {hi!r}, "
+                                f"f\"解析 {name}: {{{pvar}}} 超出最大值 {hi}\""
+                            )
+                        if pchecks:
+                            # 空帧没有数值，跳过判定
+                            body_lines.append(f"{body_prefix}if {pvar} != \"unknown\":")
+                            body_lines.extend(f"{body_prefix}    {c}" for c in pchecks)
 
                 if body_nbrs:
-                    walk(body_nbrs[0]["target"], indent + 1, branch_stack | {node_id})
-                else:
-                    body_lines.append(f"{prefix}    pass  # loop body")
+                    walk(body_nbrs[0]["target"], loop_indent + 1, branch_stack | {node_id})
+                elif not cmds:
+                    body_lines.append(f"{body_prefix}pass  # loop body")
+
+                # 跳出条件：每轮结束后判断，满足则提前退出
+                if break_cond:
+                    body_lines.append(f"{body_prefix}# 跳出条件")
+                    body_lines.append(f"{body_prefix}if {break_cond}:")
+                    body_lines.append(f"{body_prefix}    log.info('满足跳出条件，提前结束循环')")
+                    body_lines.append(f"{body_prefix}    break")
+
+                # 进入条件不满足时的 else 分支
+                if entry:
+                    body_lines.append(f"{prefix}else:")
+                    if entry_fail == "fail":
+                        body_lines.append(
+                            f"{prefix}    raise AssertionError('循环进入条件不满足: {entry}')"
+                        )
+                    else:
+                        body_lines.append(
+                            f"{prefix}    log.info('跳过循环：进入条件不满足 ({entry})')"
+                        )
 
                 # Walk exit target after the loop
                 if exit_nbrs:

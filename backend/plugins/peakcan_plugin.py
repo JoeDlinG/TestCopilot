@@ -16,9 +16,12 @@ Capabilities:
 - Hardware auto-detection
 - Configurable bitrate / data_bitrate
 
-Prerequisites (on Linux):
-  Option A (recommended): ``sudo modprobe peak_usb``  → uses SocketCAN (can0)
-  Option B: install the chardev driver from https://www.peak-system.com/linux/
+Prerequisites:
+  Linux   Option A (recommended): ``sudo modprobe peak_usb``  → uses SocketCAN (can0)
+          Option B: install the chardev driver from https://www.peak-system.com/linux/
+  Windows Install the PEAK **PCAN-Basic** driver and use the ``pcan`` interface
+          (``PCAN_USBBUS1``). SocketCAN is Linux-only and is never auto-selected
+          on Windows (it previously surfaced as ``WinError 10047``).
 
 Install this plugin via 插件管理 → 安装插件, then add a device to connect.
 """
@@ -125,27 +128,58 @@ class PeakCANPlugin(BaseProtocolPlugin):
         except can.exceptions.CanError as e:
             self._connected = False
             self._bus = None
+            hint = ""
+            if interface == "pcan" and self._is_windows():
+                hint = (
+                    " Windows 下请确认已安装 PEAK PCAN-Basic 驱动"
+                    "（https://www.peak-system.com/quick/PCANDriver）且 PCAN-USB 已插入；"
+                    "接口请选 'pcan'，通道常用 PCAN_USBBUS1。"
+                )
             raise ConnectionError(
-                f"Failed to open CAN channel {channel} via {interface}: {e}"
+                f"Failed to open CAN channel {channel} via {interface}: {e}.{hint}"
             ) from e
+
+    @staticmethod
+    def _is_windows() -> bool:
+        """True when running on Windows, where SocketCAN is unavailable."""
+        import sys
+        return sys.platform.startswith("win")
 
     @staticmethod
     def _auto_detect(interface: str, channel: str, can_module) -> tuple:
         """Resolve the interface and channel, auto-detecting if needed.
+
+        Platform-aware: SocketCAN depends on the Linux kernel CAN subsystem
+        (``/sys/class/net`` + AF_CAN) and does not exist on Windows. Previously
+        the fallback defaulted to ``socketcan`` + ``can0`` on every platform,
+        so Windows users hit ``WinError 10047`` ("An address incompatible with
+        the requested protocol was used") instead of a meaningful error.
+
         Returns ``(interface, channel)``.
         """
+        windows = PeakCANPlugin._is_windows()
+
+        # SocketCAN is Linux-only: reject an explicit request on Windows with an
+        # actionable message rather than letting python-can fail with 10047.
+        if windows and interface == "socketcan":
+            raise ConnectionError(
+                "SocketCAN 仅适用于 Linux（依赖内核 AF_CAN 子系统），Windows 上不可用。"
+                "请在 Windows 上使用 'pcan' 接口，并确认已安装 PEAK PCAN-Basic 驱动"
+                "（https://www.peak-system.com/quick/PCANDriver）。"
+            )
+
         # If both are explicitly set, trust the user
         if interface != "auto" and channel:
             return interface, channel
 
         # Try socketcan first (most common on Linux with kernel drivers)
-        if interface in ("auto", "socketcan"):
+        if not windows and interface in ("auto", "socketcan"):
             socket_channels = PeakCANPlugin._list_socketcan_channels()
             if socket_channels:
                 ch = channel or socket_channels[0]
                 return "socketcan", ch
 
-        # Try pcan (chardev driver)
+        # Try pcan (PEAK PCAN-Basic / chardev driver) — primary option on Windows
         if interface in ("auto", "pcan"):
             try:
                 configs = can_module.detect_available_configs(interfaces=["pcan"])
@@ -156,16 +190,24 @@ class PeakCANPlugin(BaseProtocolPlugin):
             except Exception:
                 pass
 
-        # Fallback: use whatever the user specified
-        iface = "socketcan" if interface == "auto" else interface
-        ch = channel or ("can0" if iface == "socketcan" else "PCAN_USBBUS1")
+        # Fallback: platform-aware default (never socketcan on Windows).
+        if interface != "auto":
+            iface = interface
+        else:
+            iface = "pcan" if windows else "socketcan"
+        ch = channel or ("PCAN_USBBUS1" if iface == "pcan" else "can0")
         return iface, ch
 
     @staticmethod
     def _list_socketcan_channels() -> list:
-        """Return a list of available SocketCAN interface names (e.g. ['can0'])."""
+        """Return a list of available SocketCAN interface names (e.g. ['can0']).
+
+        Always empty on Windows: there is no ``/sys/class/net`` and no AF_CAN.
+        """
         import os
         import glob
+        if PeakCANPlugin._is_windows():
+            return []
         names = []
         try:
             # Check /sys/class/net for CAN interfaces
