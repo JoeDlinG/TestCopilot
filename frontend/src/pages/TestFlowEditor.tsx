@@ -26,7 +26,7 @@ import {
   SaveOutlined, ArrowLeftOutlined, PlusOutlined,
   PlayCircleOutlined, HomeOutlined, CodeOutlined,
   BranchesOutlined, SyncOutlined, ThunderboltOutlined,
-  DeleteOutlined,
+  DeleteOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import { testCaseAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
@@ -132,6 +132,35 @@ function LoopNode({ data, selected }: NodeProps) {
   )
 }
 
+/** 初始化 / 重置节点：集中声明变量，供后续节点引用 */
+function InitNode({ data, selected }: NodeProps) {
+  const vars: any[] = (data as any)?.variables || []
+  return (
+    <div style={{
+      padding: '10px 18px', borderRadius: 6,
+      background: selected ? '#08979c' : '#13c2c2',
+      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
+      textAlign: 'center', border: '2px solid #006d75',
+      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+    }}>
+      <DatabaseOutlined style={{ fontSize: 14 }} />
+      <Handle type="target" position={Position.Top} style={{ background: '#006d75' }} />
+      <div>
+        <div>{data.label}</div>
+        {vars.length > 0 && (
+          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
+            {vars.slice(0, 3).map((v: any, i: number) => (
+              <span key={i}>{v?.name || '?'}{i < Math.min(vars.length, 3) - 1 ? ', ' : ''}</span>
+            ))}
+            {vars.length > 3 ? ` +${vars.length - 3}` : ''}
+          </div>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: '#006d75' }} />
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Node types registry
 // ---------------------------------------------------------------------------
@@ -142,6 +171,7 @@ const nodeTypes = {
   action: ActionNode,
   condition: ConditionNode,
   loop: LoopNode,
+  init: InitNode,
   test_step: ActionNode,
   default: ActionNode,
   input: StartNode,
@@ -160,6 +190,7 @@ interface PaletteItem {
 }
 
 const PALETTE: PaletteItem[] = [
+  { type: 'init', label: '初始化', color: '#13c2c2', icon: <DatabaseOutlined /> },
   { type: 'action', label: '操作', color: '#1677ff', icon: <ThunderboltOutlined /> },
   { type: 'condition', label: '判断', color: '#faad14', icon: <BranchesOutlined /> },
   { type: 'loop', label: '循环', color: '#9254de', icon: <SyncOutlined /> },
@@ -321,6 +352,7 @@ export default function TestFlowEditor() {
       loop_variable: config.variable || 'i',
       loop_expression: config.condition || '3',
       node_type: node.type || 'action',
+      variables: config.variables || [],
       entry_condition: config.entry_condition || '',
       entry_fail_action: config.entry_fail_action || 'skip',
       break_condition: config.break_condition || '',
@@ -352,6 +384,7 @@ export default function TestFlowEditor() {
           entry_fail_action: vals.entry_fail_action || 'skip',
           break_condition: vals.break_condition || '',
           max_iterations: vals.max_iterations || '',
+          variables: vals.variables || [],
         },
       }
       // 节点类型就地切换：不兼容字段保留在 config 中（切回可恢复）
@@ -419,7 +452,7 @@ export default function TestFlowEditor() {
         y: event.clientY,
       })
       const nid = newNodeId()
-      const labelMap: Record<string, string> = { action: '新操作', condition: '判断条件', loop: '循环', end: '结束' }
+      const labelMap: Record<string, string> = { init: '初始化', action: '新操作', condition: '判断条件', loop: '循环', end: '结束' }
       const newNode = {
         id: nid,
         type: paletteType,
@@ -706,9 +739,56 @@ export default function TestFlowEditor() {
               { label: '操作（下发命令）', value: 'action' },
               { label: '判断（条件分支）', value: 'condition' },
               { label: '循环（for / while）', value: 'loop' },
+              { label: '初始化（变量声明）', value: 'init' },
               { label: '结束', value: 'end' },
             ]} />
           </Form.Item>
+          {nodeType === 'init' && (
+            <Form.Item label="变量定义"
+              extra="流程开始时集中声明变量；生成代码后可供后续节点的命令与条件表达式引用">
+              <Form.List name="variables">
+                {(fields, { add, remove, move }) => (
+                  <>
+                    {fields.map((field) => (
+                      <Space key={field.key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} wrap>
+                        <Form.Item {...field} name={[field.name, 'name']}
+                          rules={[{ required: true, message: '变量名必填' }]}>
+                          <Input placeholder="变量名" style={{ width: 110 }} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'type']} initialValue="int">
+                          <Select style={{ width: 92 }} options={[
+                            { label: '整数', value: 'int' },
+                            { label: '浮点', value: 'float' },
+                            { label: '字符串', value: 'string' },
+                            { label: '布尔', value: 'bool' },
+                            { label: '十六进制', value: 'hex' },
+                          ]} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'value']}>
+                          <Input placeholder="初始值" style={{ width: 110 }} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'desc']}>
+                          <Input placeholder="说明(可选)" style={{ width: 120 }} />
+                        </Form.Item>
+                        <Tooltip title="上移">
+                          <Button size="small" type="text" onClick={() => move(field.name, field.name - 1)}
+                            disabled={field.name === 0}>↑</Button>
+                        </Tooltip>
+                        <Tooltip title="删除">
+                          <Button size="small" type="text" icon={<DeleteOutlined />}
+                            onClick={() => remove(field.name)} />
+                        </Tooltip>
+                      </Space>
+                    ))}
+                    <Button type="dashed" block icon={<PlusOutlined />}
+                      onClick={() => add({ name: '', type: 'int', value: '', desc: '' })}>
+                      添加变量
+                    </Button>
+                  </>
+                )}
+              </Form.List>
+            </Form.Item>
+          )}
           {nodeType === 'action' && (
             <>
               <Form.Item name="command" label="执行命令">

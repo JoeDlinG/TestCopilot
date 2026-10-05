@@ -165,6 +165,32 @@ def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_fie
 '''
 
 
+def _init_literal(value: Any, vtype: str) -> str:
+    """Render an init-node variable value as a Python literal of the given type.
+
+    Types: int / float / string / bool / hex. Empty or missing values become
+    ``None`` so a variable can be declared without an initial value.
+    """
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return "None"
+    text = str(value).strip()
+    try:
+        if vtype == "int":
+            try:
+                return str(int(text, 0))
+            except ValueError:
+                return str(int(float(text)))
+        if vtype == "float":
+            return str(float(text))
+        if vtype == "bool":
+            return "True" if text.lower() in ("true", "1", "yes", "y", "on") else "False"
+        if vtype == "hex":
+            return hex(int(text, 16))
+    except (ValueError, TypeError):
+        return repr(text)
+    return repr(text)
+
+
 class CodeGenService:
     """Service that converts a test flowchart into executable Python code."""
 
@@ -364,6 +390,21 @@ class CodeGenService:
                     body_lines.append(f"{prefix}results['steps'].append({{'step': {label or raw_cmd!r}, 'status': 'passed'}})")
                     body_lines.append(f"{prefix}results['passed'] += 1")
                     body_lines.append("")
+
+            elif ntype == "init":
+                # 初始化 / 重置节点：集中声明变量，供后续节点引用
+                visited_global.add(node_id)
+                body_lines.append(f"{prefix}# ===== 初始化 / 变量声明 =====")
+                for spec in config.get("variables") or []:
+                    vname = (spec.get("name") or "").strip()
+                    if not vname:
+                        continue
+                    vtype = spec.get("type") or "string"
+                    body_lines.append(
+                        f"{prefix}{vname} = {_init_literal(spec.get('value'), vtype)}"
+                    )
+                    if spec.get("desc"):
+                        body_lines.append(f"{prefix}# {spec.get('desc')}")
 
             elif ntype == "condition":
                 visited_global.add(node_id)
