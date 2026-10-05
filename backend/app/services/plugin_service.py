@@ -5,6 +5,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -415,6 +416,113 @@ class PluginService:
                 "has_manual": manual_path.is_file(),
             })
         return skills
+
+    # ------------------------------------------------------------------ #
+    # Skill editing (create / update / import / delete)
+    # ------------------------------------------------------------------ #
+    def _skills_dir(self) -> Path:
+        return self._resolved_plugin_dir() / "skills"
+
+    @staticmethod
+    def _build_frontmatter(meta: Dict[str, str]) -> str:
+        """Render a ``--- key: value ---`` frontmatter block."""
+        lines = ["---"]
+        for key in ("name", "protocol", "keywords"):
+            value = (meta.get(key) or "").strip()
+            if value:
+                lines.append(f"{key}: {value}")
+        lines.append("---")
+        return "\n".join(lines)
+
+    def _skill_path(self, protocol: str) -> Path:
+        return self._skills_dir() / f"{protocol}_skill.md"
+
+    def save_plugin_skill(
+        self,
+        protocol: str,
+        name: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        content: str = "",
+        rename_from: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a skill markdown file.
+
+        ``content`` is the markdown body (without frontmatter). When
+        ``rename_from`` is given and differs from *protocol*, the old file is
+        removed so renaming in the editor does not leave a stale skill behind.
+        """
+        protocol = (protocol or "").strip()
+        if not protocol:
+            raise ValueError("protocol is required")
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]+", protocol):
+            raise ValueError(
+                f"非法 protocol '{protocol}'：仅允许字母、数字、下划线、点与连字符"
+            )
+
+        skills_dir = self._skills_dir()
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "name": (name or protocol).strip(),
+            "protocol": protocol,
+            "keywords": ", ".join(k.strip() for k in (keywords or []) if k and k.strip()),
+        }
+        body = (content or "").lstrip("\n")
+        text = self._build_frontmatter(meta) + "\n\n" + body
+        if not text.endswith("\n"):
+            text += "\n"
+
+        target = self._skill_path(protocol)
+        if rename_from and rename_from.strip() and rename_from.strip() != protocol:
+            old = self._skill_path(rename_from.strip())
+            if old.is_file() and old != target:
+                try:
+                    old.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to remove old skill file {old}: {e}")
+
+        target.write_text(text, encoding="utf-8")
+        logger.info(f"Skill saved: {target}")
+        return {
+            "protocol": protocol,
+            "name": meta["name"],
+            "keywords": [k.strip() for k in meta["keywords"].split(",") if k.strip()],
+            "skill_file": str(target),
+        }
+
+    def import_plugin_skill(self, filename: str, content: str) -> Dict[str, Any]:
+        """Import a skill markdown file (frontmatter optional).
+
+        The protocol is taken from the frontmatter, else derived from the file
+        name (``foo_skill.md`` → ``foo``). An existing skill with the same
+        protocol is overwritten.
+        """
+        meta, body = self._parse_frontmatter(content or "")
+        base = (filename or "").strip()
+        derived = base
+        for suffix in ("_skill.md", ".md"):
+            if derived.endswith(suffix):
+                derived = derived[: -len(suffix)]
+                break
+        protocol = (meta.get("protocol") or "").strip() or derived
+        if not protocol:
+            raise ValueError("无法从文件内容或文件名推断 protocol")
+        return self.save_plugin_skill(
+            protocol=protocol,
+            name=meta.get("name"),
+            keywords=[
+                k.strip() for k in (meta.get("keywords") or "").split(",") if k.strip()
+            ],
+            content=body,
+        )
+
+    def delete_plugin_skill(self, protocol: str) -> bool:
+        path = self._skill_path(protocol)
+        if not path.is_file():
+            return False
+        path.unlink()
+        logger.info(f"Skill deleted: {path}")
+        return True
 
     def get_plugin_skill_content(self, protocol: str) -> Optional[Dict[str, Any]]:
         """Return the skill + manual markdown for a protocol, or None."""

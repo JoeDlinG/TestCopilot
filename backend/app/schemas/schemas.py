@@ -426,6 +426,45 @@ class PluginUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+# ============ Plugin Skill / Editor Schemas ============
+
+class PluginSkillSave(BaseModel):
+    """Create or update a plugin skill markdown file."""
+    protocol: str
+    name: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    content: str = ""
+    #: when renaming, the previous protocol (old file is removed)
+    rename_from: Optional[str] = None
+
+
+class PluginSkillImport(BaseModel):
+    """Import a skill markdown file (frontmatter optional)."""
+    filename: Optional[str] = None
+    content: str = ""
+
+
+class PluginFileCreate(BaseModel):
+    """Create a new plugin source file from a template."""
+    plugin_name: str
+    protocol_name: str
+    template_key: Optional[str] = "protocol_plugin"
+    version: Optional[str] = "1.0.0"
+    description: Optional[str] = ""
+    author: Optional[str] = ""
+    module_name: Optional[str] = None
+    overwrite: Optional[bool] = False
+
+
+class PluginFileUpdate(BaseModel):
+    content: str
+
+
+class PluginValidateRequest(BaseModel):
+    module_name: str
+    content: Optional[str] = None
+
+
 # ============ Custom Dashboard Schemas ============
 
 class DashboardCreate(BaseModel):

@@ -118,21 +118,286 @@ const compareRows = (a: any, b: any) => {
   return astep - bstep || aseq - bseq
 }
 
+// ---------------------------------------------------------------------------
+// Live communication monitor windows (two independent instances)
+// ---------------------------------------------------------------------------
+
+function lineColor(dir: ComLine['dir']): string {
+  return dir === 'TX' ? '#61dafb' : dir === 'RX' ? '#7ee787' : '#d4d4d4'
+}
+
+/**
+ * 一个独立的通信监控窗口：自带设备选择、WebSocket 订阅、暂停/清空。
+ * 页面上同时存在两个（A / B），用于并行执行时分别盯不同的设备。
+ */
+function useDeviceMonitor(devices: any[], slot: number) {
+  const [selectedDevice, setSelectedDevice] = useState<string>('')
+  const [lines, setLines] = useState<ComLine[]>([])
+  const [paused, setPaused] = useState(false)
+  const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed'>('closed')
+  const pausedRef = useRef(false)
+  const bufferRef = useRef<ComLine[]>([])
+  const endRef = useRef<HTMLDivElement | null>(null)
+
+  // 默认给两个窗口挑不同的设备：已连接的优先
+  useEffect(() => {
+    if (!devices.length) return
+    const ordered = [
+      ...devices.filter((d: any) => d.status === 'connected'),
+      ...devices.filter((d: any) => d.status !== 'connected'),
+    ]
+    const pick = ordered[slot] || ordered[0]
+    if (pick) setSelectedDevice(prev => prev || pick.id)
+  }, [devices, slot])
+
+  const pushLine = useCallback((dir: ComLine['dir'], text: string) => {
+    const line: ComLine = { id: ++lineSeq, ts: nowTs(), dir, text }
+    if (pausedRef.current) {
+      // 暂停期间继续收集，恢复时不丢数据
+      bufferRef.current.push(line)
+      if (bufferRef.current.length > MAX_LINES) {
+        bufferRef.current = bufferRef.current.slice(-MAX_LINES)
+      }
+      return
+    }
+    setLines(prev => [...prev, line].slice(-MAX_LINES))
+  }, [])
+
+  useEffect(() => { pausedRef.current = paused }, [paused])
+
+  useEffect(() => {
+    if (!selectedDevice) return
+    const ws = new WebSocket(`${wsBase()}/ws/devices/${selectedDevice}`)
+    setWsState('connecting')
+
+    ws.onopen = () => {
+      setWsState('open')
+      pushLine('SYS', `已连接设备 ${selectedDevice}`)
+    }
+    ws.onclose = () => setWsState('closed')
+    ws.onerror = () => setWsState('closed')
+    ws.onmessage = (ev) => {
+      let msg: any
+      try { msg = JSON.parse(ev.data) } catch { return }
+      switch (msg.type) {
+        case 'command_sent':
+          pushLine('TX', String(msg.command ?? ''))
+          break
+        case 'command_response':
+          pushLine('RX', formatPayload(msg.response))
+          break
+        case 'device_data':
+          pushLine('RX', formatPayload(msg.data))
+          break
+        case 'command_error':
+          pushLine('SYS', `[错误] ${msg.error ?? ''}`)
+          break
+        case 'connected':
+          pushLine('SYS', String(msg.message ?? '已连接'))
+          break
+        case 'error':
+          pushLine('SYS', String(msg.message ?? ''))
+          break
+        default:
+          break
+      }
+    }
+    return () => { ws.close() }
+  }, [selectedDevice, pushLine])
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [lines])
+
+  const togglePause = useCallback(() => {
+    if (paused) {
+      const buffered = bufferRef.current
+      bufferRef.current = []
+      setLines(prev => [...prev, ...buffered].slice(-MAX_LINES))
+    }
+    setPaused(!paused)
+  }, [paused])
+
+  const clear = useCallback(() => {
+    bufferRef.current = []
+    setLines([])
+  }, [])
+
+  return { selectedDevice, setSelectedDevice, lines, paused, wsState, togglePause, clear, endRef, bufferRef }
+}
+
+/** 一列步骤列表（每个设备流程一列） */
+function StepList({ steps, stepStatusConfig }: {
+  steps: any[]
+  stepStatusConfig: Record<string, { color: string; text: string }>
+}) {
+  if (!steps.length) {
+    return (
+      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无步骤" style={{ marginTop: 40 }} />
+    )
+  }
+  return (
+    <List
+      size="small"
+      dataSource={steps}
+      renderItem={(s: any) => {
+        const cfg = stepStatusConfig[s.status] || stepStatusConfig.pending
+        const running = s.status === 'running'
+        return (
+          <List.Item
+            style={{
+              background: running ? '#e6f4ff' : undefined,
+              padding: '6px 12px',
+              flexDirection: 'column',
+              alignItems: 'stretch',
+            }}
+          >
+            <Space size={8} style={{ width: '100%' }}>
+              <Tag color={cfg.color} style={{ marginInlineEnd: 0 }}>
+                {s.step_index}
+              </Tag>
+              <span style={{ flex: 1, wordBreak: 'break-all' }}>
+                {s.label || `步骤 ${s.step_index}`}
+              </span>
+              <Tag color={cfg.color} style={{ marginInlineEnd: 0 }}>
+                {cfg.text}
+              </Tag>
+              {s.duration_ms != null && (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {s.duration_ms}ms
+                </Text>
+              )}
+            </Space>
+
+            {/* parsed values + judgement (result parsing config) */}
+            {s.parsed && s.parsed.length > 0 && (
+              <div style={{ marginTop: 4, paddingLeft: 28 }}>
+                {(s.samples?.length || 0) > 1 && (
+                  <Tag style={{ marginBottom: 2, fontSize: 11 }}>
+                    共 {s.samples.length} 次采样，显示最后一次
+                  </Tag>
+                )}
+                {s.parsed.map((p: any, i: number) => {
+                  const unknown = p.status === 'unknown'
+                  return (
+                    <Tooltip key={i} title={p.detail || ''}>
+                      <Tag
+                        color={unknown ? 'default' : (p.ok ? 'green' : 'red')}
+                        style={{ marginBottom: 2, fontSize: 11 }}
+                      >
+                        {p.name}={p.value === null || p.value === undefined
+                          ? '解析失败'
+                          : String(p.value)}
+                        {' '}
+                        {unknown ? '?' : (p.ok ? '✓' : '✗')}
+                      </Tag>
+                    </Tooltip>
+                  )
+                })}
+              </div>
+            )}
+          </List.Item>
+        )
+      }}
+    />
+  )
+}
+
+/** 单个通信监控窗口的渲染（A / B 两个实例共用） */
+function ComMonitorCard({ title, m, devices, height = 260 }: {
+  title: string
+  m: ReturnType<typeof useDeviceMonitor>
+  devices: any[]
+  height?: number
+}) {
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <ApiOutlined />
+          <span>{title}</span>
+          <Tag color={m.wsState === 'open' ? 'green' : m.wsState === 'connecting' ? 'gold' : 'red'}>
+            {m.wsState === 'open' ? '已连接' : m.wsState === 'connecting' ? '连接中' : '未连接'}
+          </Tag>
+          {m.paused && <Tag color="orange">已暂停</Tag>}
+        </Space>
+      }
+      extra={
+        <Space size={4}>
+          <Select
+            size="small"
+            style={{ width: 170 }}
+            placeholder="选择设备"
+            value={m.selectedDevice || undefined}
+            onChange={(v: any) => { m.setSelectedDevice(v); m.clear() }}
+            options={devices.map((d: any) => ({
+              value: d.id,
+              label: `${d.name} (${d.protocol})`,
+            }))}
+          />
+          <Button
+            size="small"
+            icon={m.paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+            onClick={m.togglePause}
+          >
+            {m.paused ? '继续' : '暂停'}
+          </Button>
+          <Button size="small" icon={<ClearOutlined />} onClick={m.clear}>清空</Button>
+        </Space>
+      }
+    >
+      <div
+        style={{
+          height,
+          overflowY: 'auto',
+          background: '#1e1e1e',
+          borderRadius: 4,
+          padding: 8,
+          fontFamily: 'Menlo, Consolas, monospace',
+          fontSize: 12,
+        }}
+      >
+        {m.lines.length === 0 ? (
+          <div style={{ color: '#888', padding: 8 }}>
+            等待端口通信数据…（下发命令或设备主动上报时会实时显示）
+          </div>
+        ) : (
+          m.lines.map(line => (
+            <div key={line.id} style={{ color: lineColor(line.dir), lineHeight: 1.7 }}>
+              <span style={{ color: '#666' }}>{line.ts}</span>{' '}
+              <span style={{ fontWeight: 'bold' }}>
+                {line.dir === 'TX'
+                  ? <ArrowUpOutlined />
+                  : line.dir === 'RX'
+                    ? <ArrowDownOutlined />
+                    : <MinusCircleOutlined />}
+                {` ${line.dir}`}
+              </span>{' '}
+              {line.text}
+            </div>
+          ))
+        )}
+        <div ref={m.endRef} />
+      </div>
+      <div style={{ marginTop: 6, color: '#888', fontSize: 12 }}>
+        共 {m.lines.length} 行（最多保留 {MAX_LINES} 行）
+        {m.paused && ` · 暂停期间已缓存 ${m.bufferRef.current.length} 行`}
+      </div>
+    </Card>
+  )
+}
+
 export default function Executions() {
   const [executions, setExecutions] = useState<TestExecution[]>([])
   const [loading, setLoading] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<any>(null)
 
-  // ---- live communication monitor ----
+  // ---- live communication monitor (two independent windows) ----
   const [devices, setDevices] = useState<any[]>([])
-  const [selectedDevice, setSelectedDevice] = useState<string>('')
-  const [comLines, setComLines] = useState<ComLine[]>([])
-  const [comPaused, setComPaused] = useState(false)
-  const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed'>('closed')
-  const pausedRef = useRef(false)
-  const bufferRef = useRef<ComLine[]>([])
-  const comEndRef = useRef<HTMLDivElement | null>(null)
+  const monitorA = useDeviceMonitor(devices, 0)
+  const monitorB = useDeviceMonitor(devices, 1)
 
   // ---- live step status ----
   const [trackedId, setTrackedId] = useState<string>('')
@@ -217,101 +482,20 @@ export default function Executions() {
   // Live communication monitor
   // ------------------------------------------------------------------ //
 
-  // load devices once, default to a connected one
+  // load devices once — each monitor window picks its own default device
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const res = await deviceAPI.list()
         const items = extractItems(res)
-        if (cancelled) return
-        setDevices(items)
-        const preferred = items.find((d: any) => d.status === 'connected') || items[0]
-        if (preferred) setSelectedDevice(prev => prev || preferred.id)
+        if (!cancelled) setDevices(items)
       } catch {
         /* device list is optional for this page */
       }
     })()
     return () => { cancelled = true }
   }, [])
-
-  const pushLine = useCallback((dir: ComLine['dir'], text: string) => {
-    const line: ComLine = { id: ++lineSeq, ts: nowTs(), dir, text }
-    if (pausedRef.current) {
-      // keep collecting while paused so nothing is lost when resuming
-      bufferRef.current.push(line)
-      if (bufferRef.current.length > MAX_LINES) {
-        bufferRef.current = bufferRef.current.slice(-MAX_LINES)
-      }
-      return
-    }
-    setComLines(prev => [...prev, line].slice(-MAX_LINES))
-  }, [])
-
-  useEffect(() => { pausedRef.current = comPaused }, [comPaused])
-
-  // device websocket
-  useEffect(() => {
-    if (!selectedDevice) return
-    const ws = new WebSocket(`${wsBase()}/ws/devices/${selectedDevice}`)
-    setWsState('connecting')
-
-    ws.onopen = () => {
-      setWsState('open')
-      pushLine('SYS', `已连接设备 ${selectedDevice}`)
-    }
-    ws.onclose = () => setWsState('closed')
-    ws.onerror = () => setWsState('closed')
-    ws.onmessage = (ev) => {
-      let msg: any
-      try { msg = JSON.parse(ev.data) } catch { return }
-      switch (msg.type) {
-        case 'command_sent':
-          pushLine('TX', String(msg.command ?? ''))
-          break
-        case 'command_response':
-          pushLine('RX', formatPayload(msg.response))
-          break
-        case 'device_data':
-          pushLine('RX', formatPayload(msg.data))
-          break
-        case 'command_error':
-          pushLine('SYS', `[错误] ${msg.error ?? ''}`)
-          break
-        case 'connected':
-          pushLine('SYS', String(msg.message ?? '已连接'))
-          break
-        case 'error':
-          pushLine('SYS', String(msg.message ?? ''))
-          break
-        default:
-          break
-      }
-    }
-    return () => { ws.close() }
-  }, [selectedDevice, pushLine])
-
-  // auto-scroll to newest line
-  useEffect(() => {
-    comEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [comLines])
-
-  const togglePause = () => {
-    if (comPaused) {
-      // flush everything collected while paused
-      const buffered = bufferRef.current
-      bufferRef.current = []
-      setComLines(prev => [...prev, ...buffered].slice(-MAX_LINES))
-      setComPaused(false)
-    } else {
-      setComPaused(true)
-    }
-  }
-
-  const clearCom = () => {
-    bufferRef.current = []
-    setComLines([])
-  }
 
   // ------------------------------------------------------------------ //
   // Live execution step status
@@ -431,6 +615,8 @@ export default function Executions() {
               label: n?.data?.label || n?.label || '',
               command: n?.config?.command || '',
               hasParsers: (n?.config?.parsers || []).length > 0,
+              // 节点级设备绑定 —— 并行流程按此拆列显示
+              device_id: n?.config?.device_id || '',
             }))
         )
       } catch {
@@ -460,6 +646,7 @@ export default function Executions() {
           parsed: normalizeParsed(r?.parsed_results),
           samples: normalizeSamples(r?.parsed_results),
           actual: r?.actual,
+          device_id: f.device_id || '',
         }
       })
     : execSteps.map((s: any) => ({
@@ -467,6 +654,36 @@ export default function Executions() {
         parsed: normalizeParsed(s.parsed_results),
         samples: normalizeSamples(s.parsed_results),
       }))
+
+  /** device id -> readable name */
+  const deviceName = useCallback((id: string) => {
+    if (!id) return '未指定设备'
+    const d = devices.find((x: any) => x.id === id)
+    return d ? `${d.name}` : id
+  }, [devices])
+
+  /**
+   * 步骤按「执行设备」拆成多列：并行执行的设备流程各自一列，
+   * 列数取决于实际用到的设备数量（不固定为 2 列）。
+   */
+  const stepColumns = (() => {
+    if (mergedSteps.length === 0) return []
+    const groups = new Map<string, { key: string; title: string; steps: any[] }>()
+    for (const s of mergedSteps) {
+      const key = s.device_id || '__default__'
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          title: key === '__default__'
+            ? (trackedInfo?.device_id ? deviceName(trackedInfo.device_id) : '主流程')
+            : deviceName(key),
+          steps: [],
+        })
+      }
+      groups.get(key)!.steps.push(s)
+    }
+    return Array.from(groups.values())
+  })()
 
   // ---- parsed fields that can be plotted ----
   const availableFields = (() => {
@@ -668,9 +885,6 @@ export default function Executions() {
     },
   ]
 
-  const lineColor = (dir: ComLine['dir']) =>
-    dir === 'TX' ? '#95de64' : dir === 'RX' ? '#d3d3d3' : '#faad14'
-
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -716,88 +930,19 @@ export default function Executions() {
         </Col>
       </Row>
 
+      {/* ---------- live communication monitor: TWO windows ---------- */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        {/* ---------- live communication monitor ---------- */}
         <Col xs={24} lg={12}>
-          <Card
-            title={
-              <Space>
-                <ApiOutlined />
-                <span>实时通信监控</span>
-                <Tag color={wsState === 'open' ? 'green' : wsState === 'connecting' ? 'gold' : 'red'}>
-                  {wsState === 'open' ? '已连接' : wsState === 'connecting' ? '连接中' : '未连接'}
-                </Tag>
-                {comPaused && <Tag color="orange">已暂停</Tag>}
-              </Space>
-            }
-            extra={
-              <Space>
-                <Select
-                  size="small"
-                  style={{ width: 190 }}
-                  placeholder="选择设备"
-                  value={selectedDevice || undefined}
-                  onChange={(v: any) => { setSelectedDevice(v); setComLines([]) }}
-                  options={devices.map((d: any) => ({
-                    value: d.id,
-                    label: `${d.name} (${d.protocol})`,
-                  }))}
-                />
-                <Button
-                  size="small"
-                  icon={comPaused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-                  onClick={togglePause}
-                >
-                  {comPaused ? '继续' : '暂停'}
-                </Button>
-                <Button size="small" icon={<ClearOutlined />} onClick={clearCom}>
-                  清空
-                </Button>
-              </Space>
-            }
-          >
-            <div
-              style={{
-                height: 320,
-                overflowY: 'auto',
-                background: '#1e1e1e',
-                borderRadius: 4,
-                padding: 8,
-                fontFamily: 'Menlo, Consolas, monospace',
-                fontSize: 12,
-              }}
-            >
-              {comLines.length === 0 ? (
-                <div style={{ color: '#888', padding: 8 }}>
-                  等待端口通信数据…（下发命令或设备主动上报时会实时显示）
-                </div>
-              ) : (
-                comLines.map(line => (
-                  <div key={line.id} style={{ color: lineColor(line.dir), lineHeight: 1.7 }}>
-                    <span style={{ color: '#666' }}>{line.ts}</span>{' '}
-                    <span style={{ fontWeight: 'bold' }}>
-                      {line.dir === 'TX'
-                        ? <ArrowUpOutlined />
-                        : line.dir === 'RX'
-                          ? <ArrowDownOutlined />
-                          : <MinusCircleOutlined />}
-                      {` ${line.dir}`}
-                    </span>{' '}
-                    {line.text}
-                  </div>
-                ))
-              )}
-              <div ref={comEndRef} />
-            </div>
-            <div style={{ marginTop: 6, color: '#888', fontSize: 12 }}>
-              共 {comLines.length} 行（最多保留 {MAX_LINES} 行）
-              {comPaused && ` · 暂停期间已缓存 ${bufferRef.current.length} 行`}
-            </div>
-          </Card>
+          <ComMonitorCard title="实时通信监控 A" m={monitorA} devices={devices} />
         </Col>
-
-        {/* ---------- live step status ---------- */}
         <Col xs={24} lg={12}>
+          <ComMonitorCard title="实时通信监控 B" m={monitorB} devices={devices} />
+        </Col>
+      </Row>
+
+      {/* ---------- live step status (one column per device) ---------- */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24}>
           <Card
             title={
               <Space>
@@ -841,79 +986,50 @@ export default function Executions() {
               </div>
             )}
 
-            <div style={{ height: 288, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 4 }}>
-              {mergedSteps.length === 0 ? (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="暂无步骤（执行开始后将实时显示）"
-                  style={{ marginTop: 60 }}
-                />
-              ) : (
-                <List
-                  size="small"
-                  dataSource={mergedSteps}
-                  renderItem={(s: any) => {
-                    const cfg = stepStatusConfig[s.status] || stepStatusConfig.pending
-                    const running = s.status === 'running'
-                    return (
-                      <List.Item
-                        style={{
-                          background: running ? '#e6f4ff' : undefined,
-                          padding: '6px 12px',
-                          flexDirection: 'column',
-                          alignItems: 'stretch',
-                        }}
-                      >
-                        <Space size={8} style={{ width: '100%' }}>
-                          <Tag color={cfg.color} style={{ marginInlineEnd: 0 }}>
-                            {s.step_index}
-                          </Tag>
-                          <span style={{ flex: 1, wordBreak: 'break-all' }}>
-                            {s.label || `步骤 ${s.step_index}`}
-                          </span>
-                          <Tag color={cfg.color} style={{ marginInlineEnd: 0 }}>
-                            {cfg.text}
-                          </Tag>
-                          {s.duration_ms != null && (
-                            <Text type="secondary" style={{ fontSize: 11 }}>
-                              {s.duration_ms}ms
-                            </Text>
-                          )}
+            {stepColumns.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="暂无步骤（执行开始后将实时显示）"
+                style={{ marginTop: 60 }}
+              />
+            ) : (
+              <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}>
+                {stepColumns.map(col => {
+                  const passed = col.steps.filter((s: any) => s.status === 'passed').length
+                  const failed = col.steps.filter((s: any) => s.status === 'failed' || s.status === 'error').length
+                  return (
+                    <div
+                      key={col.key}
+                      style={{
+                        flex: '1 1 0',
+                        minWidth: 260,
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 6,
+                        background: '#fafafa',
+                      }}
+                    >
+                      <div style={{
+                        padding: '6px 10px', borderBottom: '1px solid #f0f0f0',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      }}>
+                        <Space size={6}>
+                          <ApiOutlined style={{ color: '#1677ff' }} />
+                          <Text strong style={{ fontSize: 12 }}>{col.title}</Text>
                         </Space>
-
-                        {/* parsed values + judgement (result parsing config) */}
-                        {s.parsed && s.parsed.length > 0 && (
-                          <div style={{ marginTop: 4, paddingLeft: 28 }}>
-                            {(s.samples?.length || 0) > 1 && (
-                              <Tag style={{ marginBottom: 2, fontSize: 11 }}>
-                                共 {s.samples.length} 次采样，显示最后一次
-                              </Tag>
-                            )}
-                            {s.parsed.map((p: any, i: number) => {
-                              const unknown = p.status === 'unknown'
-                              return (
-                                <Tooltip key={i} title={p.detail || ''}>
-                                  <Tag
-                                    color={unknown ? 'default' : (p.ok ? 'green' : 'red')}
-                                    style={{ marginBottom: 2, fontSize: 11 }}
-                                  >
-                                    {p.name}={p.value === null || p.value === undefined
-                                      ? '解析失败'
-                                      : String(p.value)}
-                                    {' '}
-                                    {unknown ? '?' : (p.ok ? '✓' : '✗')}
-                                  </Tag>
-                                </Tooltip>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </List.Item>
-                    )
-                  }}
-                />
-              )}
-            </div>
+                        <Space size={4}>
+                          <Tag color="success" style={{ marginInlineEnd: 0, fontSize: 11 }}>通过 {passed}</Tag>
+                          <Tag color="error" style={{ marginInlineEnd: 0, fontSize: 11 }}>失败 {failed}</Tag>
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>{col.steps.length} 步</Tag>
+                        </Space>
+                      </div>
+                      <div style={{ height: 288, overflowY: 'auto' }}>
+                        <StepList steps={col.steps} stepStatusConfig={stepStatusConfig} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </Card>
         </Col>
       </Row>

@@ -10,6 +10,8 @@ import re
 from collections import defaultdict
 from typing import Dict, List, Any, Optional, Set, Tuple
 
+from app.services import flow_context
+
 
 def node_commands(node: Dict) -> List[str]:
     """Return the real device commands carried by a node.
@@ -41,13 +43,20 @@ def collapse_runs(commands: List[str]) -> List[Tuple[str, int]]:
     return runs
 
 
-def assertion_stmt(expected: str) -> str:
+def assertion_stmt(expected: str, render: bool = False) -> str:
     """Build an assertion line for an expected-result string.
 
     Supports numeric comparisons (">10", "<=3.3"), containment
     ("contains OK" / "包含 OK") and plain equality.
+
+    When *render* is True the literal is wrapped in ``_r(..., ctx)`` so the
+    expectation may itself reference ``{前序节点输出}``.
     """
     e = str(expected).strip()
+
+    def lit(value: str) -> str:
+        return f"_r({value!r}, ctx)" if render else repr(value)
+
     m = re.match(r"^(>=|<=|==|!=|>|<)\s*(-?\d+(?:\.\d+)?)$", e)
     if m:
         op, val = m.group(1), m.group(2)
@@ -61,11 +70,11 @@ def assertion_stmt(expected: str) -> str:
             needle = e[len(kw):].strip().strip("'\"")
             if needle:
                 return (
-                    f"assert {needle!r} in str(response), "
+                    f"assert {lit(needle)} in str(response), "
                     f"f\"判断失败: {{response}} 不包含 {needle}\""
                 )
     return (
-        f"assert str(response).strip() == {e!r}, "
+        f"assert str(response).strip() == {lit(e)}, "
         f"f\"判断失败: 期望 {e}, 实际 {{response}}\""
     )
 
@@ -240,11 +249,14 @@ class CodeGenService:
             "log = logging.getLogger(__name__)",
             "",
             PARSE_HELPER,
+            flow_context.RUNTIME_HELPER,
             "",
             "",
             "def run() -> dict:",
             '    """Execute the test flow and return a summary dict."""',
             "    results = {'passed': 0, 'failed': 0, 'skipped': 0, 'steps': []}",
+            "    # 流程上下文：初始化节点的变量 + 各节点的输出返回值（供 {占位符} 引用）",
+            "    ctx = {}",
             "",
         ]
 
@@ -260,6 +272,36 @@ class CodeGenService:
 
         def _edge_label(src: str, tgt: str) -> str:
             return _edge_label_cache.get(f"{src}->{tgt}", "")
+
+        def _emit_inputs(prefix: str, node: Dict) -> None:
+            """Emit the resolution of a node's declared input parameters (#4)."""
+            specs = flow_context.node_inputs(node)
+            if not specs:
+                return
+            body_lines.append(f"{prefix}# ---- 输入参数 ----")
+            for spec in specs:
+                body_lines.append(
+                    f"{prefix}ctx[{spec['name']!r}] = _p({spec['name']!r}, ctx, "
+                    f"{spec['default']!r}, {spec['type']!r})"
+                )
+
+        def _emit_outputs(prefix: str, node: Dict, scope: Dict[str, str]) -> None:
+            """Emit the evaluation of a node's declared output return values."""
+            specs = flow_context.node_outputs(node)
+            if not specs:
+                return
+            scope_lit = "{" + ", ".join(f"{k!r}: {v}" for k, v in scope.items()) + "}"
+            fallback = "response" if "response" in scope else "result"
+            for spec in specs:
+                expr = str(spec.get("value") or fallback).strip() or fallback
+                value = f"_out({expr!r}, {scope_lit})"
+                if spec["type"] in ("int", "float", "bool", "hex"):
+                    value = f"_cast({value}, {spec['type']!r})"
+                body_lines.append(f"{prefix}ctx[{spec['name']!r}] = {value}")
+                body_lines.append(
+                    f"{prefix}log.info('↳ 输出 ' + {spec['name']!r} + "
+                    f"' = ' + str(ctx[{spec['name']!r}]))"
+                )
 
         def walk(node_id: str, indent: int, branch_stack: Set[str], no_remaining: bool = False) -> None:
             """Recursive DFS code generation.
@@ -306,6 +348,9 @@ class CodeGenService:
                 step_label = f"[Step {step_no}]" if step_no else "[Step]"
                 body_lines.append(f"{prefix}log.info({(step_label + ' ' + (label or raw_cmd))!r})")
 
+                # 输入参数：优先取前序节点同名输出，其次取默认值
+                _emit_inputs(prefix, node)
+
                 cmds = commands or ([raw_cmd] if raw_cmd else [])
                 if not cmds:
                     body_lines.append(f"{prefix}# 该步骤没有可下发的设备指令")
@@ -314,8 +359,9 @@ class CodeGenService:
                 else:
                     wired = bool(device) and device != "None"
                     for cmd, count in collapse_runs(cmds):
-                        call = f"response = {device}.send_command({cmd!r})" if wired \
-                            else f"# response = send_command({cmd!r})  # TODO: wire real device"
+                        # {占位符} 在运行时由上下文渲染，支持引用前序节点的输出
+                        call = f"response = {device}.send_command(_r({cmd!r}, ctx))" if wired \
+                            else f"# response = send_command(_r({cmd!r}, ctx))  # TODO: wire real device"
                         if count > 1:
                             # e.g. "循环读取 100 次" -> emit a loop, not 100 lines
                             body_lines.append(f"{prefix}for _repeat in range({count}):")
@@ -323,9 +369,10 @@ class CodeGenService:
                         else:
                             body_lines.append(f"{prefix}{call}")
                     if expected:
-                        body_lines.append(f"{prefix}{assertion_stmt(expected)}")
+                        body_lines.append(f"{prefix}{assertion_stmt(expected, render=True)}")
 
                     # result parsing + judgement, mirroring the runtime engine
+                    parsed_vars: Dict[str, str] = {}
                     for pidx, spec in enumerate(config.get("parsers") or []):
                         name = spec.get("name") or f"字段{pidx + 1}"
                         dtype = spec.get("data_type") or "string"
@@ -334,6 +381,7 @@ class CodeGenService:
                         unit = spec.get("unit") or "byte"
                         cond = spec.get("conditions") or {}
                         var = f"parsed_{pidx}"
+                        parsed_vars[var] = var
                         body_lines.append(f"{prefix}# 结果解析: {name}")
                         hex_field = spec.get("hex_field") or "all"
                         body_lines.append(
@@ -386,6 +434,9 @@ class CodeGenService:
                             )
                             body_lines.extend(f"{prefix}    {c}" for c in checks)
 
+                    # 输出返回值：写入上下文，供后续节点 {占位符} 引用
+                    _emit_outputs(prefix, node, {"response": "response", **parsed_vars})
+
                     body_lines.append(f"{prefix}time.sleep({timeout_ms})")
                     body_lines.append(f"{prefix}results['steps'].append({{'step': {label or raw_cmd!r}, 'status': 'passed'}})")
                     body_lines.append(f"{prefix}results['passed'] += 1")
@@ -394,17 +445,37 @@ class CodeGenService:
             elif ntype == "init":
                 # 初始化 / 重置节点：集中声明变量，供后续节点引用
                 visited_global.add(node_id)
-                body_lines.append(f"{prefix}# ===== 初始化 / 变量声明 =====")
-                for spec in config.get("variables") or []:
-                    vname = (spec.get("name") or "").strip()
-                    if not vname:
-                        continue
-                    vtype = spec.get("type") or "string"
+                body_lines.append(f"{prefix}# ===== 初始化 / 变量声明（同时写入流程上下文） =====")
+                for spec in flow_context.init_node_variables(node):
+                    vname = spec["name"]
+                    vtype = spec["type"]
                     body_lines.append(
                         f"{prefix}{vname} = {_init_literal(spec.get('value'), vtype)}"
                     )
+                    # 同时写入上下文，后续节点可用 {变量名} 或条件表达式直接引用
+                    body_lines.append(f"{prefix}ctx[{vname!r}] = {vname}")
                     if spec.get("desc"):
                         body_lines.append(f"{prefix}# {spec.get('desc')}")
+                _emit_inputs(prefix, node)
+                _emit_outputs(prefix, node, {})
+
+            elif ntype == "delay":
+                # 延时节点：等待若干毫秒（支持 {占位符} 引用前序节点输出）
+                visited_global.add(node_id)
+                raw_ms = config.get("duration", config.get("duration_ms", 0))
+                body_lines.append(f"{prefix}# ===== 延时 {raw_ms} ms =====")
+                _emit_inputs(prefix, node)
+                body_lines.append(
+                    f"{prefix}_delay_ms = _cast(_r({str(raw_ms)!r}, ctx), 'float') or 0.0"
+                )
+                body_lines.append(f"{prefix}log.info('延时 ' + str(_delay_ms) + ' ms')")
+                body_lines.append(f"{prefix}time.sleep(max(0.0, _delay_ms) / 1000.0)")
+                body_lines.append(
+                    f"{prefix}results['steps'].append({{'step': {label!r}, 'status': 'passed'}})"
+                )
+                body_lines.append(f"{prefix}results['passed'] += 1")
+                body_lines.append("")
+                _emit_outputs(prefix, node, {"delay_ms": "_delay_ms"})
 
             elif ntype == "condition":
                 visited_global.add(node_id)
@@ -435,9 +506,14 @@ class CodeGenService:
                 true_tgt = true_nbrs[0]["target"] if true_nbrs else None
                 false_tgt = false_nbrs[0]["target"] if false_nbrs else None
 
+                # 输入参数 + 条件表达式（可引用 {前序节点输出}）
+                _emit_inputs(prefix, node)
+                _emit_outputs(prefix, node, {"result": f"_cond({expr!r}, ctx)"})
+
                 # Walk branches WITHOUT following remaining neighbours so the
                 # convergence point stays outside the if/else block.
-                body_lines.append(f"{prefix}if {expr}:")
+                # 条件表达式以流程上下文为变量求值，支持写 "voltage > 10"
+                body_lines.append(f"{prefix}if _cond({expr!r}, ctx):")
                 if true_tgt:
                     walk(true_tgt, indent + 1, branch_stack | {node_id}, no_remaining=True)
                 else:
@@ -489,6 +565,9 @@ class CodeGenService:
                     else:
                         exit_nbrs.append(nb)
 
+                # 输入参数：优先取前序节点同名输出，其次取默认值
+                _emit_inputs(prefix, node)
+
                 # 进入条件：整段循环包在 if 中，不满足时跳过或判失败
                 loop_indent = indent
                 if entry:
@@ -496,7 +575,7 @@ class CodeGenService:
                         f"{prefix}# 进入条件：不满足时"
                         f"{'判定为失败' if entry_fail == 'fail' else '跳过整个循环'}"
                     )
-                    body_lines.append(f"{prefix}if {entry}:")
+                    body_lines.append(f"{prefix}if _cond({entry!r}, ctx):")
                     loop_indent = indent + 1
                 loop_prefix = "    " * loop_indent
                 body_prefix = "    " * (loop_indent + 1)
@@ -505,9 +584,9 @@ class CodeGenService:
                     body_lines.append(f"{loop_prefix}_loop_iter = 0")
 
                 if loop_type == "for":
-                    body_lines.append(f"{loop_prefix}for {var} in range(int({expr})):")
+                    body_lines.append(f"{loop_prefix}for {var} in range(int(_r({expr!r}, ctx))):")
                 else:
-                    body_lines.append(f"{loop_prefix}while {expr}:")
+                    body_lines.append(f"{loop_prefix}while _cond({expr!r}, ctx):")
 
                 # 最大迭代保护：条件恒真时防止卡死执行引擎
                 if max_iter:
@@ -520,14 +599,15 @@ class CodeGenService:
                     body_lines.append(f"{body_prefix}    break")
 
                 # 循环节点自身携带的命令：生成 send_command + 断言 + 结果解析
+                loop_parsed: Dict[str, str] = {}
                 if cmds:
                     wired = bool(device) and device != "None"
                     for cmd, count in collapse_runs(cmds):
-                        call = f"response = {device}.send_command({cmd!r})" if wired \
-                            else f"# response = send_command({cmd!r})  # TODO: wire real device"
+                        call = f"response = {device}.send_command(_r({cmd!r}, ctx))" if wired \
+                            else f"# response = send_command(_r({cmd!r}, ctx))  # TODO: wire real device"
                         body_lines.append(f"{body_prefix}{call}")
                     if expected:
-                        body_lines.append(f"{body_prefix}{assertion_stmt(expected)}")
+                        body_lines.append(f"{body_prefix}{assertion_stmt(expected, render=True)}")
                     for pidx, spec in enumerate(config.get("parsers") or []):
                         name = spec.get("name") or f"字段{pidx + 1}"
                         dtype = spec.get("data_type") or "string"
@@ -536,6 +616,7 @@ class CodeGenService:
                         unit = spec.get("unit") or "byte"
                         cond = spec.get("conditions") or {}
                         pvar = f"parsed_{pidx}"
+                        loop_parsed[pvar] = pvar
                         hex_field = spec.get("hex_field") or "all"
                         body_lines.append(f"{body_prefix}# 结果解析: {name}")
                         body_lines.append(
@@ -565,6 +646,10 @@ class CodeGenService:
                             body_lines.append(f"{body_prefix}if {pvar} != \"unknown\":")
                             body_lines.extend(f"{body_prefix}    {c}" for c in pchecks)
 
+                # 输出返回值：写入上下文，供后续节点 {占位符} 引用
+                if cmds:
+                    _emit_outputs(body_prefix, node, {"response": "response", **loop_parsed})
+
                 if body_nbrs:
                     walk(body_nbrs[0]["target"], loop_indent + 1, branch_stack | {node_id})
                 elif not cmds:
@@ -573,7 +658,7 @@ class CodeGenService:
                 # 跳出条件：每轮结束后判断，满足则提前退出
                 if break_cond:
                     body_lines.append(f"{body_prefix}# 跳出条件")
-                    body_lines.append(f"{body_prefix}if {break_cond}:")
+                    body_lines.append(f"{body_prefix}if _cond({break_cond!r}, ctx):")
                     body_lines.append(f"{body_prefix}    log.info('满足跳出条件，提前结束循环')")
                     body_lines.append(f"{body_prefix}    break")
 

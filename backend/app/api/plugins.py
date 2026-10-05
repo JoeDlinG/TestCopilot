@@ -14,7 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.schemas import PluginInstallRequest, PluginUpdateRequest, DeviceCreate
+from app.schemas.schemas import (
+    PluginInstallRequest, PluginUpdateRequest, DeviceCreate,
+    PluginSkillSave, PluginSkillImport,
+)
 from app.services.plugin_service import plugin_service
 from app.services.device_service import device_service
 
@@ -82,6 +85,71 @@ async def get_plugin_skill(protocol: str):
             "detail": f"No skill for protocol '{protocol}'",
         })
     return {"code": 0, "message": "success", "data": content}
+
+
+@router.post("/skills")
+async def create_plugin_skill(data: PluginSkillSave):
+    """Create a new plugin skill (fails when the protocol already exists)."""
+    existing = plugin_service.get_plugin_skill_content(data.protocol)
+    if existing:
+        raise HTTPException(status_code=400, detail={
+            "code": 40011, "message": "Skill already exists",
+            "detail": f"protocol '{data.protocol}' 已存在，请使用 PUT 修改",
+        })
+    try:
+        saved = plugin_service.save_plugin_skill(
+            protocol=data.protocol,
+            name=data.name,
+            keywords=data.keywords,
+            content=data.content,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40012, "message": "Invalid skill", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": saved}
+
+
+@router.put("/skills/{protocol}")
+async def update_plugin_skill(protocol: str, data: PluginSkillSave):
+    """Update an existing plugin skill (supports renaming via ``rename_from``)."""
+    try:
+        saved = plugin_service.save_plugin_skill(
+            protocol=data.protocol or protocol,
+            name=data.name,
+            keywords=data.keywords,
+            content=data.content,
+            rename_from=data.rename_from or protocol,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40012, "message": "Invalid skill", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": saved}
+
+
+@router.post("/skills/import")
+async def import_plugin_skill(data: PluginSkillImport):
+    """Import a skill markdown file (frontmatter optional)."""
+    try:
+        saved = plugin_service.import_plugin_skill(
+            data.filename or "", data.content or ""
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40012, "message": "Invalid skill file", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": saved}
+
+
+@router.delete("/skills/{protocol}")
+async def delete_plugin_skill(protocol: str):
+    if not plugin_service.delete_plugin_skill(protocol):
+        raise HTTPException(status_code=404, detail={
+            "code": 40010, "message": "Plugin skill not found",
+            "detail": f"No skill for protocol '{protocol}'",
+        })
+    return {"code": 0, "message": "Skill deleted", "data": None}
 
 
 @router.get("/{plugin_id}")

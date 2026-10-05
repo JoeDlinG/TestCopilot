@@ -187,6 +187,24 @@ export const pluginAPI = {
   addDevice: (id: string) => api.post(`/plugins/${id}/add-device`),
   listSkills: () => api.get('/plugins/skills'),
   getSkill: (protocol: string) => api.get(`/plugins/skills/${protocol}`),
+  createSkill: (data: any) => api.post('/plugins/skills', data),
+  updateSkill: (protocol: string, data: any) => api.put(`/plugins/skills/${protocol}`, data),
+  importSkill: (data: any) => api.post('/plugins/skills/import', data),
+  deleteSkill: (protocol: string) => api.delete(`/plugins/skills/${protocol}`),
+}
+
+// Plugin editor APIs (templates + plugin source files)
+export const pluginEditorAPI = {
+  listTemplates: () => api.get('/plugin-editor/templates'),
+  getTemplate: (key: string) => api.get(`/plugin-editor/templates/${key}`),
+  listFiles: () => api.get('/plugin-editor/files'),
+  readFile: (moduleName: string) => api.get(`/plugin-editor/files/${moduleName}`),
+  createFile: (data: any) => api.post('/plugin-editor/files', data),
+  writeFile: (moduleName: string, content: string) =>
+    api.put(`/plugin-editor/files/${moduleName}`, { content }),
+  deleteFile: (moduleName: string) => api.delete(`/plugin-editor/files/${moduleName}`),
+  validate: (moduleName: string, content?: string) =>
+    api.post('/plugin-editor/validate', { module_name: moduleName, content }),
 }
 
 export default api

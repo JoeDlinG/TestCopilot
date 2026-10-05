@@ -21,6 +21,7 @@ from app.models.models import (
 )
 from app.services.device_service import device_service
 from app.services.response_parser import response_parser
+from app.services import flow_context
 from app.api.websocket import broadcast_execution_update
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,9 @@ class ExecutionEngine:
                 if n.get("type") not in ("start", "end")
             ]
 
+            # 流程上下文：初始化节点声明的变量 + 各节点产生的输出返回值（#4）
+            ctx: Dict[str, Any] = flow_context.seed_context(nodes)
+
             for idx, node in enumerate(step_nodes):
                 node_id = node.get("id", f"node_{idx}")
                 node_type = node.get("type", "test_step")
@@ -251,6 +255,14 @@ class ExecutionEngine:
                 config = node.get("config", {}) or {}
                 commands = self._extract_commands(node)
 
+                # 输入参数：优先取前序节点同名输出，其次取默认值
+                ctx.update(flow_context.resolve_inputs(node, ctx))
+                # 命令/预期结果中的 {占位符} 用上下文渲染，实现节点间数据串联
+                commands = [flow_context.render_template(c, ctx) for c in commands]
+                expected_text = flow_context.render_template(
+                    config.get("expected") or config.get("expected_result") or "", ctx
+                )
+
                 # Create step result
                 step_result = TestStepResult(
                     execution_id=execution_id,
@@ -260,7 +272,7 @@ class ExecutionEngine:
                     label=label,
                     status=StepStatus.RUNNING.value,
                     command=" | ".join(commands) or config.get("command", ""),
-                    expected=config.get("expected", ""),
+                    expected=expected_text,
                     started_at=datetime.utcnow(),
                 )
 
@@ -327,12 +339,22 @@ class ExecutionEngine:
                             # the curve gets N points instead of only the last
                             # one. Empty frames are reported as "unknown" and
                             # are excluded from the judgement.
+                            # 节点局部作用域：response + 各解析字段，
+                            # 供输出返回值表达式取值（response / parsed_0 …）
+                            node_scope: Dict[str, Any] = {
+                                "response": responses[-1] if responses else "",
+                            }
                             parsers = config.get("parsers")
                             if parsers:
                                 samples: List[List[Dict[str, Any]]] = [
                                     response_parser.parse_all(r, parsers)
                                     for r in responses
                                 ]
+                                # 最后一条应答的每个解析字段都暴露给输出表达式
+                                for _pidx, _p in enumerate(samples[-1] if samples else []):
+                                    node_scope[f"parsed_{_pidx}"] = _p.get("value")
+                                    if _p.get("name"):
+                                        node_scope[str(_p["name"])] = _p.get("value")
                                 passed, summary = response_parser.summarize_series(
                                     samples
                                 )
@@ -353,15 +375,44 @@ class ExecutionEngine:
                                         f"Step {idx + 1} of {execution_id} "
                                         f"failed judgement: {summary}"
                                     )
-                    elif node_type == "condition":
+                            # 输出返回值写入上下文，供后续节点引用
+                            ctx.update(
+                                flow_context.collect_outputs(node, ctx, node_scope)
+                            )
+                    elif node_type == "delay":
+                        # 延时节点：等待若干毫秒（{占位符} 用流程上下文渲染）
+                        raw_ms = config.get("duration", config.get("duration_ms", 0))
+                        ms_text = flow_context.render_template(str(raw_ms or 0), ctx)
+                        delay_ms = flow_context.coerce_value(ms_text, "float")
+                        try:
+                            delay_ms = max(0.0, float(delay_ms))
+                        except (TypeError, ValueError):
+                            raise ValueError(f"延时时长无效: {raw_ms!r}（请填写毫秒数）")
+                        await asyncio.sleep(delay_ms / 1000.0)
                         step_result.status = StepStatus.PASSED.value
-                        step_result.actual = "Condition evaluated"
+                        step_result.actual = f"延时 {delay_ms:g} ms"
+                        ctx.update(flow_context.collect_outputs(node, ctx, {"delay_ms": delay_ms}))
+                    elif node_type == "condition":
+                        cond_expr = flow_context.render_template(
+                            config.get("condition") or "True", ctx
+                        )
+                        outcome = flow_context.eval_condition(cond_expr, ctx)
+                        ctx.update(
+                            flow_context.collect_outputs(
+                                node, ctx, {"result": outcome}
+                            )
+                        )
+                        step_result.status = StepStatus.PASSED.value
+                        step_result.actual = (
+                            f"Condition evaluated: {cond_expr} -> {outcome}"
+                        )
                     elif node_type == "loop":
                         step_result.status = StepStatus.PASSED.value
                         step_result.actual = "Loop completed"
                     else:
                         step_result.status = StepStatus.PASSED.value
                         step_result.actual = "Step completed"
+                        ctx.update(flow_context.collect_outputs(node, ctx, {}))
 
                 except Exception as e:
                     step_result.status = StepStatus.FAILED.value
@@ -396,6 +447,8 @@ class ExecutionEngine:
                     "status": step_result.status,
                     "actual": step_result.actual,
                     "parsed_results": _safe_json(step_result.parsed_results),
+                    # 当前流程上下文（输入参数 / 输出返回值），便于在界面上追踪串联
+                    "context": dict(ctx),
                 })
 
             # Finalize execution

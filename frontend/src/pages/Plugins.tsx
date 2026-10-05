@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Modal,
   Form, Input, Switch, Empty, Upload
 } from 'antd'
 import {
   PlusOutlined, ReloadOutlined, PoweroffOutlined,
-  PlayCircleOutlined, AppstoreAddOutlined, InboxOutlined, ApiOutlined
+  PlayCircleOutlined, AppstoreAddOutlined, InboxOutlined, ApiOutlined,
+  CodeOutlined, FileMarkdownOutlined,
 } from '@ant-design/icons'
 import { pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
@@ -15,6 +17,7 @@ const { Title, Text } = Typography
 const { Dragger } = Upload
 
 export default function Plugins() {
+  const navigate = useNavigate()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
@@ -182,6 +185,12 @@ export default function Plugins() {
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadPlugins}>刷新</Button>
+          <Button icon={<CodeOutlined />} onClick={() => navigate('/plugin-editor')}>
+            插件编辑器
+          </Button>
+          <Button icon={<FileMarkdownOutlined />} onClick={() => navigate('/skill-editor')}>
+            Skill 编辑器
+          </Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -202,8 +211,15 @@ export default function Plugins() {
             1. 创建一个 Python 文件，继承 <code>BaseProtocolPlugin</code>
           </p>
           <p>2. 实现 <code>connect</code>、<code>disconnect</code>、<code>send</code>、<code>receive</code> 方法</p>
-          <p>3. 将插件文件放入 <code>plugins/</code> 目录，通过下方表单安装</p>
+          <p>
+            3. 将插件文件放入 <code>plugins/</code> 目录，通过下方表单安装
+          </p>
           <p>参考示例：<code>plugins/example_plugin.py</code> (Modbus RTU 协议)</p>
+          <p>
+            更推荐：打开「<a onClick={() => navigate('/plugin-editor')}>插件编辑器</a>」
+            选择模板（协议 / 设备驱动 / 数据解析 / 报告模板）一键生成带示例的插件骨架；
+            Skill（AI 用例生成指南）可在「<a onClick={() => navigate('/skill-editor')}>Skill 编辑器</a>」中导入与修改。
+          </p>
         </div>
       </Card>
 

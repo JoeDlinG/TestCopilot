@@ -150,6 +150,29 @@ class TestGenService:
                 "retry_count": 0,
             }
 
+            if flow_type == "delay":
+                # 延时节点：等待 duration_ms 毫秒后继续
+                nodes.append({
+                    "id": node_id,
+                    "type": "delay",
+                    "data": {"label": label or "延时"},
+                    "position": {"x": x_center, "y": y_step},
+                    "config": {
+                        "command": "",
+                        "expected": "",
+                        "duration": step.get("duration_ms") or step.get("duration") or 1000,
+                        "timeout": 5000,
+                    },
+                })
+                edges.append({
+                    "id": f"edge_{prev_id}_{node_id}",
+                    "source": prev_id, "target": node_id,
+                    "label": "",
+                })
+                prev_id = node_id
+                y_step += 80
+                continue
+
             if flow_type == "condition":
                 # Condition (diamond) node
                 expr = step.get("condition", "True")

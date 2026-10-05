@@ -598,6 +598,22 @@ Flow node types:
 - "action" (default): sequential step. No extra fields needed.
 - "condition": if/else branch. Include "condition" (Python expr), "true_branch" (action), "false_branch" (action).
 - "loop": repeating block. Include "loop_type" ("for"|"while"), "loop_variable" (for loop var name), "loop_expression" (range or while cond), "loop_body" (action description).
+- "delay": wait before the next step. Include "duration_ms" (integer, milliseconds). Use it whenever the device needs settling time (power-up, mode switch, retry backoff) — never put "wait N seconds" only in prose.
+
+MULTI-DEVICE RULE (applies whenever the requirement touches two or more devices):
+Operations and commands that target different devices MUST NOT be merged into one
+sequential flow. Split them into separate, independent test cases — one per device —
+so each becomes its own parallel flow that can be started and judged on its own.
+For every such case:
+- "devices_required": exactly ONE device (the one this lane drives).
+- "name": suffix with the device, e.g. "<功能> · <设备A>", "<功能> · <设备B>".
+- "tags": include the shared group tag "并行:<需求简称>" plus the device name, so the
+  UI can recognise the cases as one parallel group.
+- Keep each flow self-contained (its own start → steps → end). Do not reference step
+  outputs of another device's case; if two devices must be synchronised, insert a
+  "delay" step instead of a cross-device dependency.
+Default to two parallel flows when the requirement mentions exactly two devices; use
+one independent flow per device when there are more.
 
 Output ONLY the JSON object. No markdown fences, no explanatory text. Preserve this exact top-level key: "test_cases" (array)."""
 

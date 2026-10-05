@@ -4,6 +4,78 @@
 
 ---
 
+## 2026-10-05: 延时节点 + 节点复制入口 + 并行流程生成 + 执行界面多列（v0.7.2）
+
+### 1. 延时节点（单位：毫秒）
+
+- 画布：新增「延时」类型节点（橙色、⏱ 图标），卡片直接显示 `延时 N ms`；
+  节点编辑弹窗用 `InputNumber`（addonAfter `ms`）配置时长
+- **代码生成器**（`codegen_service.py`）：新增 `delay` 分支 ——
+  `_delay_ms = _cast(_r(..., ctx), 'float')` → `time.sleep(max(0, _ms)/1000)` → 计入 `results['passed']`
+- **运行时执行引擎**（`execution_service.py`）：新增 `delay` 分支，`{占位符}` 用流程上下文渲染后
+  `asyncio.sleep(ms/1000)`，`actual` 记录实际延时毫秒数
+- 用例生成（`testgen_service._description_to_flow`）：`flow_type=delay` → 延时节点（`duration_ms`）
+
+### 2. 节点复制（可视化入口）
+
+原有 Ctrl+C / Ctrl+V / Ctrl+D 只有快捷键、界面上不可见 —— 工具栏补「复制 / 粘贴 / 创建副本」三个按钮
+（逻辑复用既有 `handleCopy / handlePaste / handleDuplicate`，带 Tooltip 说明快捷键）。
+
+### 3. 「测试用例生成」Skill：多设备默认拆成并行独立流程
+
+`ai_service.generate_test_cases` 的系统提示词更新：
+
+- 新增 `delay` 节点类型（要求设备稳定时间用延时节点表达，不要只写在描述里）
+- 新增 **MULTI-DEVICE RULE**：涉及 2 台及以上设备时，**不同设备的操作与指令必须拆成互相独立的
+  test case**（每台设备一条并行流程），`devices_required` 只填一台，用 `并行:<组名>` tag 归组，
+  各流程自带 start→steps→end，需要同步时用延时节点而非跨设备依赖
+
+### 4. 测试执行界面
+
+- 实时通信监控由 1 个窗口改为 **A / B 两个独立窗口**：抽出 `useDeviceMonitor(devices, slot)` hook
+  （设备选择 + WebSocket + 暂停/清空各自独立），两个窗口默认选中不同设备（已连接的优先）
+- 执行步骤状态改为**按执行设备分列**：列数取决于实际用到的设备数量（不限 2 列），
+  每列带通过/失败/步数统计；抽出 `StepList` 组件复用渲染
+- 流程节点编辑弹窗新增「执行设备」选择（`config.device_id`），这样“按设备分列”才有数据来源；
+  留空时仍由执行引擎 `_resolve_device` 自动挑选已连接设备
+
+### 验证
+
+| 项目 | 结果 |
+|------|------|
+| `npx tsc --noEmit` / `npm run build` | 通过 |
+| 延时节点生成代码后执行（300+200 ms） | 实测 502 ms，`passed=2` |
+| API 真实执行（初始化 `wait_ms=300` → 延时 `{wait_ms}` → 延时 200） | 3 步 passed，1.1 s，占位符解析正确 |
+| `_description_to_flow` 延时分支 + 提示词关键词 | 断言通过 |
+| `python -m compileall app` | 通过 |
+
+---
+
+## 2026-10-05: PeakCAN 插件真实硬件联调（收发链路跑通）
+
+> 硬件：PCAN-USB FD（USB `0c72:0012`），SocketCAN `can0` @ 500 kbps
+
+### 环境验证
+
+- 插件 `connect()` 走 `socketcan/can0` 连接成功；标准帧 / 字符串简写 /
+  扩展帧发送均返回 `status=sent`，`receive()`、`disconnect()` 正常
+- REST 链路端到端通过：`POST /api/devices/connect` → `/{id}/command` →
+  全局接收监听抓到帧并落库 `communication_logs`（同时 WebSocket 广播）
+- 物理层结论：`bus_state.rx=0 / tx=128` → **总线上没有任何节点应答**，
+  需在硬件侧确认：对端上电、波特率一致、两端各一个 120Ω 终端电阻、CAN_H/CAN_L 未接反
+
+### 代码修复
+
+- `get_status()` / `diagnose()` 新增 `bus_state`（解析 `ip -details link show`）
+  与 `bus_hint`：直接给出 ERROR-PASSIVE / BUS-OFF 的排查建议与复位命令
+- 错误帧处理：默认 `skip_error_frames=true`，错误帧不再伪装成正常响应；
+  显式开启时返回带 `error_desc`（中文解码：无 ACK / 发送 ERROR-PASSIVE / BUS-OFF …）
+- 新增 `loopback` 自检开关：总线上没有对端时，用内核回环自发自收验证整条链路
+- `_usb_hint()`：pyusb 枚举 USB，区分「没插 PEAK 设备」与「插了但内核模块未加载」
+- 文档同步：`docs/PEAKCAN_PLUGIN.md`（配置项、返回字段、总线状态表）
+
+---
+
 ## 2026-07-04: 项目启动 — 需求定义与架构设计
 
 ### 产品需求文档 (PRD v1.0)
@@ -625,6 +697,109 @@ TypeScript 5.9 + `noImplicitAny` 下 13 处回调参数隐式 `any` → 全部�
 ### 备注
 
 `.gitignore` 新增忽略 `node_modules/`、`frontend/dist/`、`backend/static/`、`build/`、`dist/`、`.workbuddy/`；构建产物不入库（通过 Release 分发）。
+
+---
+
+## 2026-10-05: 节点输入/输出（Issue #4）+ Skill 编辑器 + 插件编辑器（v0.7.0）
+
+> 分支 `feature/flow-enhancements`
+
+### Issue #4：所有节点支持输入参数与输出返回值
+
+- 新增 `backend/app/services/flow_context.py`，作为**代码生成器**与**运行时执行引擎**共用的
+  单一实现，保证「生成代码」与「实际执行」对变量的解析行为完全一致：
+  - `render_template()`：`{占位符}` 渲染，未知占位符原样保留便于发现拼写错误
+  - `coerce_value()`：string / int / float / bool / hex 类型强转，失败回退原文不中断执行
+  - `safe_eval()` / `eval_condition()`：白名单内置函数的安全表达式求值
+  - `seed_context()`：从初始化节点变量播种上下文
+  - `resolve_inputs()`：输入参数取值优先级 = 上下文（前序节点同名输出）→ 声明默认值
+  - `collect_outputs()`：按 `response` / `parsed_N` / 解析字段名取值，空表达式默认 `response`
+  - `available_variables()`：供 UI 展示「可用变量」清单
+- **代码生成器**（`codegen_service.py`）：
+  - 注入 `_r / _cast / _p / _out / _cond` 运行时助手，`ctx` 在 `run()` 开头初始化
+  - 命令与预期结果统一包 `_r(..., ctx)`；初始化节点变量同时写入 `ctx`
+  - 条件 / while / 进入条件 / 跳出条件改用 `_cond(expr, ctx)`，可直接写 `voltage > 10`
+  - 操作节点与循环节点在解析后追加输出返回值赋值与日志
+- **运行时执行引擎**（`execution_service.py`）：每步先解析输入 → 渲染命令/预期 → 下发 →
+  用 `response / parsed_N / 解析字段名` 作用域收集输出 → 写回上下文；
+  `step_completed` WebSocket 事件新增 `context` 字段
+- **前端**（`TestFlowEditor.tsx`）：节点编辑弹窗新增「输入参数 / 输出返回值」Form.List
+  （名称 / 类型 / 默认值或表达式 / 说明），以及「可用变量」标签（点击即复制 `{变量名}`）；
+  画布上的操作 / 初始化 / 循环节点显示 in/out 数量徽标
+
+### Skill 编辑器（`/skill-editor`）
+
+- 左侧列表选择现有 Skill，右侧编辑名称 / 协议标识 / 关键词 / Markdown 正文，保存写入
+  `plugins/skills/<protocol>_skill.md`（frontmatter 自动生成）；修改协议标识会同步重命名文件
+- 支持上传或粘贴 `.md` 导入，protocol 从 frontmatter 或文件名（`foo_skill.md` → `foo`）推断
+- 后端新增 `POST /api/plugins/skills`、`PUT /api/plugins/skills/{protocol}`、
+  `POST /api/plugins/skills/import`、`DELETE /api/plugins/skills/{protocol}`；
+  `plugin_service` 新增 `save_plugin_skill` / `import_plugin_skill` / `delete_plugin_skill`
+
+### 插件编辑器（`/plugin-editor`）+ 插件模板
+
+- 新增 `backend/app/services/plugin_editor_service.py` 与 `backend/app/api/plugin_editor.py`
+  （`/api/plugin-editor/templates`、`/files`、`/validate`）
+- 4 套模板放在 `backend/plugins/templates/`（子目录不会被插件扫描器当成插件）：
+  **通信协议**、**设备驱动**、**数据解析**、**报告模板**；每套都带可运行示例与 TODO 标注
+- 新建插件时按 `{{PLUGIN_NAME}} / {{CLASS_NAME}} / {{PROTOCOL_NAME}} / {{VERSION}} / {{DATE}}`
+  占位符自动填充，生成的文件可直接通过语法校验并含插件类
+- 编辑器支持在线改源码、「语法校验」（`compile` + AST 找 `BaseProtocolPlugin` 子类）、
+  删除文件；插件管理页新增两个入口按钮
+
+### 验证
+
+- 4 套模板渲染后 `compile()` 全部通过；Skill 增 / 改 / 删 / 导入实测通过
+- 前端 `tsc --noEmit` 与 `npm run build` 通过
+
+---
+
+## 2026-10-05: PeakCAN 连接鲁棒性加固（v0.7.1）
+
+> 背景：`Test/Issue_Bug/PeakCAN无法链接.png` —— Windows 上连接 PeakCAN 设备报
+> `[WinError 10047] 使用了与请求的协议不兼容的地址`，且错误信息中没有任何可定位的原因。
+
+### 根因分析
+
+- `[WinError 10047]`（`WSAEAFNOSUPPORT`）是 **Windows 上创建 AF_CAN socket** 时产生的，
+  即 SocketCAN 被用在了 Windows 上。SocketCAN 依赖 Linux 内核 CAN 子系统，Windows 不存在。
+- 错误文本**没有**插件包装层（如 `Failed to open CAN channel ...`），说明它不是被
+  `connect()` 的 `except can.exceptions.CanError` 捕获后重新抛出的 —— python-can 在
+  建 socket 阶段抛的是裸 `OSError`，因此直接穿透 `device_service` 到了前端。
+- 原 `auto` 检测是“单次盲试”：一旦选错组合（例如 `can0` 存在但 `operstate=down`、
+  或 PCAN-Basic 驱动缺失）就没有任何回退，失败原因也看不到。
+
+### 修复内容（`backend/plugins/peakcan_plugin.py` → v1.1.0）
+
+- **多候选按序重试**：`_candidate_list()` 生成有序 `(接口, 通道)` 列表 —— 显式 channel
+  （按名字猜驱动：`can0`/`vcan0` → socketcan，其它 → pcan）→ 已 UP 的 SocketCAN 接口 →
+  其它 SocketCAN 接口 → 检测到的 PCAN 通道 → 平台默认。
+  **Windows 上 SocketCAN 永远不会成为候选**；显式传 socketcan 或 `can0` 通道时直接给出中文说明。
+- **不再泄漏裸 OS 错误**：`can.interface.Bus()` 改为捕获 `Exception`，把每个候选的失败原因
+  逐条收集，最终抛出带完整尝试清单 + 平台修复提示的 `ConnectionError`。
+- **`_explain()` 错误翻译**：`10047` / `Network is down` / `No such device` / 缺 PCAN DLL
+  等分别转为可操作的中文原因与命令。
+- **`_socketcan_channels(only_up=True)`**：读 `/sys/class/net/*/operstate`，把 `down`
+  的接口排到后面，避免“接口存在但打不开”导致的误判。
+- **新增诊断能力**：`send({"action": "diagnose"})`（环境报告：平台、python-can 版本、
+  候选顺序、检测通道、上次失败原因、修复提示）与 `send({"action": "scan"})`（通道列表），
+  **断开状态即可调用**；`get_status()` 增加 `platform` / `is_windows` / `last_error` /
+  `available_socketcan_up_channels`；`Error` 场景下 `send()` 会把上次失败原因一并带出。
+- **JSON 命令字符串归一化**：UI / 调试终端下发的是字符串，原 `send()` 只认 `id#hex` 或 dict，
+  于是手册与 Skill 里写的 `{"action": "scan"}`、`{"arbitration_id": 291, "data": [...]}`
+  会被当成 CAN 字符串并报 `Invalid CAN string format`。现在以 `{` 开头的字符串先尝试
+  `json.loads`，成功则按 dict 处理（`action` → 分发；其余 → 正常发帧）。
+
+### 文档
+
+- `docs/PEAKCAN_PLUGIN.md`：补充「候选顺序」说明、`diagnose` 命令与返回示例，
+  故障排查表新增 `WinError 10047` 一行（指向 PCAN-Basic 驱动与 `interface=pcan`）及推荐排查顺序。
+
+### 验证
+
+- 插件文件语法/结构检查通过（无 lint 错误）；候选顺序逻辑覆盖 Linux / Windows 两条分支。
+- 受限于当前环境（Linux，无 PCAN 硬件、无 Windows），硬件连接需在设备机上通过
+  `{"action": "diagnose"}` 的输出最终确认。
 
 ---
 

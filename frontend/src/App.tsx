@@ -11,6 +11,8 @@ import Executions from './pages/Executions'
 import Logs from './pages/Logs'
 import Reports from './pages/Reports'
 import Plugins from './pages/Plugins'
+import PluginEditor from './pages/PluginEditor'
+import SkillEditor from './pages/SkillEditor'
 import ModelConfig from './pages/ModelConfig'
 
 function App() {
@@ -28,6 +30,8 @@ function App() {
         <Route path="logs" element={<Logs />} />
         <Route path="reports" element={<Reports />} />
         <Route path="plugins" element={<Plugins />} />
+        <Route path="plugin-editor" element={<PluginEditor />} />
+        <Route path="skill-editor" element={<SkillEditor />} />
       <Route path="model-config" element={<ModelConfig />} />
       </Route>
     </Routes>

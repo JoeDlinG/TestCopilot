@@ -34,7 +34,17 @@
 - [ ] **GitHub Issue 增强项**（详见下方 Issues 表，均在 `feature/flow-enhancements` 分支推进）
       - [x] #1 流程图编辑器：节点复制/粘贴 + 节点类型切换（判断⇄循环⇄操作）
       - [x] #5 新增「初始化 / 重置」节点：自定义变量并赋值
-      - [ ] #4 所有节点支持输入参数与输出返回值（节点间数据串联）
+      - [x] #4 所有节点支持输入参数与输出返回值（节点间数据串联）
+
+- [x] **Skill 编辑器**：导入 / 修改 / 保存插件 Skill（Markdown）
+      - 左侧列表选 Skill，右侧编辑名称 / 协议标识 / 关键词 / 正文；改协议标识自动重命名文件
+      - 支持上传或粘贴 `.md` 导入，protocol 从 frontmatter 或文件名推断
+      - 后端新增 `POST/PUT/DELETE /api/plugins/skills[/...]`、`POST /api/plugins/skills/import`
+
+- [x] **插件编辑器 + 插件模板**：新建插件自动套用模板与示例
+      - 4 套模板（通信协议 / 设备驱动 / 数据解析 / 报告模板），占位符自动填充
+      - 在线编辑 `plugins/*.py`，语法校验 + 插件类识别
+      - 后端新增 `/api/plugin-editor/*`（templates / files / validate），前端页 `/plugin-editor`
 
 ---
 
@@ -42,18 +52,22 @@
 
 | Issue | 类型 | 标题 | 状态 |
 |-------|------|------|------|
-| #6 | bug | PeakCAN USB 连接失败：Windows 下 auto 错误回退 socketcan（WinError 10047） | ✅ 已修复 → v0.4.0 |
+| #6 | bug | PeakCAN USB 连接失败：Windows 下 auto 错误回退 socketcan（WinError 10047） | ✅ 已修复 → v0.4.0；v0.7.1 加固（多候选重试 + 错误可读化 + `diagnose`） |
 | #2 | bug | 循环节点缺少「执行命令 / 预期结果」配置（与操作节点不一致） | ✅ 已修复 → v0.4.0 |
 | #3 | bug | while 循环缺少进入/跳出条件；条件表达式缺示例与可用变量说明 | ✅ 已修复 → v0.4.0 |
 | #1 | enhancement | 流程图编辑器交互增强：节点复制/粘贴 + 节点类型切换 | ✅ 已实现 → v0.5.0（分支 `feature/flow-enhancements`） |
 | #5 | enhancement | 新增「初始化 / 重置」节点：自定义变量并赋值 | ✅ 已实现 → v0.6.0（分支 `feature/flow-enhancements`） |
-| #4 | enhancement | 所有节点支持输入参数与输出返回值，后续节点可引用前序输出 | 🔲 待办（增强分支） |
+| #4 | enhancement | 所有节点支持输入参数与输出返回值，后续节点可引用前序输出 | ✅ 已实现 → v0.7.0（分支 `feature/flow-enhancements`） |
 
 - **v0.4.0**（bug 修复版，master）：#6 / #2 / #3，备份 tag `backup-2026-10-05`
 - **v0.5.0**（增强版，分支 `feature/flow-enhancements`）：#1 节点复制/粘贴（Ctrl+C/V、Ctrl+D）+ 节点类型就地切换
 - **v0.6.0**（增强版，同分支）：#5 新增「初始化 / 重置」节点 — 变量定义（名称/类型/初始值/说明，支持增删改序），代码生成输出变量声明
   - 注：变量引用目前在**生成代码**路径生效；运行时执行引擎的变量解析随 #4 统一落地
-- 增强功能（#1 → #5 → #4）在新分支 `feature/flow-enhancements` 上逐个版本推进
+- **v0.7.0**（增强版，同分支）：#4 输入参数 / 输出返回值 + Skill 编辑器 + 插件编辑器（模板）
+  - #4 落地后，变量引用在**生成代码**与**运行时执行引擎**两条路径上行为一致
+- **v0.7.2**（增强版，同分支）：延时节点（ms）+ 节点复制按钮 + 用例生成多设备并行拆流程 +
+  执行界面双监控窗口 / 按设备多列步骤
+- 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
 
@@ -62,6 +76,61 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.7.2 — 延时节点 / 复制按钮 / 并行流程生成 / 执行界面多列（2026-10-05，分支 `feature/flow-enhancements`）
+
+- [x] **延时节点（单位 ms）**
+      - 画布新增「延时」节点（橙色 ⏱），节点弹窗用 InputNumber 配置毫秒数；节点卡片显示 `延时 N ms`
+      - **代码生成器**：`delay` 输出 `_cast(_r(...,ctx),'float')` + `time.sleep(/1000)`，并计入 passed 步骤
+      - **运行时执行引擎**：新分支 `asyncio.sleep`，支持 `{占位符}` 引用初始化变量 / 前序输出
+      - 用例生成 `_description_to_flow` 支持 `flow_type=delay`（`duration_ms`）
+- [x] **节点复制入口**：工具栏新增「复制 / 粘贴 / 创建副本」按钮（原有 Ctrl+C / Ctrl+V / Ctrl+D 保留）
+- [x] **「测试用例生成」Skill 更新**：新增 `delay` 节点类型；**多设备默认拆分为并行独立流程**
+      （不同设备的操作与指令分成各自独立的 test case，`devices_required` 单设备，共享 `并行:<组名>` tag）
+- [x] **测试执行界面**
+      - 实时通信监控拆成 **A / B 两个独立窗口**（各自设备选择、WebSocket 订阅、暂停/清空，默认不重复选同一设备）
+      - 执行步骤按**执行设备**分列显示（列数取决于并行流程用到的设备数，不限 2 列），每列带头部的通过/失败统计
+      - 节点编辑弹窗新增「执行设备」选择（绑定到指定设备，留空自动选择）
+- [x] 验证：`tsc --noEmit` 与 `npm run build` 通过；延时节点生成代码实测总时长 502 ms（300+200）；
+      通过 API 真实执行（start→初始化 `wait_ms=300`→延时 `{wait_ms}`→延时 200→end）→ 3 步 passed、耗时 1.1s
+
+### v0.7.1 — PeakCAN 连接鲁棒性加固（2026-10-05，分支 `feature/flow-enhancements`）
+
+> 针对 Issue #6 的残余问题：Windows 上仍报 `[WinError 10047] 使用了与请求的协议不兼容的地址`，
+> 且错误信息里看不到任何可定位的原因。
+
+- **根因**：`connect()` 只“盲试”一个组合，且只捕获 `can.exceptions.CanError`；
+  当 SocketCAN 在 Windows 上创建 AF_CAN socket 时 python-can 抛出的是裸 `OSError`，
+  直接穿透到 `device_service` → 前端只看到 `[WinError 10047]`。同时 `auto` 检测一旦
+  选错接口（例如 `can0` 存在但未 UP）就没有任何回退。
+- **修复**（`backend/plugins/peakcan_plugin.py` 1.1.0）：
+  - 改为**按序尝试候选列表**：显式 channel（按名字猜驱动）→ 已 UP 的 SocketCAN 接口 →
+     其它 SocketCAN 接口 → 检测到的 PCAN 通道 → 平台默认；Windows 上 SocketCAN 永不入选
+  - 捕获 `Exception`（不再只捕 `CanError`），**每个候选的失败原因逐条汇总**后抛出
+    `ConnectionError`，附平台修复提示 → 裸 `OSError` 不再可能到达 UI
+  - 新增 `_explain()`：把 `10047` / `Network is down` / 缺 PCAN DLL 等翻译成可操作的中文原因
+  - 新增 `{"action": "diagnose"}` 与 `{"action": "scan"}`（**断开状态可用**），
+    返回平台、python-can 版本、候选顺序、检测到的通道与上次失败原因
+  - 前端「连接失败」提示因此直接显示“尝试了哪些组合 + 各自为什么失败”
+  - 修复手册/Skill 里 `{"action": ...}` JSON 字符串命令在 UI 下发时被当成 `id#data` 解析
+    而报 `Invalid CAN string format` 的问题（现自动识别 JSON 对象命令）
+- 验证：插件文件语法/结构检查通过；候选顺序逻辑覆盖 Linux/Windows 两条分支
+  （受限于无 Windows + 无 PCAN 硬件，实际硬件连接需在设备机上按 `diagnose` 输出确认）
+
+### v0.7.0 — 节点输入/输出 + Skill 编辑器 + 插件编辑器（2026-10-05，分支 `feature/flow-enhancements`）
+
+- [x] **Issue #4：所有节点支持输入参数与输出返回值**
+      - 新增 `app/services/flow_context.py`：`{占位符}` 渲染、类型强转、安全表达式求值、
+        上下文播种（初始化节点变量）、输入解析（优先取前序同名输出，回退默认值）、输出收集
+      - **代码生成器**：注入 `_r / _cast / _p / _out / _cond` 运行时助手；命令与预期结果支持占位符；
+        条件/while/进入/跳出条件改用 `_cond()` 以流程上下文为变量求值
+      - **运行时执行引擎**：每一步先解析输入、渲染命令/预期，再按 `response / parsed_N / 解析字段名`
+        收集输出写入上下文；`step_completed` 广播附带 `context`
+      - **前端**：节点编辑弹窗新增「输入参数 / 输出返回值」Form.List（名称/类型/默认值或表达式/说明）
+        与「可用变量」标签（点击复制 `{变量名}`）；画布节点显示 in/out 徽标
+- [x] **Skill 编辑器**（`/skill-editor`）：列表 → 编辑 → 保存；`.md` 导入；改名即重命名文件
+- [x] **插件编辑器**（`/plugin-editor`）：4 套插件模板 + 占位符填充 + 源码编辑 + 语法/插件类校验
+- [x] 验证：4 套模板渲染后可编译；Skill 增改删 + 导入实测通过；`tsc --noEmit` 与 `npm run build` 通过
 
 ---
 
@@ -224,6 +293,8 @@
 
 | 优先级 | 计划项 | 说明 |
 |--------|--------|------|
+| P1 | **插件编辑器增强** | 模板自定义（用户保存自己的模板）、插件一键安装/重载、手册（manuals）编辑 |
+| P1 | 节点 I/O 可视化 | 画布上连线标注传递的变量、未定义变量实时提示 |
 | P1 | **自定义仪表盘增强** | 大屏自动轮播、响应式断点、Widget 内实时 WS 订阅 |
 | P0 | 端到端集成测试（已完成） | 打通"需求 → AI 用例 → 执行 → 报告"主链路 |
 | P0 | API Key 加密（已完成） | 生产环境必须，避免明文存储 |

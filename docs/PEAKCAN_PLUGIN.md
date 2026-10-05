@@ -4,7 +4,7 @@ PEAK-System PCAN-USB / PCAN-USB FD 硬件插件，用于 AITestLab 平台通过 
 
 - **插件名称**: PeakCAN USB
 - **协议名称**: `peakcan`
-- **版本**: `1.0.0`
+- **版本**: `1.1.0`
 - **硬件厂商**: [PEAK-System](https://www.peak-system.com/)
 - **支持协议**: CAN 2.0A/B, CAN FD (ISO 11898-1:2015)
 - **Python 库**: `python-can`
@@ -75,6 +75,8 @@ pip install python-can
 | `fd` | boolean | `false` | 是否启用 CAN FD 模式。需 PCAN-USB FD 或 PCAN-USB Pro FD 硬件。 |
 | `data_bitrate` | integer | `2000000` | CAN FD 数据域波特率 (bps)。仅在 `fd=true` 时生效。 |
 | `f_clock_mhz` | integer | — | 时钟频率 (MHz)。通常自动检测，仅在特殊硬件上手动指定。 |
+| `loopback` | boolean | `false` | **自检模式**：发出的帧由内核回环给自己，总线上没有其他节点也能收到 —— 用于验证「驱动 + python-can + 插件」链路是否正常。仅 socketcan 生效。 |
+| `skip_error_frames` | boolean | `true` | 接收时跳过错误帧。错误帧（无人应答 / 总线告警）不会被当成正常返回；排查总线时设为 `false`，每条返回会带 `error_desc` 说明。 |
 
 **配置示例：**
 
@@ -112,6 +114,19 @@ await plugin.connect(config)
 - 自动检测最佳驱动接口和通道：优先 SocketCAN → 回退 PCAN-Basic
 - 创建 `can.Bus` 实例并启动后台 `Notifier` + `BufferedReader` 监听
 - 返回 `True` 表示连接成功；失败抛出 `ConnectionError`
+
+**候选顺序（`interface="auto"` 时按序逐个尝试，直到某个组合能打开）**
+
+1. 显式配置的 `channel`（按名字猜驱动：`can0`/`vcan0` → socketcan，其它 → pcan）
+2. 自动检测到的 SocketCAN 接口（**Linux only**；`operstate != down` 的接口优先）
+3. 自动检测到的 PCAN-Basic / chardev 通道
+4. 平台默认值（Linux `socketcan/can0` → `pcan/PCAN_USBBUS1`；Windows 只用 `pcan/PCAN_USBBUS1`）
+
+> Windows 上 SocketCAN **永远不会**成为候选：早期版本的 `auto` 回退在所有平台都会选
+> `socketcan` + `can0`，于是 Windows 报出 `[WinError 10047] 使用了与请求的协议不兼容的地址`。
+
+连接失败时抛出 `ConnectionError`，消息里列出**每个候选组合的具体失败原因** + 平台修复提示，
+不会再出现无法定位的裸 `OSError`。
 
 ### 断开
 
@@ -222,6 +237,10 @@ status = plugin.get_status()
 {"action": "receive"}
 ```
 
+> 默认 `skip_error_frames=true`：错误帧会被跳过，因此「总线无人应答」不会伪装成一条正常响应。
+> 设为 `false`（设备配置或 `{"action": "receive", "timeout": 2}` 配合配置）即可看到错误帧，
+> 此时返回会额外带上 `error_desc`。
+
 #### 返回格式
 
 ```json
@@ -231,6 +250,7 @@ status = plugin.get_status()
   "is_remote_frame": false,
   "is_fd": false,
   "is_error_frame": false,
+  "is_rx": true,
   "dlc": 8,
   "data": "1122334455667788",
   "timestamp": 1.234
@@ -244,6 +264,8 @@ status = plugin.get_status()
 | `is_remote_frame` | boolean | 是否为远程帧 (RTR) |
 | `is_fd` | boolean | 是否为 CAN FD 帧 |
 | `is_error_frame` | boolean | 是否为错误帧 |
+| `is_rx` | boolean | `false` 表示这是自己发出的回环帧（`loopback` 自检模式） |
+| `error_desc` | string | 仅错误帧返回：错误原因的中文说明，如「无 ACK：发出的帧没有节点应答」「控制器状态变化；发送 ERROR-PASSIVE」 |
 | `dlc` | integer | 数据长度码 |
 | `data` | string | 数据内容的十六进制字符串 |
 | `timestamp` | float | 消息时间戳（秒） |
@@ -252,13 +274,56 @@ status = plugin.get_status()
 
 ### scan — 扫描可用通道
 
-扫描系统中所有可用的 PCAN 通道。
+扫描系统中所有可用的 PCAN / SocketCAN 通道。**无需先连接**即可调用（用于排查连接失败）。
 
 ```json
 {"action": "scan"}
 ```
 
-可通过 `get_status()` 的 `available_socketcan_channels` 和 `available_pcan_channels` 字段获取结果。
+返回 `get_status()` 的内容，其中 `available_socketcan_channels` / `available_socketcan_up_channels`
+（已 UP 的接口）/ `available_pcan_channels` 为检测结果。
+
+---
+
+### diagnose — 连接环境诊断
+
+输出连接排查所需的全部信息：平台、`python-can` 版本、候选尝试顺序、上次失败原因与平台修复提示。
+**无需先连接**即可调用。
+
+```json
+{"action": "diagnose"}
+```
+
+返回示例：
+
+```json
+{
+  "platform": "win32",
+  "is_windows": true,
+  "python_can_version": "4.3.1",
+  "available_pcan_channels": ["PCAN_USBBUS1"],
+  "available_socketcan_channels": [],
+  "available_socketcan_up_channels": [],
+  "candidate_order": ["pcan/PCAN_USBBUS1"],
+  "last_attempts": [],
+  "hint": "Windows 提示：SocketCAN 不可用，请安装 PEAK PCAN-Basic 驱动…"
+}
+```
+
+Linux 上还会附带**总线控制器状态**（`scan` 同样返回）：
+
+```json
+{
+  "bus_state": {"state": "ERROR-PASSIVE", "tx": 128, "rx": 0, "bitrate": 500000},
+  "bus_hint": "总线处于 ERROR-PASSIVE（tx=128 rx=0）：发出的帧没有节点应答，请确认①对端已上电且波特率相同②总线两端各有 120Ω 终端电阻③CAN_H/CAN_L 未接反。排查后按 `sudo ip link set can0 down && sudo ip link set can0 up type can bitrate 500000` 复位。"
+}
+```
+
+| `bus_state` | 含义 |
+|------|------|
+| `state=ERROR-ACTIVE` 且 `tx=rx=0` | 正常 |
+| `state=ERROR-PASSIVE` | 发出的帧无人应答（对端未上电 / 波特率不一致 / 缺终端电阻），发送会逐渐失效 |
+| `state=BUS-OFF` | 控制器已停止发送，需复位接口后再排查 |
 
 ---
 
@@ -387,10 +452,15 @@ await plugin.disconnect()
 
 | 问题 | 可能原因 | 解决方法 |
 |------|---------|---------|
-| `ConnectionError: Failed to open CAN channel` | can0 未启动 | `sudo ip link set can0 up type can bitrate 500000` |
+| `[WinError 10047] 使用了与请求的协议不兼容的地址` | **Windows 上用了 SocketCAN**（AF_CAN 仅 Linux 存在） | 安装 [PEAK PCAN-Basic 驱动](https://www.peak-system.com/quick/PCANDriver)，配置 `interface: "pcan"`、`channel: "PCAN_USBBUS1"`。1.1.0 起 Windows 不再自动选 socketcan，且会给出中文提示 |
+| `ConnectionError: PeakCAN 连接失败，已依次尝试 N 个…` | 所有候选接口/通道都打不开 | 看消息里每个候选的失败原因（已逐条列出）；先跑 `{"action": "diagnose"}` 看检测结果 |
+| `OSError: [Errno 19] No such device` / `Network is down` | `can0` 存在但未启动 | `sudo ip link set can0 up type can bitrate 500000` |
 | 设备未检测到 | `peak_usb` 模块未加载 | `sudo modprobe peak_usb` |
 | `ImportError: python-can is not installed` | 缺少依赖 | `pip install python-can` |
 | 无法发送 CAN FD 消息 | 硬件不支持 FD | 使用 PCAN-USB FD 或 PCAN-USB Pro FD |
 | SocketCAN 通道列表为空 | 系统无 CAN 接口 | 检查 USB 连接和内核模块；或安装 PCAN-Basic 驱动使用 pcan 接口 |
 | 发送成功但接收不到消息 | 总线无其他节点或未接终端电阻 | CAN 总线两端需 120Ω 终端电阻，且至少有两个节点 |
 | `buffer overflow` 警告 | 总线消息速率过高 | 降低消息速率或增大接收缓冲区 |
+
+> 排查顺序建议：① `{"action": "diagnose"}` → ② 按 `candidate_order` 确认插件将要尝试哪个接口 →
+> ③ 用 `{"action": "scan"}` 确认系统实际检测到的通道 → ④ 手动指定 `interface` + `channel` 后再连接。

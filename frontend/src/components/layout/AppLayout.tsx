@@ -31,6 +31,8 @@ const menuItems = [
   { key: '/logs', icon: <FileTextOutlined />, label: '通信日志' },
   { key: '/reports', icon: <BarChartOutlined />, label: '测试报告' },
   { key: '/plugins', icon: <AppstoreAddOutlined />, label: '插件管理' },
+  { key: '/plugin-editor', icon: <CodeOutlined />, label: '插件编辑器' },
+  { key: '/skill-editor', icon: <FileTextOutlined />, label: 'Skill 编辑器' },
   { key: '/model-config', icon: <SettingOutlined />, label: '模型配置' },
 ]
 

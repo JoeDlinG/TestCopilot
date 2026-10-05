@@ -19,17 +19,18 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import {
-  Card, Button, Space, message, Typography, Modal, Input, Form,
-  Select, Tag, Breadcrumb, Drawer, Tooltip, Divider,
+  Card, Button, Space, message, Typography, Modal, Input, InputNumber, Form,
+  Select, Tag, Breadcrumb, Drawer, Tooltip, Divider, Collapse,
 } from 'antd'
 import {
   SaveOutlined, ArrowLeftOutlined, PlusOutlined,
   PlayCircleOutlined, HomeOutlined, CodeOutlined,
   BranchesOutlined, SyncOutlined, ThunderboltOutlined,
-  DeleteOutlined, DatabaseOutlined,
+  DeleteOutlined, DatabaseOutlined, ImportOutlined, ExportOutlined,
+  CopyOutlined, SnippetsOutlined, DiffOutlined, ClockCircleOutlined,
 } from '@ant-design/icons'
-import { testCaseAPI } from '../services/api'
-import { extractData, handleApiError } from '../services/apiHelper'
+import { testCaseAPI, deviceAPI } from '../services/api'
+import { extractData, extractItems, handleApiError } from '../services/apiHelper'
 import type { TestCase } from '../types'
 
 const { Title, Text } = Typography
@@ -79,6 +80,7 @@ function ActionNode({ data }: NodeProps) {
     }}>
       <Handle type="target" position={Position.Top} style={{ background: '#0958d9' }} />
       {data.label}
+      <NodeIoBadges data={data} />
       <Handle type="source" position={Position.Bottom} style={{ background: '#0958d9' }} />
     </div>
   )
@@ -126,7 +128,10 @@ function LoopNode({ data, selected }: NodeProps) {
     }}>
       <SyncOutlined style={{ fontSize: 14 }} />
       <Handle type="target" position={Position.Top} style={{ background: '#531dab' }} />
-      {data.label}
+      <div>
+        {data.label}
+        <NodeIoBadges data={data} />
+      </div>
       <Handle type="source" position={Position.Bottom} style={{ background: '#531dab' }} />
     </div>
   )
@@ -155,8 +160,70 @@ function InitNode({ data, selected }: NodeProps) {
             {vars.length > 3 ? ` +${vars.length - 3}` : ''}
           </div>
         )}
+        <NodeIoBadges data={data} />
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: '#006d75' }} />
+    </div>
+  )
+}
+
+/** 延时节点：按毫秒等待，支持 {占位符} 引用前序节点输出 */
+function DelayNode({ data, selected }: NodeProps) {
+  const ms = (data as any)?.duration
+  return (
+    <div style={{
+      padding: '10px 18px', borderRadius: 6,
+      background: selected ? '#d46b08' : '#fa8c16',
+      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
+      textAlign: 'center', border: '2px solid #ad4e00',
+      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+    }}>
+      <ClockCircleOutlined style={{ fontSize: 14 }} />
+      <Handle type="target" position={Position.Top} style={{ background: '#ad4e00' }} />
+      <div>
+        <div>{data.label}</div>
+        <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
+          延时 {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+        </div>
+        <NodeIoBadges data={data} />
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: '#ad4e00' }} />
+    </div>
+  )
+}
+
+/**
+ * 节点上的输入参数 / 输出返回值徽标（Issue #4）。
+ * 让用户在画布上一眼看出哪些节点会产生可被后续引用的数据。
+ */
+function NodeIoBadges({ data }: { data: any }) {
+  const inputs: any[] = data?.inputs || []
+  const outputs: any[] = data?.outputs || []
+  if (inputs.length === 0 && outputs.length === 0) return null
+  return (
+    <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 3 }}>
+      {inputs.length > 0 && (
+        <span
+          title={`输入参数：${inputs.map((i) => i?.name).join(', ')}`}
+          style={{
+            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
+            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
+          }}
+        >
+          <ImportOutlined /> {inputs.length}
+        </span>
+      )}
+      {outputs.length > 0 && (
+        <span
+          title={`输出返回值：${outputs.map((o) => o?.name).join(', ')}`}
+          style={{
+            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
+            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
+          }}
+        >
+          <ExportOutlined /> {outputs.length}
+        </span>
+      )}
     </div>
   )
 }
@@ -172,6 +239,7 @@ const nodeTypes = {
   condition: ConditionNode,
   loop: LoopNode,
   init: InitNode,
+  delay: DelayNode,
   test_step: ActionNode,
   default: ActionNode,
   input: StartNode,
@@ -189,11 +257,22 @@ interface PaletteItem {
   icon: React.ReactNode
 }
 
+/** 输入参数 / 输出返回值支持的值类型（与后端 flow_context.VALUE_TYPES 对应） */
+const VALUE_TYPE_OPTIONS = [
+  { label: '字符串', value: 'string' },
+  { label: '整数', value: 'int' },
+  { label: '浮点', value: 'float' },
+  { label: '布尔', value: 'bool' },
+  { label: '十六进制', value: 'hex' },
+  { label: '任意', value: 'any' },
+]
+
 const PALETTE: PaletteItem[] = [
   { type: 'init', label: '初始化', color: '#13c2c2', icon: <DatabaseOutlined /> },
   { type: 'action', label: '操作', color: '#1677ff', icon: <ThunderboltOutlined /> },
   { type: 'condition', label: '判断', color: '#faad14', icon: <BranchesOutlined /> },
   { type: 'loop', label: '循环', color: '#9254de', icon: <SyncOutlined /> },
+  { type: 'delay', label: '延时', color: '#fa8c16', icon: <ClockCircleOutlined /> },
   { type: 'end', label: '结束', color: '#ff4d4f', icon: <PlayCircleOutlined /> },
 ]
 
@@ -204,6 +283,28 @@ const PALETTE: PaletteItem[] = [
 let _nodeIdCounter = 0
 function newNodeId(): string { _nodeIdCounter++; return `user_node_${_nodeIdCounter}_${Date.now()}` }
 function newEdgeId(): string { return `user_edge_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }
+
+/** 收集流程中的可用变量：初始化节点变量 + 各节点声明的输出返回值 */
+function collectFlowVariables(nds: Node[], stopBeforeId?: string) {
+  const found: { name: string; type?: string; source_label: string }[] = []
+  const seen = new Set<string>()
+  for (const n of nds) {
+    if (stopBeforeId && n.id === stopBeforeId) break
+    const cfg: any = (n as any).config || {}
+    const label = n.data?.label || n.id
+    const specs: any[] = [
+      ...(n.type === 'init' ? (cfg.variables || []) : []),
+      ...(cfg.outputs || []),
+    ]
+    for (const s of specs) {
+      const name = (s?.name || '').toString().trim()
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      found.push({ name, type: s?.type, source_label: label })
+    }
+  }
+  return found
+}
 
 export default function TestFlowEditor() {
   const { id } = useParams<{ id: string }>()
@@ -225,12 +326,32 @@ export default function TestFlowEditor() {
   // 复制 / 粘贴剪贴板（节点 + 其内部连线）
   const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null)
 
+  // Issue #4：本节点之前可用的变量（初始化变量 + 前序节点输出），
+  // 可用 {变量名} 形式写进命令 / 预期结果 / 条件表达式
+  const flowVars = collectFlowVariables(nodes, editNode?.id)
+
   // Code generation
   const [codeDrawerOpen, setCodeDrawerOpen] = useState(false)
   const [codeText, setCodeText] = useState('')
   const [codeLoading, setCodeLoading] = useState(false)
 
   const reactFlowRef = useRef<ReactFlowInstance | null>(null)
+
+  // 可选的执行设备列表 —— 节点可绑定到指定设备（并行流程会分列显示）
+  const [devices, setDevices] = useState<any[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await deviceAPI.list()
+        if (!cancelled) setDevices(extractItems(res))
+      } catch {
+        /* device list is optional here */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   // ---- Undo / Redo history stack ----
   const historyRef = useRef<{ nodes: Node[]; edges: Edge[] }[]>([])
@@ -351,12 +472,17 @@ export default function TestFlowEditor() {
       loop_type: config.loop_type || 'for',
       loop_variable: config.variable || 'i',
       loop_expression: config.condition || '3',
+      duration: config.duration ?? config.duration_ms ?? 1000,
+      device_id: config.device_id || '',
       node_type: node.type || 'action',
       variables: config.variables || [],
       entry_condition: config.entry_condition || '',
       entry_fail_action: config.entry_fail_action || 'skip',
       break_condition: config.break_condition || '',
       max_iterations: config.max_iterations || '',
+      // Issue #4：输入参数与输出返回值
+      inputs: config.inputs || [],
+      outputs: config.outputs || [],
     })
     setEditOpen(true)
   }, [editForm])
@@ -368,9 +494,18 @@ export default function TestFlowEditor() {
     pushHistory()
     setNodes((nds) => nds.map((n) => {
       if (n.id !== editNode.id) return n
+      const nextInputs = vals.inputs || []
+      const nextOutputs = vals.outputs || []
       const updated = {
         ...n,
-        data: { ...n.data, label: vals.label || n.data?.label },
+        data: {
+          ...n.data,
+          label: vals.label || n.data?.label,
+          // 同步到 data，画布节点上直接显示输入/输出徽标 / 延时毫秒数
+          duration: vals.duration,
+          inputs: nextInputs,
+          outputs: nextOutputs,
+        },
         config: {
           ...(n as any).config,
           command: vals.command || '',
@@ -384,7 +519,11 @@ export default function TestFlowEditor() {
           entry_fail_action: vals.entry_fail_action || 'skip',
           break_condition: vals.break_condition || '',
           max_iterations: vals.max_iterations || '',
+          duration: vals.duration ?? 1000,
+          device_id: vals.device_id || '',
           variables: vals.variables || [],
+          inputs: nextInputs,
+          outputs: nextOutputs,
         },
       }
       // 节点类型就地切换：不兼容字段保留在 config 中（切回可恢复）
@@ -452,17 +591,28 @@ export default function TestFlowEditor() {
         y: event.clientY,
       })
       const nid = newNodeId()
-      const labelMap: Record<string, string> = { init: '初始化', action: '新操作', condition: '判断条件', loop: '循环', end: '结束' }
+      const labelMap: Record<string, string> = {
+        init: '初始化', action: '新操作', condition: '判断条件',
+        loop: '循环', delay: '延时', end: '结束',
+      }
+      const defaultDuration = 1000
       const newNode = {
         id: nid,
         type: paletteType,
-        data: { label: labelMap[paletteType] || paletteType },
+        data: {
+          label: labelMap[paletteType] || paletteType,
+          duration: paletteType === 'delay' ? defaultDuration : undefined,
+          inputs: [],
+          outputs: [],
+        },
         position,
         config: paletteType === 'condition'
           ? { condition: 'True', true_label: '是', false_label: '否' }
           : paletteType === 'loop'
             ? { loop_type: 'for', variable: 'i', condition: '3' }
-            : { command: '', expected: '' },
+            : paletteType === 'delay'
+              ? { duration: defaultDuration }
+              : { command: '', expected: '' },
       } as FlowNode
       pushHistory()
       setNodes((nds) => [...nds, newNode])
@@ -648,6 +798,16 @@ export default function TestFlowEditor() {
             <Button icon={<ArrowLeftOutlined style={{ display: 'inline-block', transform: 'scaleX(-1)' }} />} disabled={!canRedo} onClick={redo}>重做</Button>
           </Tooltip>
           <Divider type="vertical" />
+          <Tooltip title="复制选中节点及其内部连线 Ctrl+C">
+            <Button icon={<CopyOutlined />} onClick={handleCopy}>复制</Button>
+          </Tooltip>
+          <Tooltip title="粘贴已复制的节点 Ctrl+V">
+            <Button icon={<SnippetsOutlined />} onClick={handlePaste}>粘贴</Button>
+          </Tooltip>
+          <Tooltip title="原地创建选中节点的副本 Ctrl+D">
+            <Button icon={<DiffOutlined />} onClick={handleDuplicate}>创建副本</Button>
+          </Tooltip>
+          <Divider type="vertical" />
           <Tooltip title="选中节点或边后点击删除（开始/结束不可删）">
             <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>删除选中</Button>
           </Tooltip>
@@ -727,7 +887,7 @@ export default function TestFlowEditor() {
         open={editOpen}
         onCancel={() => setEditOpen(false)}
         onOk={handleEditSave}
-        width={500}
+        width={760}
       >
         <Form form={editForm} layout="vertical">
           <Form.Item name="label" label="节点名称">
@@ -740,9 +900,23 @@ export default function TestFlowEditor() {
               { label: '判断（条件分支）', value: 'condition' },
               { label: '循环（for / while）', value: 'loop' },
               { label: '初始化（变量声明）', value: 'init' },
+              { label: '延时（等待毫秒）', value: 'delay' },
               { label: '结束', value: 'end' },
             ]} />
           </Form.Item>
+          {['action', 'loop', 'delay'].includes(nodeType) && (
+            <Form.Item name="device_id" label="执行设备"
+              extra="把这一步绑定到指定设备；留空则执行时自动选择已连接设备。「测试执行」页会按设备把步骤分列显示（并行流程各一列）">
+              <Select allowClear placeholder="自动选择"
+                options={devices.map((d: any) => ({ value: d.id, label: `${d.name} (${d.protocol})` }))} />
+            </Form.Item>
+          )}
+          {nodeType === 'delay' && (
+            <Form.Item name="duration" label="延时时长"
+              extra="单位：毫秒（ms）。填 1000 即等待 1 秒；需要变量化时长时可在代码里改成 {变量名}">
+              <InputNumber min={0} step={100} style={{ width: '100%' }} addonAfter="ms" />
+            </Form.Item>
+          )}
           {nodeType === 'init' && (
             <Form.Item label="变量定义"
               extra="流程开始时集中声明变量；生成代码后可供后续节点的命令与条件表达式引用">
@@ -868,6 +1042,132 @@ export default function TestFlowEditor() {
               )}
             </>
           )}
+
+          {/* ---- Issue #4：输入参数 / 输出返回值（所有可编辑节点通用） ---- */}
+          <Divider style={{ margin: '4px 0 8px' }} />
+          <Collapse
+            size="small"
+            ghost
+            items={[
+              {
+                key: 'io',
+                label: <Text strong style={{ fontSize: 13 }}>
+                  输入参数 / 输出返回值
+                  {((editNode as any)?.config?.inputs?.length ||
+                    (editNode as any)?.config?.outputs?.length)
+                    ? <Tag color="cyan" style={{ marginLeft: 8 }}>
+                        in {(editNode as any)?.config?.inputs?.length || 0} · out {(editNode as any)?.config?.outputs?.length || 0}
+                      </Tag>
+                    : null}
+                </Text>,
+                children: (
+                  <>
+                    <div style={{ marginBottom: 10 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        可用变量（点标签可复制占位符）：
+                      </Text>
+                      <div style={{ marginTop: 4 }}>
+                        {flowVars.length === 0 ? (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            暂无。在「初始化」节点声明变量，或给前序节点添加输出返回值
+                          </Text>
+                        ) : flowVars.map((v) => (
+                          <Tag
+                            key={v.name}
+                            color="geekblue"
+                            style={{ cursor: 'pointer', marginBottom: 4 }}
+                            onClick={() => {
+                              navigator.clipboard.writeText(`{${v.name}}`)
+                              message.success(`已复制 {${v.name}}`)
+                            }}
+                          >
+                            {`{${v.name}}`} ← {v.source_label}
+                          </Tag>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Form.Item label="输入参数"
+                      extra="同名优先取前序节点的输出；取不到时用默认值">
+                      <Form.List name="inputs">
+                        {(fields, { add, remove }) => (
+                          <>
+                            {fields.map((field) => (
+                              <Space key={field.key} align="baseline"
+                                style={{ display: 'flex', marginBottom: 4 }} wrap>
+                                <Form.Item {...field} name={[field.name, 'name']}
+                                  rules={[{ required: true, message: '参数名必填' }]}>
+                                  <Input placeholder="参数名" style={{ width: 110 }} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'default']}>
+                                  <Input placeholder="默认值" style={{ width: 110 }} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'desc']}>
+                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                </Form.Item>
+                                <Tooltip title="删除">
+                                  <Button size="small" type="text" icon={<DeleteOutlined />}
+                                    onClick={() => remove(field.name)} />
+                                </Tooltip>
+                              </Space>
+                            ))}
+                            <Button type="dashed" block size="small" icon={<PlusOutlined />}
+                              onClick={() => add({ name: '', type: 'string', default: '', desc: '' })}>
+                              添加输入参数
+                            </Button>
+                          </>
+                        )}
+                      </Form.List>
+                    </Form.Item>
+
+                    <Form.Item label="输出返回值"
+                      extra="表达式默认 response（本节点最后一次应答）；也可用 parsed_0 / 解析字段名">
+                      <Form.List name="outputs">
+                        {(fields, { add, remove }) => (
+                          <>
+                            {fields.map((field) => (
+                              <Space key={field.key} align="baseline"
+                                style={{ display: 'flex', marginBottom: 4 }} wrap>
+                                <Form.Item {...field} name={[field.name, 'name']}
+                                  rules={[{ required: true, message: '输出名必填' }]}>
+                                  <Input placeholder="输出名" style={{ width: 110 }} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'value']}>
+                                  <Input placeholder="response" style={{ width: 130 }} />
+                                </Form.Item>
+                                <Form.Item {...field} name={[field.name, 'desc']}>
+                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                </Form.Item>
+                                <Tooltip title="删除">
+                                  <Button size="small" type="text" icon={<DeleteOutlined />}
+                                    onClick={() => remove(field.name)} />
+                                </Tooltip>
+                              </Space>
+                            ))}
+                            <Button type="dashed" block size="small" icon={<PlusOutlined />}
+                              onClick={() => add({ name: '', type: 'string', value: 'response', desc: '' })}>
+                              添加输出返回值
+                            </Button>
+                          </>
+                        )}
+                      </Form.List>
+                    </Form.Item>
+
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      提示：后续节点的「执行命令 / 预期结果 / 条件表达式」中写 <code>{'{变量名}'}</code> 即可引用；
+                      生成代码与运行时执行使用同一套解析规则。
+                    </Text>
+                  </>
+                ),
+              },
+            ]}
+          />
         </Form>
       </Modal>
 

@@ -18,7 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.exceptions import AITestLabException
-from app.api import devices, ai, testcases, executions, logs, reports, plugins, dashboards, websocket
+from app.api import (
+    devices, ai, testcases, executions, logs, reports, plugins,
+    plugin_editor, dashboards, websocket,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,6 +94,7 @@ app.include_router(executions.router)
 app.include_router(logs.router)
 app.include_router(reports.router)
 app.include_router(plugins.router)
+app.include_router(plugin_editor.router)
 app.include_router(dashboards.router)
 
 # Register WebSocket router
