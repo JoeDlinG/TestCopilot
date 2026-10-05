@@ -18,6 +18,11 @@ PTY 数据流: pyserial(slave) <--kernel--> master(模拟器)
 
 import os
 import sys
+
+if os.name == "nt":
+    print("SKIP: test_serial_multiline 依赖 POSIX pty/termios，仅在 Linux/macOS 下运行。")
+    sys.exit(0)
+
 import time
 import asyncio
 import threading

@@ -242,7 +242,7 @@ export default function ResultParserConfig({
                 style={{ width: '100%', marginTop: 2 }}
                 value={item.data_type}
                 options={DATA_TYPES}
-                onChange={v => update(index, { data_type: v })}
+                onChange={(v: any) => update(index, { data_type: v })}
               />
             </Col>
             <Col span={3}>
@@ -268,7 +268,7 @@ export default function ResultParserConfig({
                 style={{ width: '100%', marginTop: 2 }}
                 value={item.unit}
                 options={UNITS}
-                onChange={v => update(index, { unit: v })}
+                onChange={(v: any) => update(index, { unit: v })}
               />
             </Col>
             <Col span={4}>
@@ -280,7 +280,7 @@ export default function ResultParserConfig({
                 style={{ width: '100%', marginTop: 2 }}
                 value={item.hex_field || 'all'}
                 options={HEX_FIELDS}
-                onChange={v => update(index, { hex_field: v })}
+                onChange={(v: any) => update(index, { hex_field: v })}
               />
             </Col>
           </Row>
@@ -308,7 +308,7 @@ export default function ResultParserConfig({
                   size="small" mode="tags" style={{ width: '100%' }}
                   placeholder="等于（可多选，或运算）"
                   value={item.conditions?.equals || []}
-                  onChange={v => updateCondition(index, { equals: v as string[] })}
+                  onChange={(v: any) => updateCondition(index, { equals: v as string[] })}
                   open={false}
                   suffixIcon={null}
                 />

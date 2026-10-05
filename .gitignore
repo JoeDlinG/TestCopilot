@@ -15,6 +15,10 @@ env/
 # Node.js / Frontend
 node_modules/
 frontend/dist/
+*.timestamp-*.mjs
+
+# Built frontend served by the backend (generated from frontend/dist)
+backend/static/
 
 # IDE
 .vscode/
@@ -52,6 +56,9 @@ Thumbs.db
 # CodeBuddy (project-level agent data)
 # Keep agent definitions but ignore team runtime data
 .codebuddy/teams/
+
+# WorkBuddy (project-level agent data & memory)
+.workbuddy/
 
 # Coverage
 coverage/

@@ -20,6 +20,7 @@ import os
 import select
 import socket
 import struct
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from app.services.plugin_service import BaseProtocolPlugin
@@ -27,6 +28,11 @@ from app.services.plugin_service import BaseProtocolPlugin
 logger = logging.getLogger(__name__)
 
 TRANSPORTS = ("tcpip", "usbtmc", "visa")
+
+# Cross-platform screenshot save location (Windows has no /tmp).
+_DEFAULT_SCREENSHOT = os.path.join(
+    tempfile.gettempdir(), "aitestlab_rigol", "screen.png"
+)
 
 #: ``:WAVeform:PREamble?`` field order (see RIGOL programming guide)
 PREAMBLE_KEYS = (
@@ -347,7 +353,7 @@ class RigolOscilloscopePlugin(BaseProtocolPlugin):
             fh.write(payload)
         return {"status": "ok", "path": path, "bytes": len(payload)}
 
-    async def screenshot(self, path: str = "/tmp/aitestlab_rigol/screen.png") -> Dict[str, Any]:
+    async def screenshot(self, path: str = _DEFAULT_SCREENSHOT) -> Dict[str, Any]:
         """Grab the screen as a PNG (``:DISPlay:DATA?``) and save it to ``path``."""
         if not self._connected:
             raise ConnectionError("RIGOL 示波器未连接")
@@ -490,7 +496,7 @@ class RigolOscilloscopePlugin(BaseProtocolPlugin):
             )
         if action in ("screenshot", "screen", "capture"):
             return await self.screenshot(
-                data.get("path") or "/tmp/aitestlab_rigol/screen.png"
+                data.get("path") or _DEFAULT_SCREENSHOT
             )
         if action in ("idn", "identify"):
             return await self._query("*IDN?")

@@ -208,9 +208,23 @@ class SerialInterface(CommunicationInterface):
 
     async def connect(self) -> None:
         import os
-        # Check if port exists before attempting connection
-        if self.port and not os.path.exists(self.port):
-            raise FileNotFoundError(f"Serial port not found: {self.port}. Please check device connection and drivers.")
+        import re
+        # Validate the port before attempting connection.
+        # - POSIX: serial devices are files under /dev (e.g. /dev/ttyACM0)
+        # - Windows: serial ports are named COM1..COM256 and are NOT files,
+        #   so os.path.exists() would wrongly reject valid ports like "COM3".
+        if self.port:
+            if os.name == "nt":
+                if not re.match(r"^COM\d{1,3}$", self.port, re.IGNORECASE):
+                    raise FileNotFoundError(
+                        f"Serial port not found: {self.port}. "
+                        "On Windows use a COM port name (e.g. COM3)."
+                    )
+            elif not os.path.exists(self.port):
+                raise FileNotFoundError(
+                    f"Serial port not found: {self.port}. "
+                    "Please check device connection and drivers."
+                )
 
         try:
             import serial

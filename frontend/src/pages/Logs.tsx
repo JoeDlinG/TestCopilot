@@ -153,7 +153,7 @@ export default function Logs() {
               placeholder="选择设备"
               style={{ width: '100%' }}
               value={filters.device_id}
-              onChange={(val) => setFilters({ ...filters, device_id: val })}
+              onChange={(val: any) => setFilters({ ...filters, device_id: val })}
               options={devices.map(d => ({ label: d.name, value: d.id }))}
             />
           </Col>
@@ -163,7 +163,7 @@ export default function Logs() {
               placeholder="选择接口类型"
               style={{ width: '100%' }}
               value={filters.interface_type}
-              onChange={(val) => setFilters({ ...filters, interface_type: val })}
+              onChange={(val: any) => setFilters({ ...filters, interface_type: val })}
               options={Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: v, value: k }))}
             />
           </Col>

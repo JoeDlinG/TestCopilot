@@ -47,7 +47,7 @@ export default function WidgetConfigDrawer({
               <Select
                 value={widget.config?.field || undefined}
                 placeholder="选择要盯的解析量"
-                onChange={(v) => setCfg({ field: v })}
+                onChange={(v: any) => setCfg({ field: v })}
                 options={fields.map((f) => ({ label: f, value: f }))}
                 showSearch
               />
@@ -67,7 +67,7 @@ export default function WidgetConfigDrawer({
                 mode="multiple"
                 value={widget.config?.fields || []}
                 placeholder="选择要绘制的曲线"
-                onChange={(v) => setCfg({ fields: v })}
+                onChange={(v: any) => setCfg({ fields: v })}
                 options={fields.map((f) => ({ label: f, value: f }))}
                 showSearch
               />
@@ -134,7 +134,7 @@ export default function WidgetConfigDrawer({
                 allowClear
                 value={widget.config?.device_id || undefined}
                 placeholder="全部设备"
-                onChange={(v) => setCfg({ device_id: v || '' })}
+                onChange={(v: any) => setCfg({ device_id: v || '' })}
                 options={(snapshot?.devices?.list || []).map((d: any) => ({
                   label: d.name, value: d.id,
                 }))}

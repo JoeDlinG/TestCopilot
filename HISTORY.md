@@ -573,14 +573,70 @@ AI 模型配置正常，对话有回复。但 AI 助手中点击「生成测试�
 
 ---
 
+## 2026-10-04 ~ 2026-10-05: Windows 兼容改造 + 打包为 Windows 安装包
+
+### 背景
+
+项目原先在 Linux 下开发，存在多处硬编码的 POSIX 路径与进程管理逻辑；本次目标：
+① 让后端/前端/插件/测试在 Windows 上可运行；② 依赖可在 Python 3.13 上安装；
+③ 产出开箱即用、内含全部测试运行环境的 Windows 安装包。
+
+### 一、Windows 兼容修复（5 处硬编码）
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `backend/app/communication/__init__.py` | `SerialInterface.connect()` 用 `os.path.exists(port)` 校验串口，Windows 下 COM 口不是文件 → 合法端口被拒 | 按平台分支：NT 用正则 `^COM\d{1,3}$` 校验后交 pyserial；POSIX 保持 `os.path.exists` |
+| `backend/app/main.py` | `/api/system/restart` 用 `start_new_session=True` + 日志写死 `/tmp` | Windows 改用 `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`；日志路径改 `tempfile.gettempdir()` |
+| `backend/restart_helper.py` | 依赖 `pkill`/`ss`/`lsof`/`fuser`/`killpg`，Windows 全不可用 | 重写跨平台：端口探测用 `netstat -ano`，杀进程树用 `taskkill /F /T`，按命令行匹配用 PowerShell `Get-CimInstance Win32_Process`；支持 frozen 重新拉起 exe |
+| `backend/plugins/mini_gateway100_plugin.py`、`example_plugin.py` | 默认串口写死 `/dev/ttyACM0`、`/dev/ttyUSB0` | 新增 `_default_port()`：NT 返回 `COM3`，POSIX 保持原路径 |
+| `backend/plugins/rigol_oscilloscope_plugin.py` | 截图默认路径 `/tmp/...`，Windows 无 `/tmp` | 改 `tempfile.gettempdir()/aitestlab_rigol/screen.png` |
+
+### 二、依赖可在 Python 3.13 安装（`backend/requirements.txt`）
+
+- 移除未被任何模块引用的 `pandas<2.0` / `numpy<1.25`（旧 pin 在 Py3.13 无 wheel）
+- `sqlalchemy 2.0.23 → 2.0.36`（2.0.23 在 Py3.13 触发 TypingOnly 断言）
+- `pydantic 2.5.2 → 2.10.6`、`pydantic-settings 2.1.0 → 2.7.1`（旧版依赖 pydantic-core 2.14.5，Py3.13 无预编译 wheel，强制源码编译 Rust）
+
+### 三、前端类型修复（`tsc` 严格模式）
+
+TypeScript 5.9 + `noImplicitAny` 下 13 处回调参数隐式 `any` → 全部补显式类型（`WidgetConfigDrawer.tsx`、`ResultParserConfig.tsx`、`CustomDashboard.tsx`、`Executions.tsx`、`Logs.tsx`、`ModelConfig.tsx`），前端 `build` EXIT=0。
+
+### 四、独立运行 / 打包支持
+
+- `backend/app/core/config.py`：新增 `_bundled_dir()`，frozen 时插件/静态资源从 `sys._MEIPASS` 解析；CORS 增加 `localhost:8000` / `127.0.0.1:8000`；新增 `STATIC_DIR`
+- `backend/app/main.py`：挂载 `static/` 托管前端产物 + SPA fallback，使单进程 `:8000` 同时提供 UI 与 API
+- `backend/run.py`：frozen 时 `chdir` 到 `%LOCALAPPDATA%\AITestLab`（可写数据目录），传 app 对象 + `reload=False`；dev 仍用 import string + `reload=True`；支持 `--restart-helper` 参数；启动后自动打开浏览器
+- 新增 `backend/aitestlab.spec`（PyInstaller onedir，hiddenimports 覆盖 uvicorn/fastapi/sqlalchemy/pydantic/anyio/httpx/pyvisa/can/serial win32 后端/aiosqlite 等，datas 打包 static+plugins+manuals+skills+文档）
+- 新增 `backend/make_icon.py`（PIL 生成 `static/aitestlab.ico`）
+- 新增 `backend/aitestlab.nsi`（NSIS 脚本，安装到 `%LOCALAPPDATA%\Programs\AITestLab`，含开始菜单/桌面快捷方式与卸载器）
+
+### 五、测试与验证
+
+- 后端 `compileall` + `import app.main` 通过；服务冒烟：`/api/health`、`/api/devices`、`/api/devices/discover`、`/api/plugins/discovered`（2 插件）、`/api/dashboards/snapshot`、`/api/testcases/` 全部正常
+- 单测：`test_codegen`、`test_can_comlog`、`test_mg100_skill_syntax`（改为相对路径）通过；`test_serial_multiline`（依赖 POSIX `pty`）加 Windows 跳过
+- 前端 `npm install` + `vite build` + `tsc --noEmit` 通过
+- 打包产物验证：`AITestLab.exe` 启动 → 服务/前端/API 全通，数据落 `%LOCALAPPDATA%\AITestLab`；NSIS 静默安装到测试目录成功（含 exe、Uninstaller、Python 运行时）
+
+### 交付产物
+
+- `backend/dist/AITestLab-Setup-v1.0.0.exe`（NSIS 安装包，~21 MB，内含全部测试运行环境）
+- `backend/dist/AITestLab/AITestLab.exe`（PyInstaller onedir 可直接运行版）
+
+### 备注
+
+`.gitignore` 新增忽略 `node_modules/`、`frontend/dist/`、`backend/static/`、`build/`、`dist/`、`.workbuddy/`；构建产物不入库（通过 Release 分发）。
+
+---
+
 ## 下一步计划
 - [ ] 端到端集成测试（AI → 流程图 → 编辑 → 代码 → 执行）
 - [ ] 性能优化（启动速度、大数据渲染）
 - [ ] 国际化（中英文界面切换）
-- [ ] 打包与安装程序制作
+- [x] 打包与安装程序制作（v1.0.0 Windows 安装包 ✅）
 - [ ] 更多仪器驱动的适配与测试
 - [ ] CI/CD 流水线搭建
+- [ ] 流程图编辑器能力增强（详见 GitHub Issues：复制粘贴/节点类型切换/循环节点动作/循环条件/节点输入输出/初始化节点）
 
 ---
 
-> 最后更新：2026-08-05
+> 最后更新：2026-10-05

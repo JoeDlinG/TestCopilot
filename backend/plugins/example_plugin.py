@@ -9,6 +9,13 @@ To use:
 
 from app.services.plugin_service import BaseProtocolPlugin
 
+import os
+
+
+def _default_port() -> str:
+    """Return a sensible default serial device path for the current OS."""
+    return "COM3" if os.name == "nt" else "/dev/ttyUSB0"
+
 
 class ModbusProtocolPlugin(BaseProtocolPlugin):
     """Example Modbus RTU protocol plugin."""
@@ -28,7 +35,7 @@ class ModbusProtocolPlugin(BaseProtocolPlugin):
         """
         try:
             # In production, use pymodbus or minimalmodbus
-            port = config.get("port", "/dev/ttyUSB0")
+            port = config.get("port", _default_port())
             baudrate = config.get("baudrate", 9600)
             self._connected = True
             self._connection = {
@@ -74,7 +81,7 @@ class ModbusProtocolPlugin(BaseProtocolPlugin):
                 "port": {
                     "type": "string",
                     "title": "Serial Port",
-                    "default": "/dev/ttyUSB0",
+                    "default": _default_port(),
                 },
                 "baudrate": {
                     "type": "integer",

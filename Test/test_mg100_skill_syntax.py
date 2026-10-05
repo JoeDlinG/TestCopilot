@@ -6,12 +6,16 @@ smoke-test the read-only commands on the real device.
 
 Run: python3 Test/test_mg100_skill_syntax.py
 """
+import os
 import re
 import sys
 
 import requests
 
-SKILL = "/home/joelj/Documents/TestCopilot/backend/plugins/skills/mini_gateway100_skill.md"
+SKILL = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "backend", "plugins", "skills", "mini_gateway100_skill.md",
+)
 BASE = "http://127.0.0.1:8000/api"
 
 KNOWN_CMDS = {
