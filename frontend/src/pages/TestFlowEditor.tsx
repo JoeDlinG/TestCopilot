@@ -189,6 +189,10 @@ export default function TestFlowEditor() {
   const [editForm] = Form.useForm()
   // 响应式监听循环类型：切换 for / while 时表单字段即时联动
   const loopType = Form.useWatch('loop_type', editForm) || 'for'
+  // 节点类型：可在编辑弹窗中就地切换（action / condition / loop / end）
+  const nodeType = Form.useWatch('node_type', editForm) || editNode?.type || 'action'
+  // 复制 / 粘贴剪贴板（节点 + 其内部连线）
+  const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null)
 
   // Code generation
   const [codeDrawerOpen, setCodeDrawerOpen] = useState(false)
@@ -316,6 +320,7 @@ export default function TestFlowEditor() {
       loop_type: config.loop_type || 'for',
       loop_variable: config.variable || 'i',
       loop_expression: config.condition || '3',
+      node_type: node.type || 'action',
       entry_condition: config.entry_condition || '',
       entry_fail_action: config.entry_fail_action || 'skip',
       break_condition: config.break_condition || '',
@@ -349,8 +354,30 @@ export default function TestFlowEditor() {
           max_iterations: vals.max_iterations || '',
         },
       }
+      // 节点类型就地切换：不兼容字段保留在 config 中（切回可恢复）
+      const nextType = vals.node_type || n.type
+      if (nextType !== n.type) {
+        const cfg = { ...(updated as any).config }
+        if (n.type === 'condition' && nextType === 'loop') {
+          // 判断 → 循环：条件表达式映射为循环条件（while）
+          cfg.loop_type = 'while'
+          cfg.variable = cfg.variable || 'i'
+        } else if (n.type === 'loop' && nextType === 'condition') {
+          // 循环 → 判断：循环条件映射为判断条件
+          cfg.condition = cfg.condition || 'True'
+        } else if (nextType === 'condition' || nextType === 'loop') {
+          // 操作 ⇄ 判断/循环：命令字段保留，仅补齐目标类型所需字段
+          cfg.condition = cfg.condition || 'True'
+          if (nextType === 'loop') {
+            cfg.loop_type = cfg.loop_type || 'for'
+            cfg.variable = cfg.variable || 'i'
+          }
+        }
+        ;(updated as any).config = cfg
+        ;(updated as any).type = nextType
+      }
       // For loops, store expression in condition
-      if (n.type === 'loop' && vals.loop_expression) {
+      if ((updated as any).type === 'loop' && vals.loop_expression) {
         (updated as any).config.condition = vals.loop_expression
       }
       return updated
@@ -454,6 +481,80 @@ export default function TestFlowEditor() {
     }
   }, [setEdges, pushHistory])
 
+  // ---- Copy / Paste / Duplicate ----
+  /** 深拷贝一组节点及其内部连线，生成新 id 并做位置偏移（避免完全重叠） */
+  const cloneSelection = useCallback((srcNodes: Node[], srcEdges: Edge[]) => {
+    const idMap: Record<string, string> = {}
+    const copies = srcNodes.map((n) => {
+      const nid = newNodeId()
+      idMap[n.id] = nid
+      return {
+        ...JSON.parse(JSON.stringify(n)),
+        id: nid,
+        selected: true,
+        position: { x: (n.position?.x || 0) + 40, y: (n.position?.y || 0) + 40 },
+      } as Node
+    })
+    const newEdges = srcEdges.map((e) => ({
+      ...JSON.parse(JSON.stringify(e)),
+      id: newEdgeId(),
+      source: idMap[e.source],
+      target: idMap[e.target],
+      selected: false,
+    })) as Edge[]
+    return { copies, newEdges }
+  }, [])
+
+  /** 选中节点（开始/结束节点不参与）及其内部连线 */
+  const selectedCopyable = useCallback(() => {
+    const picked = nodes.filter(
+      (n) => n.selected && n.type !== 'start' && n.type !== 'end' && n.type !== 'input' && n.type !== 'output',
+    )
+    const ids = new Set(picked.map((n) => n.id))
+    // 只保留两端都在选中集合内的内部连线，外部连线不复制
+    const inner = edges.filter((e) => ids.has(e.source) && ids.has(e.target))
+    return { picked, inner }
+  }, [nodes, edges])
+
+  const handleCopy = useCallback(() => {
+    const { picked, inner } = selectedCopyable()
+    if (picked.length === 0) {
+      message.info('请先选中要复制的节点（开始/结束节点不可复制）')
+      return
+    }
+    clipboardRef.current = {
+      nodes: JSON.parse(JSON.stringify(picked)),
+      edges: JSON.parse(JSON.stringify(inner)),
+    }
+    message.success(`已复制 ${picked.length} 个节点`)
+  }, [selectedCopyable])
+
+  const handlePaste = useCallback(() => {
+    const clip = clipboardRef.current
+    if (!clip || clip.nodes.length === 0) {
+      message.info('剪贴板为空，请先复制节点')
+      return
+    }
+    pushHistory()
+    const { copies, newEdges } = cloneSelection(clip.nodes, clip.edges)
+    setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...copies])
+    setEdges((eds) => [...eds, ...newEdges])
+    message.success(`已粘贴 ${copies.length} 个节点`)
+  }, [cloneSelection, pushHistory, setNodes, setEdges])
+
+  const handleDuplicate = useCallback(() => {
+    const { picked, inner } = selectedCopyable()
+    if (picked.length === 0) {
+      message.info('请先选中要创建副本的节点')
+      return
+    }
+    pushHistory()
+    const { copies, newEdges } = cloneSelection(picked, inner)
+    setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...copies])
+    setEdges((eds) => [...eds, ...newEdges])
+    message.success(`已创建 ${copies.length} 个副本`)
+  }, [cloneSelection, selectedCopyable, pushHistory, setNodes, setEdges])
+
   // ---- Keyboard shortcuts ----
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -470,10 +571,22 @@ export default function TestFlowEditor() {
         e.preventDefault()
         redo()
       }
+      if (isMod && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault()
+        handleCopy()
+      }
+      if (isMod && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault()
+        handlePaste()
+      }
+      if (isMod && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault()
+        handleDuplicate()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [handleDelete, undo, redo])
+  }, [handleDelete, undo, redo, handleCopy, handlePaste, handleDuplicate])
 
   // ---- Render ----
   return (
@@ -587,7 +700,16 @@ export default function TestFlowEditor() {
           <Form.Item name="label" label="节点名称">
             <Input />
           </Form.Item>
-          {editNode?.type === 'action' && (
+          <Form.Item name="node_type" label="节点类型"
+            extra="可就地切换类型；不兼容的字段会保留在配置中，切回后可恢复">
+            <Select options={[
+              { label: '操作（下发命令）', value: 'action' },
+              { label: '判断（条件分支）', value: 'condition' },
+              { label: '循环（for / while）', value: 'loop' },
+              { label: '结束', value: 'end' },
+            ]} />
+          </Form.Item>
+          {nodeType === 'action' && (
             <>
               <Form.Item name="command" label="执行命令">
                 <Input.TextArea rows={2} placeholder="发送到设备的命令" />
@@ -597,7 +719,7 @@ export default function TestFlowEditor() {
               </Form.Item>
             </>
           )}
-          {editNode?.type === 'condition' && (
+          {nodeType === 'condition' && (
             <>
               <Form.Item name="condition" label="条件表达式" rules={[{ required: true }]}
                 extra="Python 表达式，如 voltage > 10">
@@ -611,7 +733,7 @@ export default function TestFlowEditor() {
               </Form.Item>
             </>
           )}
-          {editNode?.type === 'loop' && (
+          {nodeType === 'loop' && (
             <>
               <Form.Item name="loop_type" label="循环类型" rules={[{ required: true }]}>
                 <Select options={[{ label: 'for (固定次数)', value: 'for' }, { label: 'while (条件循环)', value: 'while' }]} />
