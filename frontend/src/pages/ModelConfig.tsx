@@ -325,7 +325,7 @@ export default function ModelConfig() {
             <Select
               placeholder="选择模型供应商"
               options={Object.entries(PROVIDERS).map(([k, v]) => ({ label: v.label, value: k }))}
-              onChange={(val) => {
+              onChange={(val: any) => {
                 const info = PROVIDERS[val]
                 if (info?.default_base_url) form.setFieldValue('base_url', info.default_base_url)
                 // Wipe the model_name when switching providers so the user

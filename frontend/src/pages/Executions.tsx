@@ -737,7 +737,7 @@ export default function Executions() {
                   style={{ width: 190 }}
                   placeholder="选择设备"
                   value={selectedDevice || undefined}
-                  onChange={(v) => { setSelectedDevice(v); setComLines([]) }}
+                  onChange={(v: any) => { setSelectedDevice(v); setComLines([]) }}
                   options={devices.map((d: any) => ({
                     value: d.id,
                     label: `${d.name} (${d.protocol})`,

@@ -482,7 +482,7 @@ export default function CustomDashboard() {
             <Select
               style={{ minWidth: 200 }}
               value={current?.id}
-              onChange={(id) => {
+              onChange={(id: any) => {
                 const d = dashboards.find((x) => x.id === id)
                 if (d) { setCurrent(d); setDirty(false) }
               }}
@@ -500,7 +500,7 @@ export default function CustomDashboard() {
               style={{ minWidth: 260 }}
               placeholder="选择用例以驱动解析类组件"
               value={current?.data_source?.test_case_id || undefined}
-              onChange={(v) => patchCurrent({
+              onChange={(v: any) => patchCurrent({
                 data_source: { ...current!.data_source, test_case_id: v || null },
               })}
               options={testCases.map((t: any) => ({ label: t.name, value: t.id }))}

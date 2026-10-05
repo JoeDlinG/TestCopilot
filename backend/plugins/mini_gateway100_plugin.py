@@ -31,12 +31,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.services.plugin_service import BaseProtocolPlugin
 
 
 logger = logging.getLogger(__name__)
+
+
+def _default_port() -> str:
+    """Return a sensible default serial device path for the current OS."""
+    return "COM3" if os.name == "nt" else "/dev/ttyACM0"
 
 # Standard protocols handled by the communication layer (not plugins).
 _STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
@@ -244,7 +250,7 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                 "port": {
                     "type": "string",
                     "title": "串口号 / 设备路径",
-                    "default": "/dev/ttyACM0",
+                    "default": _default_port(),
                     "description": "Mini Gateway 100 USB-C CDC 串口设备路径",
                 },
                 "baudrate": {
