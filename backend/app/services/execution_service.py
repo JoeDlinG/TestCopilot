@@ -56,9 +56,39 @@ class ExecutionEngine:
     # whitespace/quotes and CJK punctuation may terminate a command.
     _CMD_RE = re.compile(r"@\d+_[A-Z]+(?:=[^;\s\"'，。]+)?;")
     _CMD_RE_LOOSE = re.compile(r"@\d+_[A-Z]+(?:=[^;\s\"'，。]+)?")
+    # Structured JSON device commands (PeakCAN and friends), e.g.
+    #   {"action": "send", "arbitration_id": 32, "data": [...]}
+    # Braces never nest in a command payload, so a simple non-greedy body is
+    # enough — the JSON is then validated with json.loads below.
+    _JSON_CMD_RE = re.compile(r"\{[^{}]*\}")
+    # python-can string form: "123#11223344AABBCCDD"
+    _CAN_STR_RE = re.compile(r"\b([0-9A-Fa-f]{1,8})#([0-9A-Fa-f]{0,128})\b")
+    # keys that identify a dict as a *device command*, not a random object
+    _JSON_CMD_KEYS = frozenset({
+        "action", "arbitration_id", "can_id", "is_extended_id", "is_fd",
+    })
     # "循环读取回复(例如 100 次)" -> repeat the command that many times
     _REPEAT_RE = re.compile(r"(?:循环|重复)[^0-9]{0,15}?(\d+)\s*次")
     MAX_REPEAT = 50
+
+    @classmethod
+    def _json_commands(cls, text: str) -> List[str]:
+        """Pull JSON device commands (``{"action": ...}``) out of free text.
+
+        PeakCAN commands are structured payloads, so they cannot be embedded in
+        a sentence the way ``@11_MSGREQ=...;`` can — without this the command
+        list stayed empty and the step was skipped ("不含可下发的设备指令").
+        """
+        found: List[str] = []
+        for m in cls._JSON_CMD_RE.finditer(text or ""):
+            raw = m.group(0)
+            try:
+                obj = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(obj, dict) and cls._JSON_CMD_KEYS & set(obj):
+                found.append(raw)
+        return found
 
     @classmethod
     def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
@@ -83,8 +113,13 @@ class ExecutionEngine:
         text = " ".join([
             str(config.get("command") or ""),
             str((node.get("data") or {}).get("label") or ""),
+            str(config.get("expected") or ""),
         ])
         found.extend(cls._CMD_RE.findall(text))
+        found.extend(cls._json_commands(text))
+        found.extend(
+            f"{m.group(1)}#{m.group(2)}" for m in cls._CAN_STR_RE.finditer(text)
+        )
         if not found:
             # tolerate commands written without the trailing ";"
             found.extend(cls._CMD_RE_LOOSE.findall(text))
@@ -106,9 +141,45 @@ class ExecutionEngine:
     @staticmethod
     def _infer_protocol(command: str) -> Optional[str]:
         """Guess the device protocol from a command string."""
-        if re.match(r"^@\d+_", command):
+        text = (command or "").strip()
+        if re.match(r"^@\d+_", text):
+            return "mini_gateway100"
+        if text.startswith("{"):
+            try:
+                obj = json.loads(text)
+            except (ValueError, TypeError):
+                return None
+            if isinstance(obj, dict):
+                if {"arbitration_id", "can_id", "is_extended_id", "is_fd"} & set(obj):
+                    return "peakcan"
+                action = str(obj.get("action") or "").strip().lower()
+                if action in (
+                    "send", "send_can", "send_canfd", "send_message",
+                    "send_periodic", "stop_periodic",
+                ):
+                    return "peakcan"
+            return None
+        # python-can string form: 123#11223344
+        if re.match(r"^[0-9A-Fa-f]{1,8}#[0-9A-Fa-f]*$", text):
+            return "peakcan"
+        if text.startswith("@"):
             return "mini_gateway100"
         return None
+
+    def _desired_protocols(
+        self, config: Dict[str, Any], commands: List[str]
+    ) -> set:
+        """Protocols the commands / node configuration expect a device for."""
+        desired = {p for p in (self._infer_protocol(c) for c in commands) if p}
+        cfg_protocol = str((config or {}).get("device_protocol") or "").strip()
+        if cfg_protocol:
+            desired.add(cfg_protocol)
+        params = (config or {}).get("parameters") or {}
+        if isinstance(params, dict):
+            proto = str(params.get("protocol") or params.get("device_protocol") or "")
+            if proto.strip():
+                desired.add(proto.strip())
+        return desired
 
     async def _resolve_device(
         self,
@@ -116,15 +187,21 @@ class ExecutionEngine:
         options: Optional[Dict[str, Any]],
         commands: List[str],
     ) -> Optional[str]:
-        """Pick the connected device that should execute these commands."""
+        """Pick the connected device that should execute these commands.
+
+        The device is resolved from, in order: an explicit ``device_id``, the
+        protocol the commands imply, and only then "any connected device".
+        When a protocol *is* identified but no matching device is connected the
+        answer is ``None`` — sending a PeakCAN payload to an unrelated device is
+        exactly how a test could "pass" without the CAN frame ever leaving the
+        adapter.
+        """
         for source in (config or {}, options or {}):
             did = source.get("device_id")
             if did:
                 return did
 
-        protocols = {
-            p for p in (self._infer_protocol(c) for c in commands) if p
-        }
+        desired = self._desired_protocols(config, commands)
 
         async with async_session() as session:
             result = await session.execute(
@@ -134,11 +211,181 @@ class ExecutionEngine:
 
         if not devices:
             return None
-        if protocols:
+        for proto in desired:
             for dev in devices:
-                if dev.protocol in protocols:
+                if (dev.protocol or "").lower() == proto.lower():
                     return dev.id
+        if desired:
+            return None
         return devices[0].id
+
+    async def _missing_device_hint(
+        self, config: Dict[str, Any], commands: List[str]
+    ) -> str:
+        """Human readable reason for an unresolvable device."""
+        desired = self._desired_protocols(config, commands)
+        if not desired:
+            return "没有已连接的设备可下发指令"
+        names = ", ".join(sorted(desired))
+        return f"未找到已连接的 {names} 设备，命令未下发"
+
+    # ------------------------------------------------------------------ #
+    # Flow graph helpers (edges are followed instead of a flat node list)
+    # ------------------------------------------------------------------ #
+
+    # Hard ceilings so a malformed flow can never hang a run forever.
+    MAX_NODE_EXECUTIONS = 2000
+    MAX_LOOP_ITERATIONS = 1000
+
+    # Edge labels that identify the body / the exit of a loop.
+    _BODY_LABELS = {"body", "loop", "循环体", "true", "yes", "y", "是", "1"}
+    _EXIT_LABELS = {
+        "exit", "after", "loop_exit", "结束", "循环结束",
+        "false", "no", "n", "否", "0",
+    }
+    # Edge labels of a condition node.
+    _TRUE_LABELS = {"true", "yes", "y", "是", "通过", "pass", "ok", "1"}
+    _FALSE_LABELS = {"false", "no", "n", "否", "不通过", "fail", "ng", "0"}
+
+    @classmethod
+    def _loop_bounds(
+        cls,
+        node_map: Dict[str, Any],
+        adj: Dict[str, List[tuple]],
+        incoming: Dict[str, int],
+        node_id: str,
+    ) -> tuple:
+        """Return ``(body_start, body_end)`` of a loop node — or (None, None).
+
+        ``body_end`` is the node the loop *resumes from* after iterating, so the
+        walking code never re-enters the body through the exit edge.
+        """
+        succ = adj.get(node_id) or []
+        if not succ:
+            return None, None
+
+        explicit = [t for t, lbl in succ if lbl in cls._BODY_LABELS]
+        if explicit:
+            body_start = explicit[0]
+        elif len(succ) == 1:
+            candidate = succ[0][0]
+            cand_succ = adj.get(candidate) or []
+            # Canonical shape drawn by the generator: 循环 → 循环体 → 合并点，
+            # where the merge point has several incoming edges. Anything else is
+            # treated as a plain successor (no body) — we never loop the rest of
+            # the flow by accident.
+            if len(cand_succ) == 1 and incoming.get(cand_succ[0][0], 0) >= 2:
+                body_start = candidate
+            else:
+                return None, None
+        else:
+            exit_targets = [t for t, lbl in succ if lbl in cls._EXIT_LABELS]
+            body = [t for t, _ in succ if t not in exit_targets]
+            if not body:
+                return None, None
+            body_start = body[0]
+
+        body_succ = adj.get(body_start) or []
+        for tgt, lbl in body_succ:
+            if lbl in cls._EXIT_LABELS:
+                return body_start, tgt
+        if len(body_succ) == 1:
+            return body_start, body_succ[0][0]
+        return body_start, None
+
+    @classmethod
+    def _loop_iterations(
+        cls, node: Dict[str, Any], ctx: Dict[str, Any]
+    ) -> int:
+        """Iteration count of a loop node.
+
+        Returns ``-1`` for a ``while`` loop whose condition can only be judged
+        at run time; the walker then evaluates it before every round.
+        """
+        config = node.get("config") or {}
+        for key in ("repeat", "count", "times", "iterations"):
+            value = config.get(key)
+            if value not in (None, ""):
+                try:
+                    count = int(flow_context.coerce_value(value, "int"))
+                    return max(1, min(count, cls.MAX_LOOP_ITERATIONS))
+                except (TypeError, ValueError):
+                    continue
+
+        loop_type = str(config.get("loop_type") or "for").strip().lower()
+        expr = str(
+            config.get("loop_expression") or config.get("condition") or ""
+        ).strip()
+        if loop_type == "while":
+            return -1
+
+        value = flow_context.safe_eval(expr, ctx) if expr else None
+        if isinstance(value, bool):
+            count = 1 if value else 0
+        elif isinstance(value, int):
+            count = value
+        else:
+            try:
+                count = len(value)
+            except TypeError:
+                count = 1
+        return max(1, min(int(count), cls.MAX_LOOP_ITERATIONS))
+
+    async def _iterate_loop(
+        self,
+        walk,
+        body_start: Optional[str],
+        body_end: Optional[str],
+        iterations: int,
+        ctx: Dict[str, Any],
+        node: Dict[str, Any],
+    ) -> int:
+        """Run the loop body, returning how many rounds were executed."""
+        if not body_start:
+            return 0
+        config = node.get("config") or {}
+        var = str(config.get("variable") or "i")
+        condition = str(
+            config.get("loop_expression") or config.get("condition") or ""
+        ).strip()
+        stop_at = {body_end} if body_end else set()
+
+        rounds = 0
+        for round_index in range(self.MAX_LOOP_ITERATIONS):
+            if iterations < 0:
+                # while: the condition decides, using the loop variable
+                if not flow_context.eval_condition(condition, ctx):
+                    break
+            elif round_index >= iterations:
+                break
+            ctx[var] = round_index + 1
+            await walk(body_start, stop_at)
+            rounds += 1
+        return rounds
+
+    @classmethod
+    def _branch_target(
+        cls, succ: List[tuple], outcome: Optional[bool]
+    ) -> Optional[str]:
+        """Pick the outgoing edge of a condition node for *outcome*."""
+        if not succ:
+            return None
+        if outcome is None:
+            # unjudgeable condition: follow the first edge, as documented
+            return succ[0][0]
+        wanted = cls._TRUE_LABELS if outcome else cls._FALSE_LABELS
+        for tgt, lbl in succ:
+            if lbl in wanted:
+                return tgt
+        unlabelled = [t for t, lbl in succ if not lbl]
+        if unlabelled:
+            # both edges unlabelled: creation order is true-then-false
+            return unlabelled[0] if outcome else (
+                unlabelled[1] if len(unlabelled) > 1 else unlabelled[0]
+            )
+        return succ[0][0] if outcome else (
+            succ[1][0] if len(succ) > 1 else succ[0][0]
+        )
 
     async def start_execution(
         self,
@@ -164,6 +411,14 @@ class ExecutionEngine:
         if flow and flow.nodes:
             try:
                 nodes = json.loads(flow.nodes) if isinstance(flow.nodes, str) else flow.nodes
+            except json.JSONDecodeError:
+                pass
+
+        # Parse edges — the runtime walks the graph, so branches / loops need them
+        edges = []
+        if flow and flow.edges:
+            try:
+                edges = json.loads(flow.edges) if isinstance(flow.edges, str) else flow.edges
             except json.JSONDecodeError:
                 pass
 
@@ -194,7 +449,7 @@ class ExecutionEngine:
         # step results.  Give the task a session of its own.
         task_db = async_session()
         task = asyncio.create_task(
-            self._run_execution(task_db, execution, nodes, options)
+            self._run_execution(task_db, execution, nodes, edges, options)
         )
         self._running_executions[execution.id] = task
 
@@ -275,6 +530,7 @@ class ExecutionEngine:
         db: AsyncSession,
         execution: TestExecution,
         nodes: List[Dict[str, Any]],
+        edges: Optional[List[Dict[str, Any]]] = None,
         options: Optional[Dict[str, Any]] = None,
     ):
         """Run the flow in the background, owning the session it is given.
@@ -285,7 +541,7 @@ class ExecutionEngine:
         it, since nobody else will.
         """
         try:
-            await self._execute_flow(db, execution, nodes, options)
+            await self._execute_flow(db, execution, nodes, edges, options)
         finally:
             try:
                 await db.close()
@@ -297,9 +553,15 @@ class ExecutionEngine:
         db: AsyncSession,
         execution: TestExecution,
         nodes: List[Dict[str, Any]],
+        edges: Optional[List[Dict[str, Any]]] = None,
         options: Optional[Dict[str, Any]] = None,
     ):
-        """Internal: Run the test flow execution."""
+        """Internal: Run the test flow execution.
+
+        The flow is walked along its edges (not as a flat list), so condition
+        nodes really take one branch and loop nodes really repeat their body —
+        the same semantics the code generator implements.
+        """
         execution_id = execution.id
         stop_on_error = (options or {}).get("stop_on_error", True)
         timeout_per_step = (options or {}).get("timeout_per_step", 30000)
@@ -311,16 +573,51 @@ class ExecutionEngine:
                 if n.get("type") not in ("start", "end")
             ]
 
+            # ---- graph: node lookup + adjacency (P2) ----
+            node_map: Dict[str, Dict[str, Any]] = {
+                n.get("id"): n for n in nodes if n.get("id")
+            }
+            adj: Dict[str, List[tuple]] = {}
+            incoming: Dict[str, int] = {}
+            for edge in edges or []:
+                src, tgt = edge.get("source"), edge.get("target")
+                if not src or not tgt:
+                    continue
+                label = str(edge.get("label") or "").strip().lower()
+                adj.setdefault(src, []).append((tgt, label))
+                incoming[tgt] = incoming.get(tgt, 0) + 1
+
+            # step_index stays the *plan position* of the node, so the UI's step
+            # list keeps matching the drawn flow even with branches/loops.
+            step_index_of: Dict[str, int] = {
+                n.get("id"): i + 1 for i, n in enumerate(step_nodes)
+            }
+
+            def index_of(node_id: str) -> int:
+                return step_index_of.get(node_id, len(step_index_of) + 1)
+
+            state: Dict[str, Any] = {
+                "rows": {},                 # node_id -> TestStepResult
+                "visits": {},               # node_id -> visit count
+                "loop_iterations": {},      # node_id -> iteration count
+                "loop_command_mode": {},    # node_id -> True when the loop node
+                                            # itself carries the commands
+                "condition_outcome": None,
+                "executions": 0,
+                "stopped": False,
+            }
+
             # 流程上下文：初始化节点声明的变量 + 各节点产生的输出返回值（#4）
             ctx: Dict[str, Any] = flow_context.seed_context(nodes)
 
-            for idx, node in enumerate(step_nodes):
-                node_id = node.get("id", f"node_{idx}")
+            async def execute_node(node: Dict[str, Any], step_index: int) -> str:
+                """Execute one node, persist + broadcast its result, return status."""
+                node_id = node.get("id", f"node_{step_index}")
                 node_type = node.get("type", "test_step")
                 label = (
                     node.get("label")
                     or (node.get("data") or {}).get("label")
-                    or f"Step {idx + 1}"
+                    or f"Step {step_index}"
                 )
                 config = node.get("config", {}) or {}
                 commands = self._extract_commands(node)
@@ -333,34 +630,50 @@ class ExecutionEngine:
                     config.get("expected") or config.get("expected_result") or "", ctx
                 )
 
-                # Create step result
-                step_result = TestStepResult(
-                    execution_id=execution_id,
-                    step_index=idx + 1,
-                    node_id=node_id,
-                    node_type=node_type,
-                    label=label,
-                    status=StepStatus.RUNNING.value,
-                    command=" | ".join(commands) or config.get("command", ""),
-                    expected=expected_text,
-                    started_at=datetime.utcnow(),
-                )
-
-                async with db as session:
-                    session.add(step_result)
-                    await session.commit()
+                # Create (or reuse) the step result. A loop body is visited once
+                # per iteration: reusing the row keeps the step list aligned
+                # with the flow plan instead of exploding into N duplicate rows.
+                visit = state["visits"].get(node_id, 0) + 1
+                state["visits"][node_id] = visit
+                step_result = state["rows"].get(node_id)
+                if step_result is None:
+                    step_result = TestStepResult(
+                        execution_id=execution_id,
+                        step_index=step_index,
+                        node_id=node_id,
+                        node_type=node_type,
+                        label=label,
+                        status=StepStatus.RUNNING.value,
+                        command=" | ".join(commands) or config.get("command", ""),
+                        expected=expected_text,
+                        started_at=datetime.utcnow(),
+                    )
+                    state["rows"][node_id] = step_result
+                    async with db as session:
+                        session.add(step_result)
+                        await session.commit()
+                else:
+                    # repeat visit: reset the row for this round
+                    step_result.status = StepStatus.RUNNING.value
+                    step_result.command = " | ".join(commands) or config.get("command", "")
+                    step_result.expected = expected_text
+                    step_result.error_message = None
 
                 await broadcast_execution_update(execution_id, {
                     "type": "step_started",
                     "execution_id": execution_id,
-                    "step_index": idx + 1,
+                    "step_index": step_index,
                     "node_id": node_id,
                     "label": label,
+                    "visit": visit,
                 })
 
                 # Execute step
                 try:
-                    if node_type in self.COMMAND_NODE_TYPES:
+                    if (
+                        node_type in self.COMMAND_NODE_TYPES
+                        or (node_type == "loop" and state["loop_command_mode"].get(node_id))
+                    ):
                         device_id = await self._resolve_device(config, options, commands)
 
                         if not commands:
@@ -373,12 +686,12 @@ class ExecutionEngine:
                             # Never report success for a step that did not
                             # actually run - that is how tests "passed" while
                             # nothing was ever sent to the device.
-                            reason = "没有已连接的设备可下发指令"
+                            reason = await self._missing_device_hint(config, commands)
                             step_result.status = StepStatus.FAILED.value
                             step_result.actual = f"[未执行] {reason}"
                             step_result.error_message = reason
                             logger.warning(
-                                f"Step {idx + 1} of {execution_id} not executed: {reason}"
+                                f"Step {step_index} of {execution_id} not executed: {reason}"
                             )
                         else:
                             results = []
@@ -442,7 +755,7 @@ class ExecutionEngine:
                                         f"结果解析判断未通过: {summary}"
                                     )
                                     logger.warning(
-                                        f"Step {idx + 1} of {execution_id} "
+                                        f"Step {step_index} of {execution_id} "
                                         f"failed judgement: {summary}"
                                     )
                             # 输出返回值写入上下文，供后续节点引用
@@ -476,9 +789,20 @@ class ExecutionEngine:
                         step_result.actual = (
                             f"Condition evaluated: {cond_expr} -> {outcome}"
                         )
+                        # 分支判定结果交给 walker 决定走哪条边
+                        state["condition_outcome"] = outcome
                     elif node_type == "loop":
-                        step_result.status = StepStatus.PASSED.value
-                        step_result.actual = "Loop completed"
+                        # 循环节点本身不下发指令（循环体节点才是真正执行的动作）
+                        iterations = state["loop_iterations"].get(node_id)
+                        if iterations is None:
+                            step_result.status = StepStatus.SKIPPED.value
+                            step_result.actual = "[跳过] 循环控制节点，不下发设备指令"
+                        elif iterations < 0:
+                            step_result.status = StepStatus.PASSED.value
+                            step_result.actual = "循环控制：按条件迭代（while）"
+                        else:
+                            step_result.status = StepStatus.PASSED.value
+                            step_result.actual = f"循环共执行 {iterations} 轮"
                     else:
                         step_result.status = StepStatus.PASSED.value
                         step_result.actual = "Step completed"
@@ -487,19 +811,24 @@ class ExecutionEngine:
                 except Exception as e:
                     step_result.status = StepStatus.FAILED.value
                     step_result.error_message = str(e)
-                    logger.error(f"Step {idx + 1} failed: {e}")
+                    logger.error(f"Step {step_index} failed: {e}")
 
                     await broadcast_execution_update(execution_id, {
                         "type": "step_failed",
                         "execution_id": execution_id,
-                        "step_index": idx + 1,
+                        "step_index": step_index,
                         "error": str(e),
                     })
 
                     if stop_on_error:
-                        break
+                        state["stopped"] = True
 
                 finally:
+                    if visit > 1:
+                        # 记下这是第几轮，便于在界面上看出循环轨迹
+                        step_result.actual = (
+                            f"[第 {visit} 轮] {step_result.actual or ''}"
+                        ).strip()
                     step_result.completed_at = datetime.utcnow()
                     if step_result.started_at:
                         step_result.duration_ms = int(
@@ -513,13 +842,92 @@ class ExecutionEngine:
                 await broadcast_execution_update(execution_id, {
                     "type": "step_completed",
                     "execution_id": execution_id,
-                    "step_index": idx + 1,
+                    "step_index": step_index,
                     "status": step_result.status,
                     "actual": step_result.actual,
                     "parsed_results": _safe_json(step_result.parsed_results),
                     # 当前流程上下文（输入参数 / 输出返回值），便于在界面上追踪串联
                     "context": dict(ctx),
                 })
+                return step_result.status
+
+            # ---- graph walk (P2): follow edges, honour branches & loops ----
+            start_id = None
+            for n in nodes:
+                if (n.get("type") or "") in ("start", "input"):
+                    start_id = n.get("id")
+                    break
+            if start_id is None:
+                for n in nodes:
+                    if not incoming.get(n.get("id")):
+                        start_id = n.get("id")
+                        break
+            if start_id is None and nodes:
+                start_id = nodes[0].get("id")
+
+            async def walk(from_id: Optional[str], stop_at: set) -> Optional[str]:
+                """Execute nodes from *from_id* until a node in *stop_at* (or the end).
+
+                Returns the id it stopped at so the caller (loop handling) can
+                continue the flow from there.
+                """
+                current = from_id
+                while current and current not in stop_at:
+                    state["executions"] += 1
+                    if state["executions"] > self.MAX_NODE_EXECUTIONS:
+                        raise RuntimeError(
+                            "流程执行步数超过上限，请检查是否存在无法退出的循环"
+                        )
+                    node = node_map.get(current)
+                    if node is None:
+                        return None
+                    node_type = (node.get("type") or "action")
+                    succ = adj.get(current, [])
+
+                    if node_type in ("start", "end", "input"):
+                        current = succ[0][0] if succ else None
+                        continue
+
+                    if node_type == "loop":
+                        body_start, body_end = self._loop_bounds(
+                            node_map, adj, incoming, current
+                        )
+                        state["loop_command_mode"][current] = body_start is None
+                        iterations = self._loop_iterations(node, ctx)
+                        state["loop_iterations"][current] = iterations
+                        status = await execute_node(node, index_of(current))
+                        if state["stopped"]:
+                            return None
+                        if body_start is not None and status != StepStatus.SKIPPED.value:
+                            rounds = await self._iterate_loop(
+                                walk, body_start, body_end, iterations, ctx, node
+                            )
+                            # 让界面上看到真实的循环轮数（while 只有跑完才知道）
+                            loop_row = state["rows"].get(current)
+                            if loop_row is not None and rounds >= 0:
+                                loop_row.actual = f"循环共执行 {rounds} 轮"
+                                async with db as session:
+                                    session.add(loop_row)
+                                    await session.commit()
+                        current = body_end if body_start and body_end else (
+                            succ[0][0] if succ else None
+                        )
+                        continue
+
+                    status = await execute_node(node, index_of(current))
+                    if state["stopped"]:
+                        return None
+
+                    if node_type == "condition":
+                        current = self._branch_target(
+                            succ, state.pop("condition_outcome", None)
+                        )
+                    else:
+                        current = succ[0][0] if succ else None
+                return current
+
+            if start_id:
+                await walk(start_id, set())
 
             # Finalize execution
             async with db as session:

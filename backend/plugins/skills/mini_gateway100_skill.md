@@ -106,7 +106,13 @@ keywords: mini gateway, mini gateway 100, minigateway, mg100, 网关, gateway
 
 ## 3. 周期 / 定时发送（PROCESS）
 
-每隔固定时间重复执行某个动作时，**必须**使用 PROCESS 功能（MG100 无其它定时发送手段）。
+每隔固定时间重复执行某个动作时，**默认优先**使用 PROCESS 功能——但**不是必须的**：
+对于发送次数很少、或需要与其它步骤交替的场景，也可以用「重复节点 + 延时」表达。
+用 PROCESS 时注意它有硬件资源上限：
+
+- **数量上限**：PROCESS 定义会下载到设备，槽位有限（最多 32 个进程）。周期长、持续运行的
+  场景才值得占用一个进程槽位；一次性/少量重复请用重复节点，别滥用 PROCESS。
+- 用完的进程记得 `DELETE` 释放槽位。
 
 ### 3.1 定义进程
 
@@ -209,6 +215,8 @@ keywords: mini gateway, mini gateway 100, minigateway, mg100, 网关, gateway
 - 覆盖正常、边界、错误三类场景，每条用例给出明确期望结果。
 - **测试开头必须用 `@11_HELLO;` 握手确认通信**（可加 `@11_SYSID;`）。
 - CAN 用例：`TSTOP` → `CONFIG` → `TSTRT` → `MSGTX`/`MSGRX` → `TSTOP`。
-- 定时 / 周期场景用 PROCESS，且周期 = `granularity × totalsteps`，动作步号 `1..totalsteps-1`，`END` 后再 `START`。
+- 定时 / 周期场景**默认优先用 PROCESS**（周期 = `granularity × totalsteps`，动作步号 `1..totalsteps-1`，
+  `END` 后再 `START`，用完 `DELETE`）；但**不是必须**：少量重复可用「重复节点 + 延时」表达，
+  并注意 PROCESS 槽位有限（最多 32 个），别滥用。
 - 所有十六进制统一用大写 `0X`；波特率统一用 `500K` / `1000K` 这类大写写法。
 - 接收判定：MSGRX 返回空数据（`0X`）即提示 `time out`。

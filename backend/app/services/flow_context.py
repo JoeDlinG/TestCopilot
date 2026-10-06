@@ -160,7 +160,7 @@ def has_placeholder(text: Any) -> bool:
 _SAFE_BUILTINS = {
     "abs": abs, "min": min, "max": max, "round": round, "len": len,
     "int": int, "float": float, "str": str, "bool": bool, "sum": sum,
-    "sorted": sorted, "enumerate": enumerate,
+    "sorted": sorted, "enumerate": enumerate, "range": range,
 }
 
 

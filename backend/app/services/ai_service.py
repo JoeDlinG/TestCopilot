@@ -600,6 +600,21 @@ Flow node types:
 - "loop": repeating block. Include "loop_type" ("for"|"while"), "loop_variable" (for loop var name), "loop_expression" (range or while cond), "loop_body" (action description).
 - "delay": wait before the next step. Include "duration_ms" (integer, milliseconds). Use it whenever the device needs settling time (power-up, mode switch, retry backoff) — never put "wait N seconds" only in prose.
 
+COMMAND RULES (critical — the platform executes these commands against real hardware):
+- Put the actual device command in step `parameters.command` (single string) or
+  `parameters.commands` (array). The `action` field is a one-line human summary ONLY.
+- NEVER write driver/library pseudo-code as a command (e.g. `bus.recv(timeout=2.0)`,
+  `can.send(...)`, `write("...")`). The device does not execute Python code — it would
+  be skipped silently. Use the command syntax of the selected device skill.
+- Follow the command syntax of the attached device skills (provided below) exactly.
+- "Every N ms / periodic / cyclic" requirements MUST be expressed with the device's own
+  periodic capability (e.g. PeakCAN `send_periodic` with `period_ms` set to the requested
+  interval, Mini Gateway 100 PROCESS) — `period_ms` is a parameter, set it to what the
+  requirement asks (200, 500, ...), never a hardcoded value. Only fall back to a loop +
+  delay node when the device has no periodic feature.
+- Set each step's `device_type` to the target device's protocol or name so the generated
+  flow binds the step to the right device.
+
 MULTI-DEVICE RULE (applies whenever the requirement touches two or more devices):
 Operations and commands that target different devices MUST NOT be merged into one
 sequential flow. Split them into separate, independent test cases — one per device —

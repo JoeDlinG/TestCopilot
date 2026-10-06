@@ -224,6 +224,8 @@ async def import_ai_result(data: dict, db: AsyncSession = Depends(get_db)):
             test_cases_data=test_cases_data,
             requirements=data.get("requirements", ""),
             model_id=data.get("model_id"),
+            # Empty → the service falls back to the devices in the database.
+            available_devices=data.get("available_devices") or [],
         )
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:

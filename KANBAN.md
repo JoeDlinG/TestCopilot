@@ -71,6 +71,8 @@
   测试用例重命名 + 一键清空
 - **v0.7.4**（修复版，同分支）：修复「启动后不实际运行」—— 后台执行任务改用独立 DB 会话，
   消除与请求会话的并发冲突；顺带清理残留 running 执行
+- **v0.8.0**（增强版，同分支）：PeakCAN「只收不发」修复 + 生成设备回填 + PeakCAN 周期发送(period_ms 参数化) +
+  运行时按 edges 执行（condition 分支 / loop 迭代）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -80,6 +82,18 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.0 — PeakCAN「只收不发」修复 + 生成设备回填 + 运行时按图执行（2026-10-06，分支 `feature/flow-enhancements`）
+
+- [x] **根因**：生成→流程图时设备信息被丢弃（`device_id` 写死 None）+ PeakCAN 命令无法从文本提取 +
+      设备解析静默回退到第一个已连接设备 + 运行时 loop 假通过——四者叠加导致 PeakCAN 一条不发却被判通过
+- [x] **P0**：生成时按 `device_type`/名称/`devices_required` 匹配真实设备回填 `device_id`/`device_protocol`；
+      命令识别支持 PeakCAN JSON 与 `ID#DATA`；设备按「device_id→协议→任意」解析，协议不匹配直接报错不再错发
+- [x] **P1**：PeakCAN 插件新增 `send_periodic`/`stop_periodic`（`period_ms` 参数化，非写死 200ms，支持 `count`/`key`）；
+      skill/prompt 同步（周期默认用设备周期能力、命令写 `parameters.command`、禁伪代码；MG100 PROCESS 默认但非必须+槽位上限）
+- [x] **P2**：运行时引擎改为沿 edges 走图——condition 真分支 / loop 真迭代（复用步骤行、带"第 N 轮"标记、防死循环上限）
+- [x] 验证（真实硬件 MG100 + PeakCAN）：20 项逻辑断言 + 线性/循环/条件执行 + PeakCAN 单发与周期发(`period_ms=500`) 全过；
+      `compileall` 与 `tsc --noEmit` 通过
 
 ### v0.7.4 — BugFix：启动执行后不实际运行（2026-10-06，分支 `feature/flow-enhancements`）
 

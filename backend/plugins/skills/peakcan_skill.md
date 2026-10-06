@@ -49,6 +49,28 @@ PCAN 通道使用以下格式：
 
 3. 也支持字符串格式：`"123#11223344AABBCCDD"` 或 `"100#00112233445566778899AABBCCDDEEFF"`
 
+### 周期 / 定时发送（period_ms 是参数，不是固定值）
+
+当需求要求「每隔 N ms 发送一条报文」时，用 `send_periodic` action，并把间隔写进 `period_ms`
+（**按需求填写，绝不能写死 200ms**）：
+
+```json
+{
+  "action": "send_periodic",
+  "arbitration_id": 32,
+  "data": [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+  "is_extended_id": false,
+  "period_ms": 200,
+  "count": 20
+}
+```
+
+- `period_ms`：发送间隔（毫秒，浮点），必须为正；由用例需求决定，例如「每 500ms」就填 `500`。
+- `count`（可选）：发满 N 帧后自动停止；不填则一直发送，直到用例发 `{"action": "stop_periodic"}`。
+- `key`（可选）：给该周期发送命名，便于 `{"action": "stop_periodic", "key": "xxx"}` 精确停止；
+  不带 key 的 `stop_periodic` 会停止全部。
+- 停止：`{"action": "stop_periodic"}` 或 `{"action": "stop_periodic", "key": "xxx"}`。
+
 4. 接收消息格式：
 ```json
 {
@@ -109,3 +131,11 @@ PCAN 通道使用以下格式：
 - 每条用例包含明确的期望结果（状态码 / 返回数据 / 错误信息）
 - device_type 填 "other", devices_required 包含 "peakcan"
 - 如测试环境无可用的物理 CAN 总线，备注"需要在有 CAN 总线或终端电阻的环境中进行"
+
+### 命令必须写进结构化字段（关键）
+
+- 每一步的 CAN 命令**必须**放进该 step 的 `parameters.command`（字符串）或 `parameters.commands`（数组），
+  内容为上面的 JSON 命令（`{"action": "send", ...}`）或字符串形式 `"123#11223344"`。
+- `action` 字段**只能**写一句人话描述，不要把命令写成 python-can 调用伪代码
+  （例如 `bus.recv(timeout=2.0)` 这种是无效的，设备不会执行）。
+- 周期需求必须用 `send_periodic`（`period_ms` 按需求填），不要用 loop 节点或散文表达周期。

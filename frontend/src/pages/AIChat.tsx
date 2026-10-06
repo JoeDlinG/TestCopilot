@@ -10,7 +10,7 @@ import {
   ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
-import { aiAPI, testCaseAPI, pluginAPI } from '../services/api'
+import { aiAPI, testCaseAPI, pluginAPI, deviceAPI } from '../services/api'
 import { extractData, handleApiError, _errorMessage } from '../services/apiHelper'
 import { useChatStore } from '../stores/chatStore'
 import type { AIModel, TestCase } from '../types'
@@ -55,13 +55,26 @@ export default function AIChat() {
   const [pluginSkills, setPluginSkills] = useState<any[]>([])
   const [importingIds, setImportingIds] = useState<Set<string>>(new Set())
   const [importingAll, setImportingAll] = useState(false)
+  // Real devices, so the AI can target them and the generated flow nodes get a
+  // concrete 执行设备 instead of an empty column.
+  const [devices, setDevices] = useState<any[]>([])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  /** Compact device payload sent to the generator (id + protocol + name). */
+  const devicePayload = () => devices.map((d: any) => ({
+    id: d.id,
+    name: d.name,
+    type: d.type,
+    protocol: d.protocol,
+    status: d.status,
+  }))
 
   // --- init ---
   useEffect(() => {
     loadModels()
     loadPluginSkills()
+    loadDevices()
     // Default-select builtin skills
     const store = useChatStore.getState()
     if (store.selectedSkills.length === 0) {
@@ -74,6 +87,15 @@ export default function AIChat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const loadDevices = async () => {
+    try {
+      const res = await deviceAPI.list()
+      setDevices(extractData(res, []) || [])
+    } catch {
+      /* device list is optional */
+    }
+  }
 
   const loadModels = async () => {
     try {
@@ -134,6 +156,7 @@ export default function AIChat() {
         model_id: activeModel,
         input_type: 'text',
         skill_protocols: selectedSkills.filter((s) => !s.startsWith('__builtin_')),
+        available_devices: devicePayload(),
       })
       const data: any = res.data?.data || res.data
       setTestCaseResult(data)
@@ -173,6 +196,7 @@ export default function AIChat() {
         test_cases: [tc],
         requirements: input || '',
         model_id: activeModel,
+        available_devices: devicePayload(),
       })
       message.success(`「${tc.name}」已导入测试用例列表（含流程图）`)
     } catch (err) {
@@ -199,6 +223,7 @@ export default function AIChat() {
         test_cases: cases,
         requirements: input || '',
         model_id: activeModel,
+        available_devices: devicePayload(),
       })
       const data: any = res.data?.data || res.data
       const total = data.total_imported || data.saved_cases?.length || 0

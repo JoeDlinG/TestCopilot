@@ -4,6 +4,63 @@
 
 ---
 
+## 2026-10-06: 修复 PeakCAN「只收不发」+ 生成设备丢失 + 运行时按图执行（v0.8.0）
+
+> 分支 `feature/flow-enhancements`。问题根源：用例生成的 PeakCAN 分支设备栏为空、执行时 PeakCAN 一条报文都没发。
+
+### 根因链（结论：是生成/执行链路的 bug，不是 PeakCAN 插件/skill）
+
+1. **设备信息在"生成→流程图"被丢弃**：`testgen_service._description_to_flow` 把 `device_id` 写死 `None`，
+   AI 输出的 `device_type`/`devices_required` 被忽略，前端也从不传 `available_devices` → PeakCAN 节点设备栏为空。
+2. **PeakCAN 命令无法被识别**：`_extract_commands` 只认 MG100 的 `@NN_CMD;`，PeakCAN 的
+   `{"action":"send",...}` / `"123#11223344"` 提取不到 → `commands=[]` → 步骤被当"无设备指令"跳过。
+3. **设备解析静默错发**：`_resolve_device` 无 device_id 时回退 `devices[0]`（可能发给 MG100）→ PeakCAN 一条不发，
+   而 MG100 在总线上发帧，PeakCAN 作为监听端"收到了消息"（日志全是 RECV、无 SEND）。
+4. **运行时不执行 loop**：`loop` 节点直接 `passed / "Loop completed"`，"每 200ms"周期语义根本没落地（还假通过）。
+
+### P0（链路正确性）
+
+- **生成回填设备**：`testgen_service` 新增 `_match_device` / `_device_hints`，把 `device_type` / 设备名 /
+  `devices_required` 映射到真实设备，写入节点 `config.device_id` + `device_protocol`；`import` 路径无设备列表时
+  回退查询数据库里的设备；条件/循环的 body、merge 占位节点同样带设备。前端 AIChat 生成/导入时传递 `available_devices`。
+- **命令识别**：`_extract_commands` 新增 `_JSON_CMD_RE`（校验 `action`/`arbitration_id` 等键）+ `"ID#DATA"` 字符串；
+  `_infer_protocol` 支持 JSON/`ID#DATA` → `peakcan`。
+- **设备解析**：`_resolve_device` 按「device_id → 推断协议 → 任意设备」顺序；推断出协议但无匹配设备时返回 None，
+  由 `_missing_device_hint` 给出明确失败原因（"未找到已连接的 peakcan 设备，命令未下发"），不再静默错发。
+
+### P1（周期发送参数化 + skill 同步）
+
+- **PeakCAN 插件**：新增 `send_periodic` / `stop_periodic` action；`period_ms` 是**参数**（按用例需求填，非写死 200ms），
+  支持 `count`（发满自动停）与 `key`（精确停止）；抽出 `_build_message` 复用，断开时自动停止所有周期发送。
+- **skill**：`peakcan_skill.md` 增周期发送章节 +「命令必须写进 `parameters.command`，禁止写 python-can 伪代码」；
+  `mini_gateway100_skill.md` 周期场景改为「默认优先 PROCESS、但非必须」，并注明 PROCESS 槽位有限（最多 32 个进程）。
+- **prompt**：`ai_service` 系统提示词新增 COMMAND RULES（命令结构化、禁止库调用伪代码、周期用设备周期能力且
+  `period_ms` 按需求填）。
+
+### P2（运行时按 edges 执行，与 codegen 对齐）
+
+`_execute_flow` 从"扁平顺序遍历"改为**沿 edges 走图**：`condition` 真正走 true/false 分支，
+`loop` 真正按次数（for）或条件（while）迭代循环体；节点重复访问复用同一步骤行（带"第 N 轮"标记），
+`step_index` 仍是节点在流程中的位置（UI 步骤列表不变）；带 `MAX_NODE_EXECUTIONS` / `MAX_LOOP_ITERATIONS` 防死循环上限。
+`start_execution` 现在同时读取并传入 `flow.edges`。
+
+### 验证（真实硬件：Mini Gateway 100 + PeakCAN USB）
+
+| 项目 | 结果 |
+|------|------|
+| P0/P2 纯逻辑（命令识别/协议推断/设备匹配/循环次数/分支选择） | 20 项断言全过 |
+| 线性 MG100 用例（回归） | `passed`（7 通过 / 0 失败 / 8 步） |
+| 循环节点（for 3 轮，body 发 `@11_HELLO;`） | `passed`，loop 显示"循环共执行 3 轮"，body 显示"第 3 轮 @11_HELLO; -> 2,11,12" |
+| 条件节点（`1>0` / `1<0`） | 只执行对应分支，另一分支跳过 |
+| PeakCAN 单发 | `{"status":"sent","arbitration_id":32,...}`（命令正确路由到 PeakCAN） |
+| PeakCAN 周期发（`period_ms=500`，非 200） | 返回 `period_ms: 500.0`，`stop_periodic` 生效 |
+| `python -m compileall app` / `npx tsc --noEmit` | 均通过 |
+
+> 备注：测试时曾出现一次 MG100 "no data" 报错，根因是**两个后端进程同时抢占 `/dev/ttyACM0`**（复现实例未关），
+> 关闭多余实例后恢复正常——非代码问题。
+
+---
+
 ## 2026-10-06: BugFix — 启动执行后不实际运行（v0.7.4）
 
 > 现象：点「启动」后执行一直是 running、步骤与终端（实时通信监控）**一条消息都没有**，

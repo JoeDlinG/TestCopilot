@@ -35,6 +35,7 @@ Install this plugin via 插件管理 → 安装插件, then add a device to conn
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -79,6 +80,9 @@ class PeakCANPlugin(BaseProtocolPlugin):
         self._is_fd: bool = False
         self._last_error: str = ""       # last connection failure (for the UI)
         self._attempts: List[str] = []   # per-candidate failure report
+        # Periodic (cyclic) transmissions: key -> python-can CyclicSendTask.
+        self._periodic: Dict[str, Any] = {}
+        self._periodic_auto_stop: Dict[str, "asyncio.Task"] = {}
 
     # ------------------------------------------------------------------ #
     # Connection management
@@ -520,6 +524,11 @@ class PeakCANPlugin(BaseProtocolPlugin):
 
     async def disconnect(self) -> bool:
         try:
+            # Stop any periodic transmission before tearing the bus down.
+            await self._stop_periodic({}, quiet=True)
+        except Exception as e:
+            logger.warning(f"Error stopping PeakCAN periodic sends: {e}")
+        try:
             if self._notifier:
                 self._notifier.stop()
                 self._notifier = None
@@ -576,15 +585,32 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 + (f"（上次连接失败：{self._last_error}）" if self._last_error else "")
             )
 
+        msg = self._build_message(data)
+
         try:
-            import can
-        except ImportError:
-            raise RuntimeError("python-can is not installed")
+            self._bus.send(msg)
+            logger.debug(f"PeakCAN TX: id=0x{msg.arbitration_id:X}, data={msg.data.hex()}")
+            return {
+                "status": "sent",
+                "arbitration_id": msg.arbitration_id,
+                "is_extended_id": msg.is_extended_id,
+                "is_fd": getattr(msg, "is_fd", False),
+                "data": msg.data.hex(),
+            }
+        except can.exceptions.CanError as e:
+            raise RuntimeError(f"PeakCAN send error: {e}") from e
+
+    def _build_message(self, data: Any) -> Any:
+        """Turn a send payload (dict / ``id#data`` string / Message) into a
+        :class:`can.Message`, shared by single-shot and periodic sends."""
+        import can
 
         if isinstance(data, str):
             # Parse a string formatted as "can_id#hex_data" e.g. "123#11223344AABBCCDD"
-            msg = self._parse_can_string(data)
-        elif isinstance(data, dict):
+            return self._parse_can_string(data)
+        if isinstance(data, can.Message):
+            return data
+        if isinstance(data, dict):
             msg_kwargs: Dict[str, Any] = {
                 "arbitration_id": self._resolve_int(data.get("arbitration_id", 0)),
                 "is_extended_id": bool(data.get("is_extended_id", False)),
@@ -607,24 +633,97 @@ class PeakCANPlugin(BaseProtocolPlugin):
             elif self._is_fd:
                 msg_kwargs["is_fd"] = True
 
-            msg = can.Message(**msg_kwargs)
-        elif isinstance(data, can.Message):
-            msg = data
-        else:
-            raise ValueError(f"Unsupported send payload type: {type(data)}")
+            return can.Message(**msg_kwargs)
+        raise ValueError(f"Unsupported send payload type: {type(data)}")
 
-        try:
-            self._bus.send(msg)
-            logger.debug(f"PeakCAN TX: id=0x{msg.arbitration_id:X}, data={msg.data.hex()}")
-            return {
-                "status": "sent",
-                "arbitration_id": msg.arbitration_id,
-                "is_extended_id": msg.is_extended_id,
-                "is_fd": getattr(msg, "is_fd", False),
-                "data": msg.data.hex(),
-            }
-        except can.exceptions.CanError as e:
-            raise RuntimeError(f"PeakCAN send error: {e}") from e
+    # ------------------------------------------------------------------ #
+    # Periodic / cyclic transmission
+    # ------------------------------------------------------------------ #
+    # The period is a *parameter* of each command, never a fixed value — a
+    # test case decides its own cadence via ``period_ms``.
+
+    def _periodic_key(self, data: dict) -> str:
+        return str(data.get("key") or data.get("tag") or data.get("arbitration_id") or "default")
+
+    async def _send_periodic(self, data: dict) -> dict:
+        """Start sending ``data`` every ``period_ms`` milliseconds.
+
+        Extra keys:
+          * ``period_ms`` (float, required) — interval, in milliseconds
+          * ``count``     (int, optional)    — stop automatically after N frames
+          * ``key``       (str, optional)    — handle used by ``stop_periodic``
+        """
+        import can
+
+        if not self._connected or self._bus is None:
+            raise ConnectionError("PeakCAN is not connected")
+
+        period_ms = float(data.get("period_ms") or data.get("period") or 0)
+        if period_ms <= 0:
+            raise ValueError("周期发送需要正的 period_ms 参数（例如 period_ms: 200）")
+        period = period_ms / 1000.0
+
+        msg = self._build_message(data)
+        task = self._bus.send_periodic(msg, period)
+        key = self._periodic_key(data)
+        # stop any previous transmission on the same key first
+        await self._stop_periodic({"key": key}, quiet=True)
+        self._periodic[key] = task
+
+        count = data.get("count")
+        if count:
+            delay = period * max(1, int(count))
+            try:
+                self._periodic_auto_stop[key] = asyncio.create_task(
+                    self._auto_stop_periodic(key, delay)
+                )
+            except RuntimeError:
+                pass  # no running loop (e.g. sync test) — leave it running
+
+        logger.info(
+            "PeakCAN periodic send started: id=0x%X period=%.1fms count=%s",
+            msg.arbitration_id, period_ms, count or "∞",
+        )
+        return {
+            "status": "periodic_started",
+            "key": key,
+            "arbitration_id": msg.arbitration_id,
+            "is_extended_id": msg.is_extended_id,
+            "is_fd": getattr(msg, "is_fd", False),
+            "period_ms": period_ms,
+            "count": count,
+        }
+
+    async def _auto_stop_periodic(self, key: str, delay: float) -> None:
+        await asyncio.sleep(delay)
+        await self._stop_periodic({"key": key}, quiet=True)
+
+    async def _stop_periodic(self, data: dict, quiet: bool = False) -> dict:
+        """Stop one (by ``key``) or all periodic transmissions."""
+        stopped: List[str] = []
+        key = str(data.get("key") or data.get("tag") or "")
+
+        if key:
+            task = self._periodic.pop(key, None)
+            auto = self._periodic_auto_stop.pop(key, None)
+            if auto and not auto.done():
+                auto.cancel()
+            if task is not None:
+                task.stop()
+                stopped.append(key)
+        else:
+            for k, task in list(self._periodic.items()):
+                task.stop()
+                stopped.append(k)
+            self._periodic.clear()
+            for auto in self._periodic_auto_stop.values():
+                if not auto.done():
+                    auto.cancel()
+            self._periodic_auto_stop.clear()
+
+        if not quiet:
+            logger.info("PeakCAN periodic send stopped: %s", stopped or "none")
+        return {"status": "periodic_stopped", "keys": stopped}
 
     async def receive(self, timeout: float = 0.05, skip_error_frames: Optional[bool] = None) -> Any:
         """Read one buffered CAN message (non-blocking).
@@ -665,11 +764,16 @@ class PeakCANPlugin(BaseProtocolPlugin):
             return self.get_status()
         if action == "receive":
             return await self.receive(timeout=float(data.get("timeout", 0.05)))
+        if action in ("send_periodic", "send_cyclic", "cyclic_send"):
+            return await self._send_periodic(data)
+        if action in ("stop_periodic", "stop_cyclic"):
+            return await self._stop_periodic(data)
         if action in ("send", "send_can", "send_canfd", "send_message"):
             data.pop("action", None)  # fall through to the normal message path
             return await self.send(data)
         raise ValueError(
-            f"未知的 PeakCAN action: '{action}'（可用：send / receive / scan / diagnose）"
+            f"未知的 PeakCAN action: '{action}'（可用：send / send_periodic / "
+            f"stop_periodic / receive / scan / diagnose）"
         )
 
     # ------------------------------------------------------------------ #
