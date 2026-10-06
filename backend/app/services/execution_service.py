@@ -184,13 +184,61 @@ class ExecutionEngine:
         test_case.status = "running"
         await db.commit()
 
-        # Run execution in background
+        # Run execution in background.
+        #
+        # IMPORTANT: the background task must NOT share the request-scoped
+        # session.  The route keeps using it after ``create_task`` (and FastAPI
+        # closes it once the response is sent), which raises
+        # ``IllegalStateChangeError`` ("... is already in progress") inside the
+        # task — the execution then died silently, stuck at "running" with no
+        # step results.  Give the task a session of its own.
+        task_db = async_session()
         task = asyncio.create_task(
-            self._run_execution(db, execution, nodes, options)
+            self._run_execution(task_db, execution, nodes, options)
         )
         self._running_executions[execution.id] = task
 
         return execution
+
+    async def reset_stale_executions(self, db: AsyncSession) -> int:
+        """Mark executions left 'running' by a previous process as errored.
+
+        The runner lives in memory only, so anything still marked ``running``
+        after a restart can never finish — and a stuck 'running' row keeps the
+        UI's start button disabled forever.
+        """
+        try:
+            result = await db.execute(
+                select(TestExecution).where(
+                    TestExecution.status == ExecutionStatus.RUNNING.value
+                )
+            )
+            stale = result.scalars().all()
+            for ex in stale:
+                ex.status = ExecutionStatus.ERROR.value
+                ex.result = ExecutionResult.ABORTED.value
+                ex.completed_at = ex.completed_at or datetime.utcnow()
+                if ex.started_at:
+                    ex.duration_ms = int(
+                        (ex.completed_at - ex.started_at).total_seconds() * 1000
+                    )
+                ex.error_message = "服务重启，执行中断"
+            if stale:
+                # a case parked in 'running' blocks a fresh run too
+                tc_ids = [ex.testcase_id for ex in stale]
+                tc_result = await db.execute(
+                    select(TestCase).where(
+                        TestCase.id.in_(tc_ids), TestCase.status == "running"
+                    )
+                )
+                for tc in tc_result.scalars().all():
+                    tc.status = "draft"
+                await db.commit()
+                logger.info(f"Reset {len(stale)} stale running execution(s)")
+            return len(stale)
+        except Exception as e:
+            logger.warning(f"Failed to reset stale executions: {e}")
+            return 0
 
     async def stop_execution(self, db: AsyncSession, execution_id: str) -> dict:
         """Stop a running execution."""
@@ -223,6 +271,28 @@ class ExecutionEngine:
         return {"message": "Execution stopped", "execution_id": execution_id}
 
     async def _run_execution(
+        self,
+        db: AsyncSession,
+        execution: TestExecution,
+        nodes: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None,
+    ):
+        """Run the flow in the background, owning the session it is given.
+
+        ``db`` is a dedicated session created by :meth:`start_execution`
+        (never the request-scoped one), so it is safe to use it for as long
+        as the execution lasts — and this wrapper is responsible for closing
+        it, since nobody else will.
+        """
+        try:
+            await self._execute_flow(db, execution, nodes, options)
+        finally:
+            try:
+                await db.close()
+            except Exception as e:  # pragma: no cover - closing is best effort
+                logger.warning(f"Failed to close execution session: {e}")
+
+    async def _execute_flow(
         self,
         db: AsyncSession,
         execution: TestExecution,

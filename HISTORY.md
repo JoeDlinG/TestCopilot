@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-10-06: BugFix — 启动执行后不实际运行（v0.7.4）
+
+> 现象：点「启动」后执行一直是 running、步骤与终端（实时通信监控）**一条消息都没有**，
+> `test_step_results` 为 0 行。v0.7.3 引入的回归。
+
+### 根因：后台任务与请求共用一个 AsyncSession
+
+v0.7.3 为了在标题显示用例名，在 `POST /api/executions/run` 里**在 `asyncio.create_task()` 之后**
+又 `await db.execute(select(TestCase...))` 查用例名。而后台任务 `_run_execution` 拿到的 `db`
+正是同一个**请求作用域**会话（`Depends(get_db)`），它内部用 `async with db as session:` —— 退出时
+会 `close()`。两者并发 → SQLAlchemy 抛出：
+
+```
+IllegalStateChangeError: Method 'close()' can't be called here;
+method '_connection_for_bind()' is already in progress ... (isce)
+```
+
+异常发生在**第一个步骤落库之前**，被 `_run_execution` 的兜底 `except` 吞掉（只广播了一条
+`execution_error`，而 UI 没订阅该事件）→ 表现为「启动成功但一直空转」，执行记录永远卡在
+`running`，「启动」按钮也因此一直禁用。
+数据库佐证：10:30 之后的 5 次执行 `step_results` 均为 0 行，而改动前 09:39 的那次有 12 行。
+
+### 修复
+
+- **`execution_service.start_execution`**：后台任务改为使用**自己的会话** `async_session()`，
+  不再与请求会话共享 —— 请求处理器随后做什么都不会再与任务打架
+- **`_run_execution`**：拆成 `_run_execution`（包装，负责 `finally: await db.close()`）
+  + `_execute_flow`（原逻辑），会话生命周期由任务自己负责
+- **`executions.py`**：`_testcase_names()` 移到 `start_execution()` **之前**（用 `data.test_case_id`
+  查），请求处理器在 `create_task` 之后不再触碰 `db`
+- **`main.py` 启动**：新增 `execution_engine.reset_stale_executions()` —— 把上次进程留下的
+  `running` 执行标记为 `error`（"服务重启，执行中断"），并把卡在 `running` 的用例改回 `draft`；
+  否则重启后「启动」按钮会永久禁用
+
+### 验证（真实硬件 Mini Gateway 100 / `dev_7d2cc656`，`/dev/ttyACM0` @115200）
+
+| 项目 | 结果 |
+|------|------|
+| 修复前复现 | `exec_8f7a7f08` → 0 条 `step_results`，日志报 `IllegalStateChangeError` |
+| 修复后 API 执行 | `passed`，9 步 8 通过 1 跳过，每步都有真实应答（如 `@11_MSGRX=CAN1,RPLY1,8; -> CAN1,RPLY1,0X`） |
+| WebSocket `/ws/executions/{id}` | 20 条事件（`step_started` / `step_completed` / `execution_completed`） |
+| WebSocket `/ws/devices/{id}`（终端） | 21 条事件（`command_sent` / `command_response`）—— 终端不再空白 |
+| 停止 | `POST /{id}/stop` → `stopped`，步骤已落库 |
+| 停止后再次启动 | 再次 `passed`（8 通过 / 0 失败 / 9 步） |
+| 启动清理 | 3 条卡住的 `running` 执行被标记为 `error` |
+| `npx tsc --noEmit` / `python -m compileall app` | 均通过 |
+
+---
+
 ## 2026-10-06: 执行界面启动/停止 + 流程图全屏与选中高亮 + 用例重命名/一键清空（v0.7.3）
 
 > 分支 `feature/flow-enhancements`

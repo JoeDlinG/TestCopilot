@@ -32,10 +32,13 @@ async def _testcase_names(db: AsyncSession, ids: List[str]) -> Dict[str, str]:
 @router.post("/run")
 async def start_execution(data: ExecutionStartRequest, db: AsyncSession = Depends(get_db)):
     try:
+        # Resolve the name *before* handing off: start_execution() spawns the
+        # background runner, and touching `db` afterwards would race with it
+        # (the request session must not be used concurrently).
+        names = await _testcase_names(db, [data.test_case_id])
         execution = await execution_engine.start_execution(
             db, data.test_case_id, data.options,
         )
-        names = await _testcase_names(db, [execution.testcase_id])
         return {
             "code": 0, "message": "success",
             "data": {

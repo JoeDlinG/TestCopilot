@@ -50,6 +50,11 @@ async def lifespan(app: FastAPI):
         await device_service.reset_stale_connections(db)
         logger.info("Stale device connections reset")
 
+        # Executions still marked 'running' died with the previous process —
+        # without this they would block the start button forever.
+        from app.services.execution_service import execution_engine
+        await execution_engine.reset_stale_executions(db)
+
     yield
 
     # Shutdown

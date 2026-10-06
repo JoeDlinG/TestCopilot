@@ -69,6 +69,8 @@
   执行界面双监控窗口 / 按设备多列步骤
 - **v0.7.3**（增强版，同分支）：执行界面用例名标题 + 启动/停止按钮；流程图全屏编辑 + 选中节点/连线高亮；
   测试用例重命名 + 一键清空
+- **v0.7.4**（修复版，同分支）：修复「启动后不实际运行」—— 后台执行任务改用独立 DB 会话，
+  消除与请求会话的并发冲突；顺带清理残留 running 执行
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -78,6 +80,23 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.7.4 — BugFix：启动执行后不实际运行（2026-10-06，分支 `feature/flow-enhancements`）
+
+> 回归来源：v0.7.3 为标题显示用例名，在 `create_task()` 之后又用了请求会话。
+
+- [x] **根因**：后台执行任务与请求处理器共用同一个 `AsyncSession`（v0.7.3 新增的 `_testcase_names()`
+      在 `asyncio.create_task()` 之后 `await db.execute(...)`，与任务内 `async with db` 的 `close()` 并发）
+      → `IllegalStateChangeError`，任务在写第一条步骤前就死掉，执行永久卡在 `running`、终端无任何消息
+- [x] **修复**
+      - `start_execution()`：后台任务改用**独立会话** `async_session()`，不再共享请求会话
+      - `_run_execution()` 拆成包装（负责 `finally` 关闭会话）+ `_execute_flow()`（原逻辑）
+      - `executions.py`：用例名查询移到 `start_execution()` 之前，`create_task` 后不再触碰 `db`
+      - `main.py` 启动：新增 `reset_stale_executions()`，把残留 `running` 执行标 `error`、卡住的用例回 `draft`
+        （否则重启后「启动」按钮永久禁用）
+- [x] 验证（真实硬件 Mini Gateway 100）：执行 `passed`（9 步 8 通过）；`/ws/executions/{id}` 20 条事件、
+      `/ws/devices/{id}` 21 条事件（终端不再空白）；停止→再次启动正常；3 条卡住的执行被清理；
+      `tsc --noEmit` 与 `compileall` 通过
 
 ### v0.7.3 — 执行界面启动/停止 + 流程图全屏高亮 + 用例重命名/清空（2026-10-06，分支 `feature/flow-enhancements`）
 
