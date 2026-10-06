@@ -80,10 +80,19 @@ export interface TestCase {
 
 export interface TestExecution {
   id: string
-  test_case_id: string
+  test_case_id?: string
+  /** actual payload field name used by the backend */
+  testcase_id?: string
+  /** resolved case name, returned alongside `testcase_id` since v0.7.3 */
+  testcase_name?: string
   status: 'pending' | 'running' | 'passed' | 'failed' | 'error' | 'stopped'
   start_time?: string
   end_time?: string
+  started_at?: string
+  completed_at?: string
+  total_steps?: number
+  passed_steps?: number
+  failed_steps?: number
   duration_ms?: number
   results: any[]
   error_message?: string

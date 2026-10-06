@@ -5,15 +5,28 @@ POST   /api/executions/{id}/stop        - Stop execution
 GET    /api/executions/{id}             - Get execution detail (with step results)
 GET    /api/executions/                 - List executions
 """
-from typing import Optional
+from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.models import TestCase
 from app.schemas.schemas import ExecutionStartRequest
 from app.services.execution_service import execution_engine
 
 router = APIRouter(prefix="/api/executions", tags=["Executions"])
+
+
+async def _testcase_names(db: AsyncSession, ids: List[str]) -> Dict[str, str]:
+    """id -> case name, so the UI can show *what* is running, not just an id."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(TestCase.id, TestCase.name).where(TestCase.id.in_(ids))
+    )).all()
+    return {r[0]: r[1] for r in rows}
 
 
 @router.post("/run")
@@ -22,10 +35,12 @@ async def start_execution(data: ExecutionStartRequest, db: AsyncSession = Depend
         execution = await execution_engine.start_execution(
             db, data.test_case_id, data.options,
         )
+        names = await _testcase_names(db, [execution.testcase_id])
         return {
             "code": 0, "message": "success",
             "data": {
                 "id": execution.id, "testcase_id": execution.testcase_id,
+                "testcase_name": names.get(execution.testcase_id),
                 "status": execution.status, "result": execution.result,
                 "options": execution.options, "total_steps": execution.total_steps,
                 "passed_steps": execution.passed_steps,
@@ -43,6 +58,9 @@ async def start_execution(data: ExecutionStartRequest, db: AsyncSession = Depend
         })
 
 
+
+
+
 @router.get("/")
 async def list_executions(
     test_case_id: Optional[str] = Query(None),
@@ -55,10 +73,13 @@ async def list_executions(
         db, testcase_id=test_case_id, status=status, page=page, page_size=page_size,
     )
 
+    names = await _testcase_names(db, [e.testcase_id for e in executions])
+
     items = []
     for e in executions:
         items.append({
             "id": e.id, "testcase_id": e.testcase_id,
+            "testcase_name": names.get(e.testcase_id),
             "status": e.status, "result": e.result,
             "options": e.options, "total_steps": e.total_steps,
             "passed_steps": e.passed_steps, "failed_steps": e.failed_steps,
@@ -102,10 +123,13 @@ async def get_execution(execution_id: str, db: AsyncSession = Depends(get_db)):
             "duration_ms": s.duration_ms,
         })
 
+    names = await _testcase_names(db, [execution.testcase_id])
+
     return {
         "code": 0, "message": "success",
         "data": {
             "id": execution.id, "testcase_id": execution.testcase_id,
+            "testcase_name": names.get(execution.testcase_id),
             "status": execution.status, "result": execution.result,
             "options": execution.options, "total_steps": execution.total_steps,
             "passed_steps": execution.passed_steps,

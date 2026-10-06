@@ -9,7 +9,8 @@ import {
   CloseCircleOutlined, SyncOutlined, ReloadOutlined, ExclamationCircleOutlined,
   EyeOutlined, ClearOutlined, ApiOutlined, OrderedListOutlined,
   ArrowDownOutlined, ArrowUpOutlined, MinusCircleOutlined, AimOutlined,
-  LineChartOutlined, FullscreenOutlined, FullscreenExitOutlined
+  LineChartOutlined, FullscreenOutlined, FullscreenExitOutlined,
+  ExperimentOutlined
 } from '@ant-design/icons'
 import { executionAPI, deviceAPI, testCaseAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
@@ -399,6 +400,14 @@ export default function Executions() {
   const monitorA = useDeviceMonitor(devices, 0)
   const monitorB = useDeviceMonitor(devices, 1)
 
+  // ---- start / stop controls ----
+  const [startOpen, setStartOpen] = useState(false)
+  const [caseOptions, setCaseOptions] = useState<any[]>([])
+  const [selectedCase, setSelectedCase] = useState<string>('')
+  const [starting, setStarting] = useState(false)
+  // 后端已返回 testcase_name；这里是旧数据/用例被删除时的兜底缓存
+  const [caseNames, setCaseNames] = useState<Record<string, string>>({})
+
   // ---- live step status ----
   const [trackedId, setTrackedId] = useState<string>('')
   const [trackedInfo, setTrackedInfo] = useState<any>(null)
@@ -440,13 +449,52 @@ export default function Executions() {
 
   useEffect(() => { loadExecutions() }, [loadExecutions])
 
-  const handleStop = async (id: string) => {
+  const handleStop = async (id?: string) => {
+    const running = executions.find(e => e.status === 'running')
+    const target = id || running?.id || (trackedExec?.status === 'running' ? trackedId : '')
+    if (!target) {
+      message.info('当前没有运行中的执行')
+      return
+    }
     try {
-      await executionAPI.stop(id)
+      await executionAPI.stop(target)
       message.success('已停止执行')
       loadExecutions()
     } catch (err) {
       handleApiError(err, '停止失败')
+    }
+  }
+
+  // ---- start a new run from this page ----
+  const openStartModal = async () => {
+    try {
+      const res = await testCaseAPI.list()
+      const items = extractItems(res)
+      setCaseOptions(items)
+      if (!selectedCase && items.length) setSelectedCase(items[0].id)
+      setStartOpen(true)
+    } catch (err) {
+      handleApiError(err, '加载测试用例失败')
+    }
+  }
+
+  const handleStart = async () => {
+    if (!selectedCase) {
+      message.warning('请先选择测试用例')
+      return
+    }
+    try {
+      setStarting(true)
+      const res = await executionAPI.run(selectedCase)
+      const started = (res as any)?.data?.data ?? (res as any)?.data
+      message.success('已启动执行')
+      setStartOpen(false)
+      if (started?.id) setTrackedId(started.id)
+      await loadExecutions()
+    } catch (err) {
+      handleApiError(err, '启动执行失败')
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -626,6 +674,25 @@ export default function Executions() {
     return () => { cancelled = true }
   }, [trackedInfo?.testcase_id])
 
+  // 用例名称兜底：后端已带 testcase_name，这里只在旧数据/用例已删除时补一次
+  useEffect(() => {
+    const tcId = trackedInfo?.testcase_id
+    if (!tcId || caseNames[tcId]) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await testCaseAPI.get(tcId)
+        const d: any = res.data?.data ?? res.data
+        if (!cancelled && d?.name) {
+          setCaseNames(prev => ({ ...prev, [tcId]: d.name }))
+        }
+      } catch {
+        /* name is optional */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [trackedInfo?.testcase_id, caseNames])
+
   // poll the list while something is running
   useEffect(() => {
     if (!executions.some(e => e.status === 'running')) return
@@ -794,6 +861,15 @@ export default function Executions() {
 
   const currentStep = mergedSteps.find(s => s.status === 'running')
   const trackedExec = executions.find(e => e.id === trackedId)
+  const runningExec = executions.find(e => e.status === 'running')
+
+  // 标题处显示的用例名称：优先取正在运行的执行，其次取当前跟踪的执行
+  const currentCaseName =
+    runningExec?.testcase_name
+    || trackedExec?.testcase_name
+    || trackedInfo?.testcase_name
+    || (trackedInfo?.testcase_id ? caseNames[trackedInfo.testcase_id] : '')
+    || ''
 
   const columns = [
     {
@@ -803,10 +879,17 @@ export default function Executions() {
       render: (id: string) => id.slice(0, 8) + '...',
     },
     {
-      title: '测试用例 ID',
+      title: '测试用例',
       dataIndex: 'testcase_id',
       key: 'testcase_id',
-      render: (id: string) => id?.slice(0, 8) + '...' || '-',
+      render: (id: string, record: any) => (
+        <Space size={4}>
+          <span>{record?.testcase_name || '（用例已删除）'}</span>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {id?.slice(0, 8) + '…' || '-'}
+          </Text>
+        </Space>
+      ),
     },
     {
       title: '状态',
@@ -887,9 +970,35 @@ export default function Executions() {
 
   return (
     <div className="page-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>测试执行</Title>
-        <Button icon={<ReloadOutlined />} onClick={loadExecutions}>刷新</Button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <Title level={3} style={{ margin: 0 }}>测试执行</Title>
+          {/* 当前执行（或正在跟踪）的用例名称 —— 一眼看出在跑什么 */}
+          {currentCaseName && (
+            <Tag color="blue" style={{ marginInlineEnd: 0, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <ExperimentOutlined /> {currentCaseName}
+            </Tag>
+          )}
+        </div>
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={openStartModal}
+            disabled={executions.some(e => e.status === 'running')}
+          >
+            启动
+          </Button>
+          <Button
+            danger
+            icon={<PauseCircleOutlined />}
+            onClick={() => handleStop()}
+            disabled={!executions.some(e => e.status === 'running')}
+          >
+            停止
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={loadExecutions}>刷新</Button>
+        </Space>
       </div>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
@@ -1177,6 +1286,42 @@ export default function Executions() {
               </Text>
             </div>
           </>
+        )}
+      </Modal>
+
+      {/* ---------- start a new execution ---------- */}
+      <Modal
+        title="启动测试执行"
+        open={startOpen}
+        onCancel={() => setStartOpen(false)}
+        onOk={handleStart}
+        confirmLoading={starting}
+        okText="启动"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            选择要执行的测试用例；执行开始后本页会自动跟踪这一次执行。
+          </Text>
+        </div>
+        <Select
+          style={{ width: '100%' }}
+          placeholder="选择测试用例"
+          showSearch
+          optionFilterProp="label"
+          value={selectedCase || undefined}
+          onChange={(v: any) => setSelectedCase(v)}
+          options={caseOptions.map((c: any) => ({
+            value: c.id,
+            label: c.name || c.id,
+          }))}
+        />
+        {caseOptions.length === 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Text type="danger" style={{ fontSize: 12 }}>
+              暂无测试用例 —— 请先在「测试用例」页创建。
+            </Text>
+          </div>
         )}
       </Modal>
 

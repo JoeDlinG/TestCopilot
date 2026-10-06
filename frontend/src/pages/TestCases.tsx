@@ -8,7 +8,7 @@ import {
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
   DeleteOutlined, ApartmentOutlined, ReloadOutlined,
-  ExperimentOutlined, SettingOutlined
+  ExperimentOutlined, SettingOutlined, ClearOutlined
 } from '@ant-design/icons'
 import { testCaseAPI, executionAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
@@ -34,6 +34,13 @@ export default function TestCases() {
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [form] = Form.useForm()
+
+  // ---- rename / clear all ----
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renaming, setRenaming] = useState<TestCase | null>(null)
+  const [renamingSaving, setRenamingSaving] = useState(false)
+  const [renameForm] = Form.useForm()
+  const [clearing, setClearing] = useState(false)
 
   // ---- expanded steps + result parsing config ----
   const [flows, setFlows] = useState<Record<string, any>>({})
@@ -238,6 +245,70 @@ export default function TestCases() {
     }
   }
 
+  // ---- rename ----
+  const openRename = (tc: TestCase) => {
+    setRenaming(tc)
+    renameForm.setFieldsValue({ name: tc.name })
+    setRenameOpen(true)
+  }
+
+  const handleRename = async () => {
+    if (!renaming) return
+    let name = ''
+    try {
+      const values = await renameForm.validateFields()
+      name = String(values.name || '').trim()
+    } catch {
+      return
+    }
+    if (!name) {
+      message.warning('名称不能为空')
+      return
+    }
+    if (name === renaming.name) {
+      setRenameOpen(false)
+      return
+    }
+    try {
+      setRenamingSaving(true)
+      await testCaseAPI.update(renaming.id, { name })
+      message.success('已重命名')
+      setRenameOpen(false)
+      loadTestCases()
+    } catch (err) {
+      handleApiError(err, '重命名失败')
+    } finally {
+      setRenamingSaving(false)
+    }
+  }
+
+  // ---- clear the whole list ----
+  const handleClearAll = async () => {
+    if (testCases.length === 0) {
+      message.info('列表已经是空的')
+      return
+    }
+    try {
+      setClearing(true)
+      let failed = 0
+      for (const tc of testCases) {
+        try {
+          await testCaseAPI.delete(tc.id)
+        } catch {
+          failed += 1
+        }
+      }
+      if (failed) {
+        message.warning(`已清空，但有 ${failed} 个用例删除失败，请刷新后重试`)
+      } else {
+        message.success(`已清空 ${testCases.length} 个测试用例`)
+      }
+      await loadTestCases()
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const handleRun = async (tc: TestCase) => {
     try {
       await executionAPI.run(tc.id)
@@ -317,6 +388,13 @@ export default function TestCases() {
               onClick={() => handleRun(record)}
             />
           </Tooltip>
+          <Tooltip title="重命名">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openRename(record)}
+            />
+          </Tooltip>
           <Tooltip title="流程图编辑">
             <Button
               size="small"
@@ -343,6 +421,20 @@ export default function TestCases() {
         <Title level={3} style={{ margin: 0 }}>测试用例</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadTestCases}>刷新</Button>
+          <Popconfirm
+            title={`确定清空全部 ${testCases.length} 个测试用例？`}
+            description="用例及其流程图会被永久删除，此操作不可恢复。"
+            okText="清空"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={handleClearAll}
+          >
+            <Tooltip title="一键清空整个测试用例列表">
+              <Button icon={<ClearOutlined />} danger loading={clearing}>
+                一键清空
+              </Button>
+            </Tooltip>
+          </Popconfirm>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -391,6 +483,42 @@ export default function TestCases() {
             <Select mode="tags" placeholder="输入标签后回车" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* ---- rename ---- */}
+      <Modal
+        title="重命名测试用例"
+        open={renameOpen}
+        onCancel={() => setRenameOpen(false)}
+        onOk={handleRename}
+        confirmLoading={renamingSaving}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form
+          form={renameForm}
+          layout="vertical"
+          onFinish={handleRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !(e.target as any)?.tagName?.includes('TEXTAREA')) {
+              e.preventDefault()
+              handleRename()
+            }
+          }}
+        >
+          <Form.Item
+            name="name"
+            label="用例名称"
+            rules={[{ required: true, message: '请输入用例名称' }]}
+          >
+            <Input placeholder="输入新的用例名称" />
+          </Form.Item>
+        </Form>
+        {renaming && (
+          <div style={{ color: '#888', fontSize: 12 }}>
+            当前名称：{renaming.name}（ID {renaming.id}）
+          </div>
+        )}
       </Modal>
 
       {parserTarget && (

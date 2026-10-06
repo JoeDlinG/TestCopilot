@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-10-06: 执行界面启动/停止 + 流程图全屏与选中高亮 + 用例重命名/一键清空（v0.7.3）
+
+> 分支 `feature/flow-enhancements`
+
+### 1. 测试执行界面（Executions.tsx）
+
+- **标题显示当前执行的用例名称**：后端 `executions.py` 新增 `_testcase_names()`（一次 `select` 批量查
+  `TestCase.id/name`），`/run`、`/`、`/{id}` 三个接口统一回传 `testcase_name`；前端类型
+  `TestExecution` 补齐 `testcase_id / testcase_name / started_at / completed_at / total_steps /
+  passed_steps / failed_steps`。列表没有名字时前端按 `testcase_id` 逐个拉取补全（带缓存）
+- **启动 / 停止按钮**：
+  - 「启动」打开 Modal，从 `testCaseAPI.list()` 选一个用例 → `executionAPI.run(caseId)`
+    → 成功后自动选中该执行开始跟踪
+  - 「停止」优先停当前跟踪的执行，否则停列表里第一个 `running` 的执行；没有运行中的执行给提示
+  - 原「刷新」按钮保留，三个按钮同处工具栏
+
+### 2. 流程图编辑器（TestFlowEditor.tsx）
+
+- **全屏编辑**：工具栏新增「全屏 / 退出全屏」按钮，画布容器切到 `position: fixed; inset: 0`
+  铺满视口（脱离页面 header/侧边栏），Esc 退出
+- **选中高亮**：`useMemo` 派生 `displayNodes / displayEdges` 传给 ReactFlow ——
+  选中节点加 3px 蓝色外发光描边并提升 `zIndex`；选中连线改蓝色加粗（`strokeWidth: 3`）+ `animated`
+  流动效果，标签同步高亮；未选中连线统一 `strokeWidth: 2`
+
+### 3. 测试用例界面（TestCases.tsx）
+
+- **重命名**：列表每个用例新增「重命名」按钮 → Modal 输入新名称 → `testCaseAPI.update(id, {name})`，
+  空名称拦截
+- **一键清空**：工具栏「清空」按钮 + `Popconfirm` 二次确认（显示将删除的数量），
+  循环调用删除接口，统计失败数量并提示（部分失败会提示刷新重试）
+
+### 验证
+
+| 项目 | 结果 |
+|------|------|
+| `npx tsc --noEmit` | 通过 |
+| `python -m compileall app` | 通过 |
+| 后端接口 | `/run`、`GET /`、`GET /{id}` 均返回 `testcase_name` |
+
+---
+
 ## 2026-10-05: 延时节点 + 节点复制入口 + 并行流程生成 + 执行界面多列（v0.7.2）
 
 ### 1. 延时节点（单位：毫秒）

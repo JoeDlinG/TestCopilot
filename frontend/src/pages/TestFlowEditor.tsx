@@ -9,7 +9,7 @@
  *  - "Generate Code" → calls backend codegen → shows results in a Drawer
  *  - Save flow via API
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import ReactFlow, {
   Node, Edge, Controls, Background,
@@ -28,6 +28,7 @@ import {
   BranchesOutlined, SyncOutlined, ThunderboltOutlined,
   DeleteOutlined, DatabaseOutlined, ImportOutlined, ExportOutlined,
   CopyOutlined, SnippetsOutlined, DiffOutlined, ClockCircleOutlined,
+  FullscreenOutlined, FullscreenExitOutlined,
 } from '@ant-design/icons'
 import { testCaseAPI, deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError } from '../services/apiHelper'
@@ -334,6 +335,37 @@ export default function TestFlowEditor() {
   const [codeDrawerOpen, setCodeDrawerOpen] = useState(false)
   const [codeText, setCodeText] = useState('')
   const [codeLoading, setCodeLoading] = useState(false)
+
+  // 全屏编辑（Esc 退出）
+  const [fullscreen, setFullscreen] = useState(false)
+
+  // 选中的节点 / 连线加高亮：光靠节点配色的细微差别看不出选中了什么
+  const displayNodes = useMemo(() => nodes.map((n) => (
+    (n as any).selected
+      ? {
+          ...n,
+          zIndex: 10,
+          style: {
+            ...(n.style || {}),
+            boxShadow: '0 0 0 3px rgba(22,119,255,0.45)',
+            borderRadius: 8,
+          },
+        }
+      : n
+  )), [nodes])
+
+  const displayEdges = useMemo(() => edges.map((e) => (
+    (e as any).selected
+      ? {
+          ...e,
+          zIndex: 10,
+          animated: true,
+          style: { ...(e.style || {}), stroke: '#1677ff', strokeWidth: 3 },
+          labelStyle: { ...(e.labelStyle || {}), fill: '#1677ff', fontWeight: 600 },
+          labelBgStyle: { ...(e.labelBgStyle || {}), fill: '#e6f4ff' },
+        }
+      : { ...e, style: { strokeWidth: 2, ...(e.style || {}) } }
+  )), [edges])
 
   const reactFlowRef = useRef<ReactFlowInstance | null>(null)
 
@@ -766,6 +798,9 @@ export default function TestFlowEditor() {
         e.preventDefault()
         handleDuplicate()
       }
+      if (e.key === 'Escape') {
+        setFullscreen(false)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -773,7 +808,16 @@ export default function TestFlowEditor() {
 
   // ---- Render ----
   return (
-    <div className="page-container" style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
+    <div
+      className="page-container"
+      style={fullscreen ? {
+        // 全屏：脱离页面布局铺满视口，Esc 退出
+        position: 'fixed', inset: 0, zIndex: 1200, background: '#fff',
+        padding: 16, display: 'flex', flexDirection: 'column',
+      } : {
+        height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column',
+      }}
+    >
       <Breadcrumb
         items={[
           { title: <a onClick={() => navigate('/')}><HomeOutlined /> 首页</a> },
@@ -810,6 +854,14 @@ export default function TestFlowEditor() {
           <Divider type="vertical" />
           <Tooltip title="选中节点或边后点击删除（开始/结束不可删）">
             <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>删除选中</Button>
+          </Tooltip>
+          <Tooltip title={fullscreen ? '退出全屏 Esc' : '全屏编辑（画布铺满窗口）'}>
+            <Button
+              icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+              onClick={() => setFullscreen(v => !v)}
+            >
+              {fullscreen ? '退出全屏' : '全屏'}
+            </Button>
           </Tooltip>
           <Button icon={<SaveOutlined />} type="primary" onClick={handleSaveFlow}>保存流程图</Button>
           <Button
@@ -857,8 +909,8 @@ export default function TestFlowEditor() {
         {/* ---- Flow canvas ---- */}
         <Card bodyStyle={{ padding: 0, height: '100%' }} style={{ flex: 1 }}>
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={displayNodes}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
