@@ -568,6 +568,16 @@ class PeakCANPlugin(BaseProtocolPlugin):
         from the UI/terminal, so JSON object strings are normalized to dicts
         here — otherwise they would be parsed as a CAN ``id#data`` string.
         """
+        # Recognise python-can pseudo-code typed in the terminal (e.g.
+        # ``bus.send_periodic(can.Message(arbitration_id=0x20, ...), 0.2)`` or
+        # ``bus.send(can.Message(...))``) and rewrite it to the JSON command the
+        # plugin actually understands. Without this the string falls through to
+        # ``_parse_can_string`` and dies with "Invalid CAN string format".
+        if isinstance(data, str):
+            translated = self._translate_python_can(data)
+            if translated is not None:
+                return await self.send(translated)
+
         if isinstance(data, str) and data.strip().startswith("{"):
             try:
                 parsed = json.loads(data)
@@ -635,6 +645,130 @@ class PeakCANPlugin(BaseProtocolPlugin):
 
             return can.Message(**msg_kwargs)
         raise ValueError(f"Unsupported send payload type: {type(data)}")
+
+    # ------------------------------------------------------------------ #
+    # python-can pseudo-code translation (terminal / stray AI steps)
+    # ------------------------------------------------------------------ #
+    # A user (or a generated step) may type ``bus.send_periodic(can.Message(...), 0.2)``
+    # or ``bus.send(can.Message(...))`` into the debug terminal. The plugin only
+    # speaks JSON dicts and ``id#data`` strings, so we recognise the call here
+    # and rewrite it to the equivalent JSON command — otherwise it falls through
+    # to ``_parse_can_string`` and dies with "Invalid CAN string format".
+    _PYCAN_CALL_RE = re.compile(
+        r"^\s*(?:(?:bus|self\._bus)\s*\.\s*)?"
+        r"(?P<fn>send_periodic|send_cyclic|cyclic_send|send|recv|receive|can\.Message|Message)"
+        r"\s*\(",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _balanced_paren(text: str, open_idx: int) -> str:
+        """Return the substring inside the ``(`` at ``open_idx`` (through its
+        matching ``)``)."""
+        depth = 0
+        for i in range(open_idx, len(text)):
+            ch = text[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return text[open_idx + 1 : i]
+        return text[open_idx + 1 :]
+
+    @classmethod
+    def _parse_message_kwargs(cls, args: str) -> Dict[str, Any]:
+        """Parse ``can.Message(...)`` kwargs into a JSON command dict."""
+        out: Dict[str, Any] = {}
+
+        m = re.search(r"arbitration_id\s*=\s*(0x[0-9A-Fa-f]+|\d+)", args, re.IGNORECASE)
+        if m:
+            tok = m.group(1)
+            out["arbitration_id"] = int(tok, 16) if tok.lower().startswith("0x") else int(tok)
+
+        data: Optional[List[int]] = None
+        m = re.search(r"data\s*=\s*\[([^\]]*)\]", args, re.IGNORECASE)
+        if m:
+            data = [
+                int(x, 16) if x.lower().startswith("0x") else int(x)
+                for x in re.findall(r"0x[0-9A-Fa-f]+|\d+", m.group(1))
+            ]
+        else:
+            m = re.search(r"data\s*=\s*bytes\s*\(\s*\[([^\]]*)\]\s*\)", args, re.IGNORECASE)
+            if m:
+                data = [
+                    int(x, 16) if x.lower().startswith("0x") else int(x)
+                    for x in re.findall(r"0x[0-9A-Fa-f]+|\d+", m.group(1))
+                ]
+        if data is not None:
+            out["data"] = data
+
+        for flag in ("is_extended_id", "is_fd", "is_remote_frame"):
+            m = re.search(flag + r"\s*=\s*(True|False|true|false|1|0)", args, re.IGNORECASE)
+            if m:
+                out[flag] = m.group(1).lower() in ("true", "1")
+
+        m = re.search(r"dlc\s*=\s*(\d+)", args, re.IGNORECASE)
+        if m:
+            out["dlc"] = int(m.group(1))
+        return out
+
+    @classmethod
+    def _translate_python_can(cls, text: str) -> Optional[Dict[str, Any]]:
+        """Translate python-can pseudo-code into a JSON command dict (or ``None``).
+
+        Covers:
+          * ``bus.send_periodic(can.Message(...), 0.2)`` → ``send_periodic``
+            (``period_ms`` = the seconds argument × 1000)
+          * ``bus.send(can.Message(...))`` / ``can.Message(...)`` → single send
+          * ``bus.recv(timeout=2.0)`` → ``receive``
+        """
+        if not isinstance(text, str):
+            return None
+        s = text.strip()
+        m = cls._PYCAN_CALL_RE.match(s)
+        if not m:
+            return None
+        fn = m.group("fn").lower()
+        open_idx = m.end() - 1  # index of the opening '('
+        args = cls._balanced_paren(s, open_idx)
+
+        if fn in ("recv", "receive"):
+            tm = re.search(r"timeout\s*=\s*([0-9.]+)", args, re.IGNORECASE)
+            return {"action": "receive", "timeout": float(tm.group(1)) if tm else 0.05}
+
+        # Locate can.Message(...) if it is wrapped by a bus.* call.
+        msg_args = args
+        msg_open: Optional[int] = None
+        msg_m = re.search(r"can\.Message\s*\(", args, re.IGNORECASE)
+        if msg_m:
+            msg_open = msg_m.end() - 1
+            msg_args = cls._balanced_paren(args, msg_open)
+
+        cmd = cls._parse_message_kwargs(msg_args)
+        if fn in ("can.message", "message"):
+            return cmd or None
+
+        if fn in ("send_periodic", "send_cyclic", "cyclic_send"):
+            cmd["action"] = "send_periodic"
+            period: Optional[float] = None
+            if msg_open is not None:
+                # The seconds argument sits after can.Message(...) closes.
+                after_msg = args[msg_open + len(msg_args) + 2 :]
+                pm = re.search(r"([0-9]*\.?[0-9]+)", after_msg)
+                if pm:
+                    period = float(pm.group(1))
+            if period is None:
+                raise ValueError(
+                    "send_periodic 需要周期参数（秒），例如 bus.send_periodic(msg, 0.2)"
+                )
+            cmd["period_ms"] = period * 1000.0
+            return cmd
+
+        # Plain single send.
+        if "arbitration_id" not in cmd:
+            return None
+        return cmd
 
     # ------------------------------------------------------------------ #
     # Periodic / cyclic transmission

@@ -63,6 +63,13 @@ class ExecutionEngine:
     _JSON_CMD_RE = re.compile(r"\{[^{}]*\}")
     # python-can string form: "123#11223344AABBCCDD"
     _CAN_STR_RE = re.compile(r"\b([0-9A-Fa-f]{1,8})#([0-9A-Fa-f]{0,128})\b")
+    # python-can pseudo-code the AI/user may write, e.g.
+    #   bus.send_periodic(can.Message(arbitration_id=0x20, ...), 0.2)
+    _PYCAN_FN_RE = re.compile(
+        r"(?:(?:bus|self\._bus)\s*\.\s*)?"
+        r"(?:send_periodic|send_cyclic|cyclic_send|send|recv|receive|can\.Message)\s*\(",
+        re.IGNORECASE,
+    )
     # keys that identify a dict as a *device command*, not a random object
     _JSON_CMD_KEYS = frozenset({
         "action", "arbitration_id", "can_id", "is_extended_id", "is_fd",
@@ -89,6 +96,35 @@ class ExecutionEngine:
             if isinstance(obj, dict) and cls._JSON_CMD_KEYS & set(obj):
                 found.append(raw)
         return found
+
+    @classmethod
+    def _python_can_commands(cls, text: str) -> List[str]:
+        """Pull python-can pseudo-code calls (``bus.send_periodic(...)`` etc.)
+        out of free text, honouring nested ``can.Message(...)`` parentheses.
+
+        A call whose ``(`` sits *inside* an already-matched outer call (e.g. the
+        ``can.Message(...)`` inside ``bus.send_periodic(can.Message(...), 0.2)``)
+        is not reported again — otherwise the executor would send the same frame
+        twice.
+        """
+        spans: List[tuple] = []  # (start, end, expr)
+        for m in cls._PYCAN_FN_RE.finditer(text or ""):
+            open_idx = m.end() - 1
+            depth = 0
+            for i in range(open_idx, len(text)):
+                ch = text[i]
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        spans.append((m.start(), i + 1, text[m.start() : i + 1]))
+                        break
+        return [
+            expr
+            for start, end, expr in spans
+            if not any(s < start < e for s, e, _ in spans)
+        ]
 
     @classmethod
     def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
@@ -120,6 +156,7 @@ class ExecutionEngine:
         found.extend(
             f"{m.group(1)}#{m.group(2)}" for m in cls._CAN_STR_RE.finditer(text)
         )
+        found.extend(cls._python_can_commands(text))
         if not found:
             # tolerate commands written without the trailing ";"
             found.extend(cls._CMD_RE_LOOSE.findall(text))
@@ -161,6 +198,9 @@ class ExecutionEngine:
             return None
         # python-can string form: 123#11223344
         if re.match(r"^[0-9A-Fa-f]{1,8}#[0-9A-Fa-f]*$", text):
+            return "peakcan"
+        # python-can pseudo-code: bus.send_periodic(...) / bus.send(...) / bus.recv(...)
+        if ExecutionEngine._PYCAN_FN_RE.match(text):
             return "peakcan"
         if text.startswith("@"):
             return "mini_gateway100"

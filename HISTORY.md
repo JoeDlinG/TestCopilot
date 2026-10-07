@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-10-07: BugFix — 调试终端 python-can 语法被当 CAN 字符串报错（v0.8.1）
+
+> 现象：调试终端输入 `bus.send_periodic(can.Message(arbitration_id=0x20, ...), 0.2)` 报
+> `Invalid CAN string format: 'bus.send_periodic(...)'`，PeakCAN 一条都没发（命令根本没进发送逻辑）。
+
+### 根因
+
+PeakCAN 插件 `send()` 只认三种输入：JSON 字典（可带 `action`）、`"ID#DATA"` 字符串、以及 `{` 开头的 JSON 字符串。
+用户（或某个没按 skill 写的步骤）在调试终端直接输入 **python-can 库调用**（`bus.send_periodic(...)` / `bus.send(...)` /
+`bus.recv(...)` / `can.Message(...)`），这类字符串不是 `{` 开头、也不含 `#`，于是被 `_parse_can_string` 当 CAN 字符串
+解析 → 抛 `Invalid CAN string format`，命令在进发送逻辑前就死了。
+
+### 修复（彻底：翻译层 + 执行链识别）
+
+- **PeakCAN 插件 `send()` 顶部新增 `_translate_python_can()`**：识别 python-can 风格调用并改写成插件自己的 JSON 命令——
+  - `bus.send_periodic(can.Message(arbitration_id=0x20, data=[...]), 0.2)` → `{"action":"send_periodic", ..., "period_ms": 200.0}`
+    （周期按秒参数 × 1000，**不是写死 200ms**，`0.5`→500ms、`0.1`→100ms）
+  - `bus.send(can.Message(...))` / `can.Message(...)` → 单发
+  - `bus.recv(timeout=2.0)` / `bus.recv()` → `{"action":"receive", ...}`
+  - 支持 `bus.` / `self._bus.` 前缀、`0x` 十六进制 ID、`data=[...]` 列表、`is_extended_id/is_fd/dlc` 等关键字；
+    用括号平衡扫描处理 `can.Message(...)` 嵌套，不误伤普通文本。
+- **执行引擎同步识别**：`_extract_commands` 新增 `_python_can_commands()`（括号平衡提取、去重嵌套 `can.Message`），
+  `_infer_protocol` 识别 python-can 调用 → `peakcan`（保证执行引擎按协议选到 PeakCAN，不再落空）。
+
+### 验证
+
+| 项目 | 结果 |
+|------|------|
+| 单元（翻译） | `bus.send_periodic`→`period_ms=200`；`bus.send`→单发；`bus.recv`→receive；`self._bus.send_periodic(...0.5)`→`500ms` |
+| 提取去重 | 文本里 `bus.send_periodic(can.Message(...), 0.2)` 只提取 1 条命令（不再把内层 `can.Message` 当第二条） |
+| 调试终端 WebSocket（真实 can0） | 原报错命令现在返回 `periodic_started`；`bus.send`→`sent`；`stop_periodic`→`periodic_stopped` |
+| 回环自检（loopback，真实硬件） | 单发帧回环 `data=112233` 成功收到；周期发每 200ms 连续回环 3 帧 `32 0102`——帧确实出/回适配器 |
+| `python -m compileall app plugins/peakcan_plugin.py` | 通过 |
+
+> 备注：`can0` 控制器 `berr-counter tx≈100 rx=0`（ERROR-WARNING）——发出的帧没有节点应答。回环自检已证明
+> 软件/驱动链路正常，此残留属**硬件层**问题（对端 MG100 未上总线 / 波特率 / 终端电阻 / 监听模式），
+> 需在硬件侧排查；软件侧"命令不被识别"的 bug 已彻底修复。
+
+---
+
 ## 2026-10-06: 修复 PeakCAN「只收不发」+ 生成设备丢失 + 运行时按图执行（v0.8.0）
 
 > 分支 `feature/flow-enhancements`。问题根源：用例生成的 PeakCAN 分支设备栏为空、执行时 PeakCAN 一条报文都没发。

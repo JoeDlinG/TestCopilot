@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-10-06
+> 最后更新：2026-10-07
 
 ---
 
@@ -73,6 +73,8 @@
   消除与请求会话的并发冲突；顺带清理残留 running 执行
 - **v0.8.0**（增强版，同分支）：PeakCAN「只收不发」修复 + 生成设备回填 + PeakCAN 周期发送(period_ms 参数化) +
   运行时按 edges 执行（condition 分支 / loop 迭代）
+- **v0.8.1**（修复版，同分支）：调试终端识别 python-can 语法（`bus.send_periodic(...)` 等）——
+  插件翻译层 + 执行引擎命令提取/协议识别，消除 `Invalid CAN string format`
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -82,6 +84,19 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.1 — BugFix：调试终端识别 python-can 语法（2026-10-07，分支 `feature/flow-enhancements`）
+
+> 现象：终端输入 `bus.send_periodic(can.Message(...), 0.2)` 报 `Invalid CAN string format`，命令未进发送逻辑。
+
+- [x] **根因**：PeakCAN 插件只认 JSON 字典 / `ID#DATA` / `{` 开头字符串，python-can 库调用（`bus.send_periodic` /
+      `bus.send` / `bus.recv` / `can.Message`）被当 CAN 字符串解析而报错
+- [x] **修复**：插件 `send()` 顶部加 `_translate_python_can()` 翻译层（周期按秒参数×1000，非写死；支持 `bus.`/`self._bus.`
+      前缀、`0x` ID、`data=[...]`、`is_extended_id/is_fd/dlc`，括号平衡处理嵌套）；执行引擎 `_extract_commands` 加
+      `_python_can_commands()`（去重嵌套）+ `_infer_protocol` 识别 → `peakcan`
+- [x] 验证（真实 can0）：WebSocket 终端原命令返回 `periodic_started`；`bus.send`→`sent`；`stop_periodic`→`periodic_stopped`；
+      回环自检单发帧 `112233`、周期发每 200ms 回环 `32 0102` 均成功收到——软件/驱动链路跑通；`compileall` 通过
+- [ ] 待硬件侧排查：`can0` `berr-counter tx≈100`（无节点 ACK），帧已发出但需确认对端 MG100 在总线/波特率/终端电阻
 
 ### v0.8.0 — PeakCAN「只收不发」修复 + 生成设备回填 + 运行时按图执行（2026-10-06，分支 `feature/flow-enhancements`）
 
