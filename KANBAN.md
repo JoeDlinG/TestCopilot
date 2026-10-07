@@ -75,6 +75,7 @@
   运行时按 edges 执行（condition 分支 / loop 迭代）
 - **v0.8.1**（修复版，同分支）：调试终端识别 python-can 语法（`bus.send_periodic(...)` 等）——
   插件翻译层 + 执行引擎命令提取/协议识别，消除 `Invalid CAN string format`
+- **v0.8.2**（修复版，同分支）：MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（`send_periodic` 窗口 + 循环 `MSGRX` 重叠）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -84,6 +85,15 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.2 — MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（2026-10-07，分支 `feature/flow-enhancements`）
+
+- [x] **MG100 内在逻辑写入 skill**：定义 RX ID 后只过滤锁存该 ID、仅在 `MSGRX` 时读取返回；
+      未定义 RX 时监控总线上所有报文
+- [x] **收发时序对齐写入生成 skill**（`ai_service` 提示词 + MG100 skill 生成要求）：
+      接收命令只读执行那一刻的报文 → 禁止「先发一次再读一次」；发送方周期/重复发送、接收方同窗口反复轮询
+- [x] 验证：`compileall` 通过；真实生成（DeepSeek）产出 PeakCAN `send_periodic(period_ms=200)` + 3s 窗口 /
+      MG100 `CONFIG RX 0X20` + loop 反复 `MSGRX`，同属并行组——时序对齐
 
 ### v0.8.1 — BugFix：调试终端识别 python-can 语法（2026-10-07，分支 `feature/flow-enhancements`）
 

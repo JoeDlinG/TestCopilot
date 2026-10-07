@@ -630,6 +630,17 @@ For every such case:
 Default to two parallel flows when the requirement mentions exactly two devices; use
 one independent flow per device when there are more.
 
+SEND/RECEIVE TIMING ALIGNMENT (cross-device send<->receive, e.g. PeakCAN sends, Mini Gateway 100 MSGRX):
+- A receive/poll command (e.g. MG100 `MSGRX`) only returns data that is on the bus AT THE MOMENT it
+  runs — a frame sent afterwards is missed. NEVER emit "sender sends once, then receiver polls once"
+  as a strict sequential pair.
+- Make the sender and receiver OVERLAP in time: have the sender transmit repeatedly/periodically
+  (PeakCAN `send_periodic` with `period_ms`; MG100 `PROCESS` MSGTX), and have the receiver poll during
+  that same window (repeated `MSGRX`, or a loop + delay), so a fresh frame is always available when
+  the receiver reads.
+- Mind MG100 RX filtering: a configured RX ID is only read while `MSGRX` runs (with no RX config it
+  monitors every bus message). Align the receiver's `MSGRX` with the sender's transmission window.
+
 Output ONLY the JSON object. No markdown fences, no explanatory text. Preserve this exact top-level key: "test_cases" (array)."""
 
         # Attach plugin skills (explicit + auto-detected from requirements) so

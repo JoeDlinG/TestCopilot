@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-10-07: MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（v0.8.2）
+
+> 联调已跑通（PeakCAN 发 ↔ MG100 收），本轮把两条实测结论固化进 skill/prompt，让 AI 生成即对齐。
+
+### 1. MG100 内在逻辑写入 `mini_gateway100_skill.md`（新增 2.4.1）
+
+- 定义 RX 消息 ID（`@11_CONFIG=CAN1,RX,RPLY1,STD,0X20;`）后，MG100 **只过滤并锁存该 ID**，且**只在执行
+  `MSGRX` 时才读取返回**——之前到站的帧不会主动上报，必须「发一次 MSGRX 取一次」。
+- 未定义任何 RX ID 时，MG100 会**监控总线上所有报文**（不做 ID 过滤）。
+
+### 2. 收发时序对齐写入生成 skill（`ai_service.py` 系统提示词 + `mini_gateway100_skill.md` 生成要求）
+
+- 新增 `SEND/RECEIVE TIMING ALIGNMENT` 规则：接收/轮询命令（如 `MSGRX`）只读「执行那一刻」总线上的报文，
+  **禁止「先发一次、再读一次」的串行时序**；发送方必须周期/重复发送（PeakCAN `send_periodic`、MG100
+  `PROCESS` MSGTX），接收方在同一窗口内反复轮询，让收发时间重叠。
+- MG100 skill 的生成要求补一条跨设备收发联调要点（同上）。
+
+### 验证（真实生成）
+
+| 项目 | 结果 |
+|------|------|
+| `compileall app` | 通过 |
+| skill 内容加载 | `RX 过滤与读取时序` / `只在执行 MSGRX 时才读取返回` / `监控总线上所有报文` 均已注入生成上下文 |
+| 真实生成（DeepSeek，需求「PeakCAN 每 200ms 发 0x20，MG100 接收显示」） | PeakCAN 侧 `send_periodic(period_ms=200)` + 3s 发送窗口；MG100 侧 `CONFIG RX 0X20` + **loop 反复 MSGRX**，两者同属并行组「并行:PeakCAN-MG100-CAN周期收发」——时序对齐 |
+
+---
+
 ## 2026-10-07: BugFix — 调试终端 python-can 语法被当 CAN 字符串报错（v0.8.1）
 
 > 现象：调试终端输入 `bus.send_periodic(can.Message(arbitration_id=0x20, ...), 0.2)` 报

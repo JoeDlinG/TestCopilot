@@ -90,6 +90,14 @@ keywords: mini gateway, mini gateway 100, minigateway, mg100, 网关, gateway
 - 应答：`CAN1,RPLY1,0X850102`（有数据）或 `CAN1,RPLY1,0X`（**空数据 = 未收到报文**）。
 - **判定超时**：应答中 `0X` 后无数据字节，即视为未收到回复，用例应输出 `time out`。
 
+### 2.4.1 RX 过滤与读取时序（关键，已实测）
+
+- **定义了 RX 消息 ID 后**（如 `@11_CONFIG=CAN1,RX,RPLY1,STD,0X20;`），MG100 只**过滤并锁存该 ID** 的报文，
+  并且**只在执行 `MSGRX` 时才读取返回**——`MSGRX` 之前到站的帧不会主动上报，必须「发一次 `MSGRX`、取一次」。
+- **未定义任何 RX 消息 ID 时**，MG100 会**监控总线上所有报文**（不做 ID 过滤），此时 `MSGRX` 读到的是总线上任意报文。
+- 联调含义：要用 `MSGRX` 精确读取某个 ID，必须 ① 先 `CONFIG` 该 RX ID；② 让对端发送与该 `MSGRX` **时序对齐**
+  （对端持续/周期发送，MG100 在发送进行中执行 `MSGRX`）。否则 `MSGRX` 只能读到空数据 `0X`（判定为 `time out`）。
+
 ### 2.5 标准 CAN 用例流程
 
 ```
@@ -220,3 +228,6 @@ keywords: mini gateway, mini gateway 100, minigateway, mg100, 网关, gateway
   并注意 PROCESS 槽位有限（最多 32 个），别滥用。
 - 所有十六进制统一用大写 `0X`；波特率统一用 `500K` / `1000K` 这类大写写法。
 - 接收判定：MSGRX 返回空数据（`0X`）即提示 `time out`。
+- 跨设备收发联调（如 PeakCAN 发 ↔ MG100 收）：`MSGRX` 只读「执行那一刻」总线上已锁存的报文，所以
+  发送方必须**周期/重复发送**（PeakCAN `send_periodic`、MG100 `PROCESS` MSGTX），让收发在时间上重叠，
+  不要生成「先发一次、再读一次」的串行时序。
