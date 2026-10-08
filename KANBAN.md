@@ -76,6 +76,7 @@
 - **v0.8.1**（修复版，同分支）：调试终端识别 python-can 语法（`bus.send_periodic(...)` 等）——
   插件翻译层 + 执行引擎命令提取/协议识别，消除 `Invalid CAN string format`
 - **v0.8.2**（修复版，同分支）：MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（`send_periodic` 窗口 + 循环 `MSGRX` 重叠）
+- **v0.8.3**（修复版，同分支）：peakcan skill 补「禁止生成 open/close」；真实硬件端到端跑通（MG100 读到 `0X010203`）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -85,6 +86,13 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.3 — PeakCAN skill 补「禁止 open/close」+ 真实硬件端到端跑通（2026-10-08，分支 `feature/flow-enhancements`）
+
+- [x] **peakcan skill**：通道开关由平台「设备管理」负责；插件只支持 `send/send_periodic/stop_periodic/receive/scan/diagnose`，
+      **禁止生成 `open`/`close`**（三处写明：连接配置 / 测试场景模板 / 命令必须写进结构化字段）
+- [x] **真实硬件端到端**：PeakCAN `send_periodic` 4/4 通过；MG100 `CONFIG RX 0X20` + loop 10× `MSGRX` 11/12 通过，
+      **读到 `0X010203`**（PeakCAN 发的 ID 0x20 / data 01 02 03）——整条链路发→收跑通
 
 ### v0.8.2 — MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（2026-10-07，分支 `feature/flow-enhancements`）
 

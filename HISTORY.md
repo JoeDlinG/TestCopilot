@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-10-08: PeakCAN skill 补「禁止生成 open/close」+ 真实硬件端到端跑通（v0.8.3）
+
+### skill 更新（`peakcan_skill.md`）
+
+- 通道的打开/关闭由平台「设备管理」负责，插件只支持 `send / send_periodic / stop_periodic / receive / scan / diagnose`
+  六个 action；**禁止生成 `open` / `close` 步骤**（会报「未知 action」）。已在「连接配置」「测试场景模板」
+  「命令必须写进结构化字段」三处写明。
+
+### 真实硬件端到端验证（补 v0.8.2）
+
+| 用例 | 结果 |
+|------|------|
+| PeakCAN 周期发送（`send_periodic` 200ms → 3s 窗口 → `stop_periodic`） | ✅ 4/4 通过 |
+| MG100 接收（`CONFIG RX 0X20` → `TSTRT` → loop 10× `MSGRX`） | ✅ 11/12 通过，**读到 `0X010203`**（= PeakCAN 发的 ID 0x20 / data 01 02 03） |
+
+> 导入前剔除了 PeakCAN 用例里 AI 生成的 `open`/`close` 两步（插件不支持），其余步骤一次跑通。
+
+---
+
 ## 2026-10-07: MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（v0.8.2）
 
 > 联调已跑通（PeakCAN 发 ↔ MG100 收），本轮把两条实测结论固化进 skill/prompt，让 AI 生成即对齐。
