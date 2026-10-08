@@ -36,7 +36,7 @@ class TestGenService:
         test_cases_data = parsed.get("test_cases", [])
 
         saved_cases = await self._save_cases(
-            db, test_cases_data, requirements, model_id
+            db, test_cases_data, requirements, model_id, available_devices
         )
 
         return {

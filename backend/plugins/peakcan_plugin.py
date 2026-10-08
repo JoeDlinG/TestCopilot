@@ -887,6 +887,18 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 if time.monotonic() >= deadline:
                     return None
                 continue
+            # In normal (non-loopback) mode, never surface our own TX frame that
+            # the kernel echoed back — otherwise the sent message shows up in our
+            # OWN terminal instead of the peer's, which reads as "the peer never
+            # received it". ``is_rx`` is False for looped-back own frames.
+            if (
+                not bool(self._config.get("loopback", False))
+                and getattr(msg, "is_rx", True) is False
+            ):
+                logger.debug("PeakCAN: skipped self-echo frame id=0x%X", msg.arbitration_id)
+                if time.monotonic() >= deadline:
+                    return None
+                continue
             return self._msg_to_dict(msg)
 
     async def _handle_action(self, data: dict) -> Any:
