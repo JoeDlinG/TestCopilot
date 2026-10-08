@@ -19,6 +19,7 @@ from app.communication import (
 )
 from app.services.plugin_service import plugin_service
 from app.services.com_logger import com_logger
+from app.services.program_logger import get_execution_log
 from app.api.websocket import (
     start_device_monitor,
     stop_device_monitor,
@@ -309,6 +310,11 @@ class DeviceService:
 
         # Log sent command to file
         com_logger.log_sent(device_id, command, timestamp=start_time.isoformat())
+        # Mirror into the per-execution communication log (logs/executions/<id>/)
+        if execution_id:
+            _el = get_execution_log(execution_id)
+            if _el:
+                _el.communication(device_id, "SEND", str(command))
 
         # Push the sent command to the communication terminal in real time
         await broadcast_device_update(device_id, {
@@ -347,6 +353,10 @@ class DeviceService:
 
             # Log received response to file
             com_logger.log_received(device_id, response)
+            if execution_id:
+                _el = get_execution_log(execution_id)
+                if _el:
+                    _el.communication(device_id, "RECV", str(response))
 
             # Push the received response to the communication terminal in real time
             recv_ts = datetime.utcnow().isoformat()

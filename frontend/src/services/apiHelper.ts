@@ -48,17 +48,37 @@ export function extractTotal(response: any, fallback: number = 0): number {
  */
 function _errorMessage(err: any, defaultMsg: string): string {
   const body = err?.response?.data
-  if (!body) {
-    // No response at all — most likely a timeout or network error
+  const status = err?.response?.status
+  if (body === undefined || body === null) {
+    // No response at all — most likely a timeout, network error, or a local
+    // JS error thrown before the request was even sent.
     if (err?.code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
       return `${defaultMsg}（请求超时：AI 模型正在推理中，请稍后重试。推理模型可能需要 1-3 分钟生成回复。）`
     }
     if (err?.code === 'ERR_NETWORK' || err?.message?.includes('Network')) {
       return `${defaultMsg}（网络错误：请检查后端服务是否正常运行）`
     }
-    return defaultMsg
+    return err?.message ? `${defaultMsg}（${err.message}）` : defaultMsg
+  }
+  // Non-JSON body (e.g. an HTML error page from a proxy or an unhandled 500).
+  if (typeof body === 'string') {
+    const snippet = body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
+    return `${defaultMsg}（${status ? `HTTP ${status}: ` : ''}${snippet || '服务器返回了非 JSON 错误'}）`
   }
   const detail = body.detail
+  // FastAPI 422 validation errors: detail is an ARRAY of {loc, msg, type}.
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d: any) => {
+        if (typeof d === 'string') return d
+        const loc = Array.isArray(d?.loc)
+          ? d.loc.filter((x: any) => x !== 'body').join('.')
+          : ''
+        return `${loc ? `${loc}: ` : ''}${d?.msg || d?.type || JSON.stringify(d)}`
+      })
+      .filter(Boolean)
+    return msgs.length ? `${defaultMsg}（${msgs.join('；')}）` : defaultMsg
+  }
   if (typeof detail === 'string') return detail
   if (detail && typeof detail === 'object') {
     // Innermost detail is the most useful diagnostic

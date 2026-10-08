@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-10-08: 修复「AI 生成测试用例必失败」+ PeakCAN 自回环 + 新增执行日志（v0.8.5）
+
+> 对照 GitHub Issue #13 / #14 / #15。核心结论：**生成失败是前端 bug，不是后端**。
+
+### 1. Issue #13「生成测试用例必失败」——真正根因在前端（不是 NaN/Infinity）
+
+- **根因**：`AIChat.tsx` 的 `loadDevices()` 用 `extractData(res, [])` 取 `/api/devices/` 的返回，但该接口是**分页**结构
+  `{data: {items, total}}` → `devices` 被赋成**对象**；随后 `devicePayload()` 调 `devices.map()` 抛
+  `TypeError: devices.map is not a function`，异常发生在**调用生成 API 之前**，被 catch 成默认文案
+  「生成测试用例失败」。这正是「对话可以、生成必失败」的原因。
+- **修复**：`loadDevices` 改用 `extractItems(res)`（返回 `data.items` 数组）；`devicePayload` 加 `Array.isArray` 兜底。
+- **验证**：后端 `/api/ai/generate-testcases` 用用户截图里的原始需求实测 **HTTP 200 / 2 个用例**（后端本身没问题）。
+
+### 2. Issue #13 防御：后端 NaN/Infinity 序列化
+
+- `ai_service._sanitize_json()`：递归把 `NaN/Infinity` 换成 `null`，避免 Starlette JSON 编码（`allow_nan=False`）在
+  try/except 之外抛 500。
+
+### 3. Issue #15：前端错误提示退化
+
+- `apiHelper._errorMessage()` 现在能解析：422 的**数组 detail**（拼 `loc.msg`）、**非 JSON 错误体**（脱 HTML 后截断），
+  以及本地 JS 异常——不再一律退化成默认文案。
+
+### 4. Issue #14：PeakCAN 自回环（v0.8.4 已修，此处归档）
+
+- `peakcan_plugin.receive()`：非 loopback 模式跳过 `is_rx=false` 的自回环帧，发送方不再「收到」自己发的报文，
+  也不再被当作应答参与 PASS/FAIL。验证：跑周期发送用例，自回环帧 **+0**。
+
+### 5. 新增执行日志（便于事后分析）
+
+- 目录结构（`backend/logs/`）：
+  - `program/program_global.log` — 全局程序执行日志（root logger，**10MB 轮转**）
+  - `communication/<device_id>/comm_*.log` — 全局通信日志（已有，10MB 轮转）
+  - `executions/<execution_id>/` — **每次执行一个文件夹**：`program_*.log`（程序）+ `communication_*.log`（通信），均 10MB 轮转
+- 新增 `app/services/program_logger.py`；`main.lifespan` 安装全局 handler；`execution_service` 记录每步；
+  `device_service.send_command` 把收发镜像到该次执行的通信日志。
+- 新增浏览 API：`GET /api/logs/program/files`、`GET /api/logs/executions/{id}/files`、
+  `GET /api/logs/executions/{id}/file/{name}`。
+- 验证：跑一次执行 → `logs/executions/exec_xxx/` 生成 `program_001.log` + `communication_001.log`；
+  `logs/program/program_global.log` 同步增长。
+
+### 验证汇总
+
+| 项目 | 结果 |
+|------|------|
+| 后端生成（用户原始需求） | HTTP 200，2 个用例 |
+| 前端 `loadDevices`/`devicePayload` | `npx tsc --noEmit` 通过；逻辑改用 `extractItems` |
+| PeakCAN 自回环 | 执行后自回环帧 +0 |
+| 执行 | `tc_7653d5b2 passed 4/4` |
+| 日志 | per-execution 文件夹 + 全局程序日志均生成，10MB 轮转 |
+| `python -m compileall app` | 通过 |
+
+---
+
 ## 2026-10-08: PeakCAN skill 补「禁止生成 open/close」+ 真实硬件端到端跑通（v0.8.3）
 
 ### skill 更新（`peakcan_skill.md`）

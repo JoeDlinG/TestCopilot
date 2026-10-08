@@ -40,6 +40,13 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.REPORT_DIR, exist_ok=True)
     os.makedirs(settings.PLUGIN_DIR, exist_ok=True)
 
+    # Persist program execution logs to logs/program/ (10 MB rotation) so any
+    # run can be analysed afterwards. Communication logs go to logs/communication
+    # and per-run folders under logs/executions/<execution_id>/.
+    from app.services.program_logger import install_program_logging
+    install_program_logging()
+    logger.info("Program logging installed (logs/program, 10MB rotation)")
+
     await init_db()
     logger.info("Database initialized")
 

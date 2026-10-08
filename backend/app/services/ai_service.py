@@ -98,6 +98,26 @@ def _provider_with_min_tokens(model, min_tokens: int):
     )
 
 
+def _sanitize_json(value: Any) -> Any:
+    """Recursively replace NaN/Infinity with None.
+
+    ``json.loads`` happily parses the non-standard ``NaN`` / ``Infinity`` the
+    model sometimes emits, but Starlette's JSON encoder rejects them
+    (``allow_nan=False``) — which surfaced as a 500 raised *outside* the
+    endpoint's try/except (Issue #13). Sanitising before returning keeps the
+    response JSON-compliant.
+    """
+    if isinstance(value, float):
+        if value != value or value == float("inf") or value == float("-inf"):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json(v) for v in value]
+    return value
+
+
 def _slice_balanced(s: str, start: int, open_ch: str, close_ch: str) -> Optional[str]:
     """Return ``s[start:]`` up to the bracket matching ``open_ch`` at ``start``."""
     depth = 0
@@ -691,8 +711,8 @@ Output ONLY the JSON object. No markdown fences, no explanatory text. Preserve t
 
         return {
             "raw_response": response_text,
-            "parsed": parsed,
-            "usage": result.get("usage"),
+            "parsed": _sanitize_json(parsed),
+            "usage": _sanitize_json(result.get("usage")),
         }
 
     async def natural_language_query(

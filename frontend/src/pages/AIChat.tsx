@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { aiAPI, testCaseAPI, pluginAPI, deviceAPI } from '../services/api'
-import { extractData, handleApiError, _errorMessage } from '../services/apiHelper'
+import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
 import { useChatStore } from '../stores/chatStore'
 import type { AIModel, TestCase } from '../types'
 
@@ -62,7 +62,7 @@ export default function AIChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   /** Compact device payload sent to the generator (id + protocol + name). */
-  const devicePayload = () => devices.map((d: any) => ({
+  const devicePayload = () => (Array.isArray(devices) ? devices : []).map((d: any) => ({
     id: d.id,
     name: d.name,
     type: d.type,
@@ -91,7 +91,9 @@ export default function AIChat() {
   const loadDevices = async () => {
     try {
       const res = await deviceAPI.list()
-      setDevices(extractData(res, []) || [])
+      // /devices/ is paginated: { data: { items: [...], total } } — must use
+      // extractItems, not extractData (which returns the whole object).
+      setDevices(extractItems(res))
     } catch {
       /* device list is optional */
     }

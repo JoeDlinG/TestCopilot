@@ -108,3 +108,56 @@ async def export_logs_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# --------------------------------------------------------------------- #
+# Program / execution log files (logs/program, logs/executions/<id>)
+# --------------------------------------------------------------------- #
+@router.get("/program/files")
+async def list_program_log_files():
+    """List the global program execution log files (10 MB rotation)."""
+    from app.services.program_logger import list_program_logs
+
+    return {"code": 0, "message": "success", "data": list_program_logs()}
+
+
+@router.get("/executions/{execution_id}/files")
+async def list_execution_log_files(execution_id: str):
+    """List the per-run log files (program + communication) for one execution."""
+    from app.services.program_logger import list_execution_logs
+
+    return {
+        "code": 0,
+        "message": "success",
+        "data": {"execution_id": execution_id, "files": list_execution_logs(execution_id)},
+    }
+
+
+@router.get("/executions/{execution_id}/file/{name}")
+async def read_execution_log_file(
+    execution_id: str, name: str, tail_lines: int = Query(1000),
+):
+    """Read (the tail of) one per-run log file."""
+    import os
+
+    from app.services.program_logger import EXECUTIONS_DIR
+
+    # Path-traversal guard: only a bare file name inside the run folder.
+    if "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="非法的文件名")
+    path = os.path.join(EXECUTIONS_DIR, execution_id, name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"日志文件不存在: {name}")
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    content = "".join(lines[-max(1, tail_lines):])
+    return {
+        "code": 0,
+        "message": "success",
+        "data": {
+            "execution_id": execution_id,
+            "name": name,
+            "size": os.path.getsize(path),
+            "content": content,
+        },
+    }

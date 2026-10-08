@@ -77,6 +77,9 @@
   插件翻译层 + 执行引擎命令提取/协议识别，消除 `Invalid CAN string format`
 - **v0.8.2**（修复版，同分支）：MG100 RX 过滤/监控逻辑 + 收发时序对齐写入生成 skill（`send_periodic` 窗口 + 循环 `MSGRX` 重叠）
 - **v0.8.3**（修复版，同分支）：peakcan skill 补「禁止生成 open/close」；真实硬件端到端跑通（MG100 读到 `0X010203`）
+- **v0.8.4**（修复版，同分支）：PeakCAN `receive()` 过滤自回环帧（消息不再显示在发送方自己的终端，Issue #14）
+- **v0.8.5**（修复版，同分支）：修复「AI 生成测试用例必失败」（前端 `devicePayload` 分页解析 bug，Issue #13）+ 错误提示解析（#15）+
+  NaN/Infinity 序列化防御（#13）+ 新增执行日志（per-execution 文件夹 + 全局程序/通信日志，10MB 轮转）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -86,6 +89,19 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.5 — 修复「AI 生成测试用例必失败」+ 新增执行日志（2026-10-08，分支 `feature/flow-enhancements`）
+
+- [x] **Issue #13 根因**：前端 `AIChat.loadDevices()` 用 `extractData` 解析**分页**的 `/api/devices/`，`devices` 变成对象，
+      `devicePayload()` 调 `.map()` 抛 `TypeError`（发生在调用生成 API 之前）→ 默认文案「生成测试用例失败」。
+      修复：改用 `extractItems` + `Array.isArray` 兜底。实测后端接口本身 HTTP 200。
+- [x] **Issue #15**：`_errorMessage` 支持解析 422 数组 detail / 非 JSON 错误体 / 本地 JS 异常，不再退化成默认文案
+- [x] **Issue #13 防御**：`ai_service._sanitize_json()` 把 NaN/Infinity 换成 null，避免响应序列化 500
+- [x] **Issue #14**（v0.8.4）：`peakcan_plugin.receive()` 过滤 `is_rx=false` 自回环帧
+- [x] **执行日志**：`logs/program/`（全局程序日志 10MB 轮转）+ `logs/communication/`（全局通信）+ `logs/executions/<id>/`
+      （每次执行一个文件夹，program + communication，10MB 轮转）；新增浏览 API `/api/logs/program/files`、
+      `/api/logs/executions/{id}/files`、`/api/logs/executions/{id}/file/{name}`
+- [x] 验证：后端生成 200（2 用例）；`tc_7653d5b2 passed 4/4`；自回环帧 +0；per-execution 日志生成；`compileall` + `tsc` 通过
 
 ### v0.8.3 — PeakCAN skill 补「禁止 open/close」+ 真实硬件端到端跑通（2026-10-08，分支 `feature/flow-enhancements`）
 

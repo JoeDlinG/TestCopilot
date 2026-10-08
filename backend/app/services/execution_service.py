@@ -22,6 +22,7 @@ from app.models.models import (
 from app.services.device_service import device_service
 from app.services.response_parser import response_parser
 from app.services import flow_context
+from app.services.program_logger import start_execution_log, finish_execution_log
 from app.api.websocket import broadcast_execution_update
 
 logger = logging.getLogger(__name__)
@@ -606,6 +607,9 @@ class ExecutionEngine:
         stop_on_error = (options or {}).get("stop_on_error", True)
         timeout_per_step = (options or {}).get("timeout_per_step", 30000)
 
+        # One log folder per run: logs/executions/<execution_id>/
+        run_log = start_execution_log(execution_id)
+
         try:
             # Get execution steps (non-start/end nodes)
             step_nodes = [
@@ -889,6 +893,13 @@ class ExecutionEngine:
                     # 当前流程上下文（输入参数 / 输出返回值），便于在界面上追踪串联
                     "context": dict(ctx),
                 })
+                if run_log:
+                    run_log.program(
+                        f"step {step_index} [{step_result.status}] {label} | "
+                        f"cmd={step_result.command!r} -> actual={step_result.actual!r}"
+                        + (f" | error={step_result.error_message!r}"
+                           if step_result.error_message else "")
+                    )
                 return step_result.status
 
             # ---- graph walk (P2): follow edges, honour branches & loops ----
@@ -1030,6 +1041,7 @@ class ExecutionEngine:
             })
         finally:
             self._running_executions.pop(execution_id, None)
+            finish_execution_log(execution_id)
 
     async def get_execution(self, db: AsyncSession, execution_id: str) -> Optional[TestExecution]:
         result = await db.execute(
