@@ -80,6 +80,8 @@
 - **v0.8.4**（修复版，同分支）：PeakCAN `receive()` 过滤自回环帧（消息不再显示在发送方自己的终端，Issue #14）
 - **v0.8.5**（修复版，同分支）：修复「AI 生成测试用例必失败」（前端 `devicePayload` 分页解析 bug，Issue #13）+ 错误提示解析（#15）+
   NaN/Infinity 序列化防御（#13）+ 新增执行日志（per-execution 文件夹 + 全局程序/通信日志，10MB 轮转）
+- **v0.8.6**（优化/修复版，同分支）：启动按钮补 loading 反馈（实测后端仅 43~179ms，观感问题）+
+  代码生成回退下发原文时输出 ⚠️ 提示 + 修复 `test_codegen` 三处过期断言（既有失败）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -89,6 +91,19 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.8.6 — 启动反馈 + 代码生成提示 + 过期断言修复（2026-10-09，分支 `feature/flow-enhancements`）
+
+- [x] **启动「像卡住」**：实测 `POST /executions/run` 仅 43~179ms，真因是 `TestCases.handleRun` 没有 loading
+      状态。修复：新增 `runningId`，按钮点击即挂 spinner（`loading={runningId === record.id}`）
+- [x] **新增分支后生成代码「没指令」**：非 bug —— MG100 节点「执行命令」填的是中文描述，
+      `_extract_commands` 取不到指令，生成器回退为下发原文。改进：回退时输出
+      `# ⚠️ 未能解析出结构化设备指令…` 注释（该回退对 SCPI/串口是必需的，不能删）
+- [x] **正确操作**（告知用户）：节点命令填真实指令 `@11_TSTOP;` / `@11_CONFIG=CAN1,BAUDRATE,500K;` /
+      `@11_TSTRT;`；「保持 4000ms 窗口」节点应建成延时节点而非动作节点
+- [x] **修复 `Test/test_codegen.py` 过期断言**（既有失败）：`if voltage > 10:` → `if _cond(...)`；
+      `send_command('@11_HELLO;')` → `send_command(_r(...))`。生成器行为是有意且更优的，故改断言不改产品
+- [x] 验证：`tsc` 通过；`test_codegen` 5 组全绿；`tc_7653d5b2 passed 4/4`；生成代码语法合法且带 ⚠️ 提示
 
 ### v0.8.5 — 修复「AI 生成测试用例必失败」+ 新增执行日志（2026-10-08，分支 `feature/flow-enhancements`）
 

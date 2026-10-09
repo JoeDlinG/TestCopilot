@@ -357,6 +357,17 @@ class CodeGenService:
                     body_lines.append(f"{prefix}results['skipped'] += 1")
                     body_lines.append("")
                 else:
+                    if not commands:
+                        # The extractor found no real command, so the raw node
+                        # text is being sent verbatim. That is correct for
+                        # protocols like SCPI/serial (the command simply has no
+                        # ``@11_..;`` shape), but wrong when the field holds a
+                        # Chinese description — surface it so it is obvious.
+                        body_lines.append(
+                            f"{prefix}# ⚠️ 未能解析出结构化设备指令，此处直接下发节点原文；"
+                            f"若原文是中文描述而非真实指令，请在节点「执行命令」里填写真实指令"
+                            f"（如 @11_TSTOP; 或 JSON 命令）"
+                        )
                     wired = bool(device) and device != "None"
                     for cmd, count in collapse_runs(cmds):
                         # {占位符} 在运行时由上下文渲染，支持引用前序节点的输出

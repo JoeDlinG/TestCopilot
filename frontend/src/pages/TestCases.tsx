@@ -41,6 +41,9 @@ export default function TestCases() {
   const [renamingSaving, setRenamingSaving] = useState(false)
   const [renameForm] = Form.useForm()
   const [clearing, setClearing] = useState(false)
+  // Which test case is currently being started — gives the clicked row's
+  // button an immediate spinner instead of the UI looking frozen.
+  const [runningId, setRunningId] = useState<string | null>(null)
 
   // ---- expanded steps + result parsing config ----
   const [flows, setFlows] = useState<Record<string, any>>({})
@@ -310,12 +313,16 @@ export default function TestCases() {
   }
 
   const handleRun = async (tc: TestCase) => {
+    if (runningId) return // one at a time
     try {
+      setRunningId(tc.id)
       await executionAPI.run(tc.id)
       message.success(`开始执行: ${tc.name}`)
       navigate('/executions')
     } catch (err) {
       handleApiError(err, '执行失败')
+    } finally {
+      setRunningId(null)
     }
   }
 
@@ -385,6 +392,7 @@ export default function TestCases() {
               size="small"
               type="primary"
               icon={<PlayCircleOutlined />}
+              loading={runningId === record.id}
               onClick={() => handleRun(record)}
             />
           </Tooltip>

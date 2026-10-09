@@ -78,10 +78,13 @@ tstRT = code.count("@11_TSTRT;")
 tstop = code.count("@11_TSTOP;")
 check(tstRT == 1, f"true 分支只出现一次 (实际 {tstRT})")
 check(tstop == 1, f"false 分支只出现一次 (实际 {tstop})")
-check("if voltage > 10:" in code and "else:" in code, "生成 if/else 结构")
+# Conditions are evaluated at runtime against the flow context (so they may
+# reference node outputs / {占位符}), hence the `_cond(expr, ctx)` helper rather
+# than a literal `if voltage > 10:` (which would need a real Python variable).
+check("if _cond('voltage > 10', ctx):" in code and "else:" in code, "生成 if/else 结构")
 # TSTOP must sit inside the else block (deeper indent than the if)
 lines = code.splitlines()
-if_i = next(i for i, l in enumerate(lines) if "if voltage > 10:" in l)
+if_i = next(i for i, l in enumerate(lines) if "if _cond(" in l)
 else_i = next(i for i, l in enumerate(lines) if l.strip() == "else:")
 tstop_i = next(i for i, l in enumerate(lines) if "@11_TSTOP;" in l)
 check(tstop_i > else_i, "false 分支位于 else 之后（修复前会泄漏到 if/else 之外）")
@@ -95,8 +98,10 @@ nodes = [
     N("e", "end"),
 ]
 code = gen.generate_python(nodes, [{"source": "s", "target": "a"}, {"source": "a", "target": "e"}], "T3")
-check("send_command('@11_HELLO;')" in code, "生成真实指令 @11_HELLO;")
-check("send_command('@11_SYSID;')" in code, "生成真实指令 @11_SYSID;")
+# Commands are wrapped in `_r(cmd, ctx)` so {占位符} referring to earlier node
+# outputs are rendered at runtime.
+check("send_command(_r('@11_HELLO;', ctx))" in code, "生成真实指令 @11_HELLO;")
+check("send_command(_r('@11_SYSID;', ctx))" in code, "生成真实指令 @11_SYSID;")
 check("握手与版本" not in code.split("def run")[1].split("send_command")[0], "不再把整句自然语言当指令下发")
 check("assert float(response) > 0" in code, "预期结果生成数值判断")
 check(compiles(code), "生成代码语法合法")
