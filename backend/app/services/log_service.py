@@ -13,6 +13,7 @@ from app.models.models import CommunicationLog
 from app.core.config import settings
 
 import logging
+from app.core.timeutils import utc_now
 logger = logging.getLogger(__name__)
 
 
@@ -134,7 +135,7 @@ class LogService:
             offset += batch_size
 
         output.seek(0)
-        filename = f"communication_logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        filename = f"communication_logs_{utc_now().strftime('%Y%m%d_%H%M%S')}.csv"
         return output, filename
 
 

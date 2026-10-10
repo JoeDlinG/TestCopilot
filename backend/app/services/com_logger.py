@@ -8,6 +8,7 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional
+from app.core.timeutils import from_timestamp, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +66,14 @@ class CommunicationFileLogger:
 
     def _format_entry(self, direction: str, data: str, timestamp: Optional[str] = None) -> str:
         """Format a log entry line."""
-        ts = timestamp or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        ts = timestamp or utc_now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return f"[{ts}] {direction}: {data}\n"
 
     def log_sent(self, device_id: str, data: str, timestamp: Optional[str] = None):
         """Log a sent command."""
         try:
             device_dir = self._get_device_dir(device_id)
-            today = datetime.utcnow().strftime("%Y%m%d")
+            today = utc_now().strftime("%Y%m%d")
             current_file, _ = self._find_current_log(device_dir, today)
             entry = self._format_entry("SEND", data, timestamp)
             with open(current_file, "a", encoding="utf-8") as f:
@@ -85,7 +86,7 @@ class CommunicationFileLogger:
         """Log a received response or data."""
         try:
             device_dir = self._get_device_dir(device_id)
-            today = datetime.utcnow().strftime("%Y%m%d")
+            today = utc_now().strftime("%Y%m%d")
             current_file, _ = self._find_current_log(device_dir, today)
             entry = self._format_entry("RECV", data, timestamp)
             with open(current_file, "a", encoding="utf-8") as f:
@@ -97,7 +98,7 @@ class CommunicationFileLogger:
         """Log an error entry."""
         try:
             device_dir = self._get_device_dir(device_id)
-            today = datetime.utcnow().strftime("%Y%m%d")
+            today = utc_now().strftime("%Y%m%d")
             current_file, _ = self._find_current_log(device_dir, today)
             entry = self._format_entry("ERROR", f"cmd='{command}' error='{error_msg}'", timestamp)
             with open(current_file, "a", encoding="utf-8") as f:
@@ -109,7 +110,7 @@ class CommunicationFileLogger:
         """Log a system event (connect, disconnect, etc.)."""
         try:
             device_dir = self._get_device_dir(device_id)
-            today = datetime.utcnow().strftime("%Y%m%d")
+            today = utc_now().strftime("%Y%m%d")
             current_file, _ = self._find_current_log(device_dir, today)
             entry = self._format_entry("SYSTEM", message, timestamp)
             with open(current_file, "a", encoding="utf-8") as f:
@@ -133,7 +134,7 @@ class CommunicationFileLogger:
                 "name": fname,
                 "path": fpath,
                 "size": os.path.getsize(fpath),
-                "modified": datetime.fromtimestamp(os.path.getmtime(fpath)).isoformat(),
+                "modified": from_timestamp(os.path.getmtime(fpath)).isoformat(),
             })
         return result
 

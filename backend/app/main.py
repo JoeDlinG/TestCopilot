@@ -20,7 +20,7 @@ from app.core.database import init_db
 from app.core.exceptions import AITestLabException
 from app.api import (
     devices, ai, testcases, executions, logs, reports, plugins,
-    plugin_editor, dashboards, websocket,
+    plugin_editor, dashboards, websocket, plans,
 )
 
 logging.basicConfig(
@@ -61,6 +61,10 @@ async def lifespan(app: FastAPI):
         # without this they would block the start button forever.
         from app.services.execution_service import execution_engine
         await execution_engine.reset_stale_executions(db)
+
+        # Same for batch runs left 'running' by a previous process.
+        from app.services.plan_runner import plan_runner
+        await plan_runner.reset_stale_runs(db)
 
     yield
 
@@ -108,6 +112,8 @@ app.include_router(reports.router)
 app.include_router(plugins.router)
 app.include_router(plugin_editor.router)
 app.include_router(dashboards.router)
+app.include_router(plans.plans_router)
+app.include_router(plans.runs_router)
 
 # Register WebSocket router
 app.include_router(websocket.router)

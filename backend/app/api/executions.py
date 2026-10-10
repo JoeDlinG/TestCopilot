@@ -5,7 +5,7 @@ POST   /api/executions/{id}/stop        - Stop execution
 GET    /api/executions/{id}             - Get execution detail (with step results)
 GET    /api/executions/                 - List executions
 """
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,16 @@ async def _testcase_names(db: AsyncSession, ids: List[str]) -> Dict[str, str]:
         select(TestCase.id, TestCase.name).where(TestCase.id.in_(ids))
     )).all()
     return {r[0]: r[1] for r in rows}
+
+
+def _batch_fields(e) -> Dict[str, Any]:
+    """Batch linkage of an execution (all None for a plain single-case run)."""
+    return {
+        "plan_run_id": e.plan_run_id,
+        "plan_item_id": e.plan_item_id,
+        "iteration": e.iteration,
+        "group_no": e.group_no,
+    }
 
 
 @router.post("/run")
@@ -53,6 +63,7 @@ async def start_execution(data: ExecutionStartRequest, db: AsyncSession = Depend
                 "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
                 "duration_ms": execution.duration_ms,
                 "created_at": execution.created_at.isoformat() if execution.created_at else None,
+                **_batch_fields(execution),
             },
         }
     except ValueError as e:
@@ -91,6 +102,7 @@ async def list_executions(
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
             "duration_ms": e.duration_ms,
             "created_at": e.created_at.isoformat() if e.created_at else None,
+            **_batch_fields(e),
         })
 
     return {
@@ -143,6 +155,7 @@ async def get_execution(execution_id: str, db: AsyncSession = Depends(get_db)):
             "duration_ms": execution.duration_ms,
             "created_at": execution.created_at.isoformat() if execution.created_at else None,
             "step_results": step_items,
+            **_batch_fields(execution),
         },
     }
 

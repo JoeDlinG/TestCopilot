@@ -29,6 +29,7 @@ import threading
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from typing import Dict, Optional
+from app.core.timeutils import from_timestamp, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ EXECUTIONS_DIR = os.path.join(LOGS_DIR, "executions")
 
 
 def _ts() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    return utc_now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 class RotatingTextWriter:
@@ -182,7 +183,7 @@ def list_execution_logs(execution_id: str) -> list:
             {
                 "name": f,
                 "size": os.path.getsize(os.path.join(d, f)),
-                "modified": datetime.fromtimestamp(
+                "modified": from_timestamp(
                     os.path.getmtime(os.path.join(d, f))
                 ).isoformat(),
             }
@@ -204,6 +205,6 @@ def list_program_logs() -> dict:
             files.append({
                 "name": f,
                 "size": os.path.getsize(p),
-                "modified": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+                "modified": from_timestamp(os.path.getmtime(p)).isoformat(),
             })
     return {"dir": PROGRAM_DIR, "max_size_bytes": MAX_LOG_SIZE, "files": files}

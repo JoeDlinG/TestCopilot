@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.models.models import Plugin, PluginStatus
 from app.core.config import settings
+from app.core.timeutils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ class PluginService:
         try:
             await self.load_plugin_class(plugin)
             plugin.status = PluginStatus.ENABLED.value
-            plugin.enabled_at = datetime.utcnow()
+            plugin.enabled_at = utc_now()
             plugin.error_message = None
             await db.commit()
             await db.refresh(plugin)
@@ -158,7 +159,7 @@ class PluginService:
             raise ValueError(f"Plugin {plugin_id} not found")
 
         plugin.status = PluginStatus.DISABLED.value
-        plugin.disabled_at = datetime.utcnow()
+        plugin.disabled_at = utc_now()
         await db.commit()
         await db.refresh(plugin)
         return plugin

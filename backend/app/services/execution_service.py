@@ -24,6 +24,7 @@ from app.services.response_parser import response_parser
 from app.services import flow_context
 from app.services.program_logger import start_execution_log, finish_execution_log
 from app.api.websocket import broadcast_execution_update
+from app.core.timeutils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -470,7 +471,7 @@ class ExecutionEngine:
             status=ExecutionStatus.RUNNING.value,
             options=options_json,
             total_steps=len([n for n in nodes if n.get("type") not in ("start", "end")]),
-            started_at=datetime.utcnow(),
+            started_at=utc_now(),
         )
         db.add(execution)
         await db.commit()
@@ -513,7 +514,7 @@ class ExecutionEngine:
             for ex in stale:
                 ex.status = ExecutionStatus.ERROR.value
                 ex.result = ExecutionResult.ABORTED.value
-                ex.completed_at = ex.completed_at or datetime.utcnow()
+                ex.completed_at = ex.completed_at or utc_now()
                 if ex.started_at:
                     ex.duration_ms = int(
                         (ex.completed_at - ex.started_at).total_seconds() * 1000
@@ -551,7 +552,7 @@ class ExecutionEngine:
 
         execution.status = ExecutionStatus.STOPPED.value
         execution.result = ExecutionResult.ABORTED.value
-        execution.completed_at = datetime.utcnow()
+        execution.completed_at = utc_now()
         if execution.started_at:
             execution.duration_ms = int(
                 (execution.completed_at - execution.started_at).total_seconds() * 1000
@@ -690,7 +691,7 @@ class ExecutionEngine:
                         status=StepStatus.RUNNING.value,
                         command=" | ".join(commands) or config.get("command", ""),
                         expected=expected_text,
-                        started_at=datetime.utcnow(),
+                        started_at=utc_now(),
                     )
                     state["rows"][node_id] = step_result
                     async with db as session:
@@ -873,7 +874,7 @@ class ExecutionEngine:
                         step_result.actual = (
                             f"[第 {visit} 轮] {step_result.actual or ''}"
                         ).strip()
-                    step_result.completed_at = datetime.utcnow()
+                    step_result.completed_at = utc_now()
                     if step_result.started_at:
                         step_result.duration_ms = int(
                             (step_result.completed_at - step_result.started_at).total_seconds() * 1000
@@ -987,7 +988,7 @@ class ExecutionEngine:
                 )
                 exec_record = result.scalar_one_or_none()
                 if exec_record:
-                    exec_record.completed_at = datetime.utcnow()
+                    exec_record.completed_at = utc_now()
                     if exec_record.started_at:
                         exec_record.duration_ms = int(
                             (exec_record.completed_at - exec_record.started_at).total_seconds() * 1000

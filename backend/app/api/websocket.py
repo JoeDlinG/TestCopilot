@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.database import async_session
 from app.models.models import CommunicationLog, LogDirection, LogStatus
 from app.services.com_logger import com_logger
+from app.core.timeutils import utc_now, parse_iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ async def _log_rx_to_db(device_id: str, protocol: str, data: Any, timestamp: str
                 raw_size = len(raw_hex.replace(" ", "")) // 2
         async with async_session() as db:
             db.add(CommunicationLog(
-                timestamp=datetime.fromisoformat(timestamp),
+                timestamp=parse_iso_utc(timestamp),
                 device_id=device_id,
                 direction=LogDirection.RECEIVED.value,
                 protocol=protocol,
@@ -109,7 +110,7 @@ async def _device_monitor_loop(device_id: str, protocol: str, interval_ms: int =
                 try:
                     data = await _safe_receive(interface, timeout=0.1)
                     if data:
-                        ts = datetime.utcnow().isoformat()
+                        ts = utc_now().isoformat()
                         com_logger.log_received(device_id, data, timestamp=ts)
                         await _log_rx_to_db(device_id, protocol, data, ts)
                         await broadcast_device_update(device_id, {
@@ -265,7 +266,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
             "type": "connected",
             "device_id": device_id,
             "message": "Connected to device terminal",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now().isoformat(),
         })
 
     try:
@@ -298,7 +299,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                         })
                         continue
 
-                    start_time = datetime.utcnow()
+                    start_time = utc_now()
                     send_ts = start_time.isoformat()
                     # Log the sent command
                     com_logger.log_sent(device_id, command, timestamp=send_ts)
@@ -306,9 +307,9 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                     try:
                         response = await interface.send(command)
                         duration_ms = int(
-                            (datetime.utcnow() - start_time).total_seconds() * 1000
+                            (utc_now() - start_time).total_seconds() * 1000
                         )
-                        recv_ts = datetime.utcnow().isoformat()
+                        recv_ts = utc_now().isoformat()
                         # Log the received response
                         com_logger.log_received(device_id, response, timestamp=recv_ts)
                         await websocket.send_json({
@@ -325,7 +326,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                             "type": "command_error",
                             "command": command,
                             "error": str(e),
-                            "timestamp": datetime.utcnow().isoformat(),
+                            "timestamp": utc_now().isoformat(),
                         })
 
                 elif msg_type == "start_receive":
@@ -337,7 +338,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                     await websocket.send_json({
                         "type": "receive_started",
                         "interval_ms": interval_ms,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": utc_now().isoformat(),
                     })
 
                 elif msg_type == "stop_receive":
@@ -350,7 +351,7 @@ async def device_websocket(websocket: WebSocket, device_id: str):
                         stop_device_monitor(device_id)
                     await websocket.send_json({
                         "type": "receive_stopped",
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": utc_now().isoformat(),
                     })
 
                 elif msg_type == "command_ack":

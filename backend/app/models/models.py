@@ -17,6 +17,7 @@ from sqlalchemy.orm import relationship
 import enum
 
 from app.core.database import Base
+from app.core.timeutils import utc_now, UTCDateTime
 
 
 def generate_short_id(prefix: str) -> str:
@@ -176,11 +177,11 @@ class Device(Base):
     status = Column(String(20), nullable=False, default=DeviceStatus.DISCONNECTED.value, index=True)
     config = Column(Text, nullable=True)  # JSON string
     extra_meta = Column("metadata", Text, nullable=True)  # JSON string, mapped from column 'metadata'
-    connected_at = Column(DateTime, nullable=True)
-    disconnected_at = Column(DateTime, nullable=True)
-    last_seen = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    connected_at = Column(UTCDateTime, nullable=True)
+    disconnected_at = Column(UTCDateTime, nullable=True)
+    last_seen = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         Index("idx_devices_status", "status"),
@@ -205,9 +206,9 @@ class AIModelConfig(Base):
     parameters = Column(Text, nullable=True)  # JSON string
     is_default = Column(Boolean, nullable=False, default=False, index=True)
     status = Column(String(20), nullable=False, default=ModelStatus.ACTIVE.value)
-    last_tested_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_tested_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         Index("idx_ai_models_provider", "provider"),
@@ -227,8 +228,8 @@ class TestCase(Base):
     flow_id = Column(String(20), nullable=True)  # linked via TestFlow.testcase_id relationship
     ai_model_id = Column(String(20), ForeignKey("ai_models.id"), nullable=True)
     tags = Column(Text, nullable=True)  # JSON array string
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         Index("idx_test_cases_status", "status"),
@@ -249,8 +250,8 @@ class TestFlow(Base):
     nodes = Column(Text, nullable=False, default="[]")  # JSON string
     edges = Column(Text, nullable=False, default="[]")  # JSON string
     viewport = Column(Text, nullable=True)  # JSON string
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     test_case = relationship("TestCase", back_populates="flow", uselist=False)
@@ -269,16 +270,24 @@ class TestExecution(Base):
     passed_steps = Column(Integer, nullable=False, default=0)
     failed_steps = Column(Integer, nullable=False, default=0)
     error_message = Column(Text, nullable=True)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
     duration_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    # --- batch execution linkage (execution manager) --------------------
+    # All four stay NULL for a plain single-case run, so existing behaviour
+    # and every existing statistic are unchanged.
+    plan_run_id = Column(String(20), nullable=True)    # owning batch run
+    plan_item_id = Column(String(20), nullable=True)   # owning plan item
+    iteration = Column(Integer, nullable=True)         # 1-based loop index
+    group_no = Column(Integer, nullable=True)          # parallel group number
 
     __table_args__ = (
         Index("idx_executions_testcase_id", "testcase_id"),
         Index("idx_executions_status", "status"),
         Index("idx_executions_result", "result"),
         Index("idx_executions_created_at", "created_at"),
+        Index("idx_executions_plan_run", "plan_run_id"),
     )
 
     # Relationships
@@ -312,8 +321,8 @@ class TestStepResult(Base):
     # "status" is ok | fail | unknown (empty frame, judgement skipped) | error.
     # Legacy rows may still hold a bare list (= a single sample).
     parsed_results = Column(Text, nullable=True)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
     duration_ms = Column(Integer, nullable=True)
 
     __table_args__ = (
@@ -331,7 +340,7 @@ class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
     id = Column(String(20), primary_key=True, default=lambda: generate_short_id("log"))
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    timestamp = Column(UTCDateTime, nullable=False, default=utc_now, index=True)
     device_id = Column(String(20), ForeignKey("devices.id"), nullable=False, index=True)
     execution_id = Column(String(20), ForeignKey("test_executions.id"), nullable=True, index=True)
     step_result_id = Column(String(20), ForeignKey("test_step_results.id"), nullable=True)
@@ -375,8 +384,8 @@ class TestReport(Base):
     file_size = Column(Integer, nullable=True)
     fields = Column(Text, nullable=True)  # JSON string
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    generated_at = Column(DateTime, nullable=True)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    generated_at = Column(UTCDateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_reports_execution_id", "execution_id"),
@@ -396,8 +405,8 @@ class ReportTemplate(Base):
     description = Column(Text, nullable=True)
     fields = Column(Text, nullable=True)  # JSON string — field definitions
     template_content = Column(Text, nullable=True)  # Jinja2 template content
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     # Relationships
     reports = relationship("TestReport", back_populates="template")
@@ -421,10 +430,10 @@ class Plugin(Base):
     config = Column(Text, nullable=True)  # JSON string
     entry_point = Column(String(200), nullable=True)
     error_message = Column(Text, nullable=True)
-    installed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    enabled_at = Column(DateTime, nullable=True)
-    disabled_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    installed_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    enabled_at = Column(UTCDateTime, nullable=True)
+    disabled_at = Column(UTCDateTime, nullable=True)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         Index("idx_plugins_name", "name", unique=True),
@@ -443,7 +452,7 @@ class ChatHistory(Base):
     content = Column(Text, nullable=False)
     input_type = Column(String(20), default=ChatInputType.TEXT.value)  # text, voice
     extra_meta = Column("metadata", Text, nullable=True)  # JSON string
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
 
 
 class Dashboard(Base):
@@ -466,8 +475,8 @@ class Dashboard(Base):
     # shared data source for the parsed-value widgets
     data_source = Column(Text, nullable=True)  # JSON: {test_case_id, limit, refresh_sec}
     is_default = Column(Boolean, nullable=False, default=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (
         Index("idx_dashboards_is_default", "is_default"),
@@ -482,4 +491,116 @@ class SystemConfig(Base):
     key = Column(String(100), nullable=False, unique=True, index=True)
     value = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
+# ====================================================================== #
+# Execution manager — batch plans, plan items and batch runs
+# ====================================================================== #
+
+class ResolvedState(str, enum.Enum):
+    """How confident we are about *which* device a plan item will occupy."""
+
+    RESOLVED = "resolved"        # exactly one concrete device
+    CANDIDATES = "candidates"    # protocol matched several devices
+    UNRESOLVED = "unresolved"    # nothing could be determined
+
+
+class PlanRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+class ExecutionPlan(Base):
+    """3.13 execution_plans — a reusable batch *template*.
+
+    The plan itself never runs: starting it produces an ``ExecutionPlanRun``.
+    """
+    __tablename__ = "execution_plans"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("pln"))
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    plan_loop_count = Column(Integer, nullable=False, default=1)     # plan-level loop
+    max_parallel = Column(Integer, nullable=False, default=4)        # 1..16
+    on_error = Column(String(20), nullable=False, default="abort_all")  # abort_all|continue|abort_group
+    last_run_id = Column(String(20), nullable=True)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        Index("idx_plans_updated_at", "updated_at"),
+    )
+
+    items = relationship(
+        "ExecutionPlanItem",
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="ExecutionPlanItem.seq",
+    )
+
+
+class ExecutionPlanItem(Base):
+    """3.14 execution_plan_items — one row = one test case + its run config.
+
+    Items sharing a ``group_no`` run in parallel; groups run in ascending
+    ``group_no`` order.
+    """
+    __tablename__ = "execution_plan_items"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("pitem"))
+    plan_id = Column(String(20), ForeignKey("execution_plans.id"), nullable=False, index=True)
+    testcase_id = Column(String(20), nullable=False)
+    seq = Column(Integer, nullable=False)           # display / default order
+    group_no = Column(Integer, nullable=False)      # parallel group
+    loop_count = Column(Integer, nullable=False, default=1)
+    delay_before_ms = Column(Integer, nullable=False, default=0)
+    delay_after_ms = Column(Integer, nullable=False, default=0)
+    loop_interval_ms = Column(Integer, nullable=False, default=0)
+    device_id = Column(String(20), nullable=True)   # explicit override (nullable = infer)
+    resolved_device_ids = Column(Text, nullable=True)   # JSON array snapshot
+    resolved_state = Column(
+        String(20), nullable=False, default=ResolvedState.UNRESOLVED.value
+    )
+    node_count = Column(Integer, nullable=True)     # flow size at resolve time (0 = empty flow)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        Index("idx_pitems_plan", "plan_id", "group_no"),
+    )
+
+    plan = relationship("ExecutionPlan", back_populates="items")
+
+
+class ExecutionPlanRun(Base):
+    """3.15 execution_plan_runs — one concrete execution of a plan.
+
+    ``plan_snapshot`` freezes the plan/items at launch time so later edits to
+    the plan can never rewrite the meaning of a historical run.
+    """
+    __tablename__ = "execution_plan_runs"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("prun"))
+    plan_id = Column(String(20), nullable=True, index=True)   # NULL = ad-hoc plan
+    plan_name = Column(String(200), nullable=True)
+    plan_snapshot = Column(Text, nullable=False)              # JSON
+    status = Column(String(20), nullable=False, default=PlanRunStatus.PENDING.value, index=True)
+    total_items = Column(Integer, nullable=False, default=0)
+    completed_items = Column(Integer, nullable=False, default=0)
+    passed_items = Column(Integer, nullable=False, default=0)
+    failed_items = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(UTCDateTime, nullable=True)
+    completed_at = Column(UTCDateTime, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+
+    __table_args__ = (
+        Index("idx_pruns_plan", "plan_id"),
+        Index("idx_pruns_status", "status"),
+    )

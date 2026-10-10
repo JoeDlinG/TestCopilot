@@ -131,6 +131,31 @@ export const executionAPI = {
   stop: (id: string) => api.post(`/executions/${id}/stop`),
 }
 
+// Execution plan APIs (batch orchestration)
+export const planAPI = {
+  list: () => api.get('/execution-plans/'),
+  get: (id: string) => api.get(`/execution-plans/${id}`),
+  create: (data: any) => api.post('/execution-plans/', data),
+  update: (id: string, data: any) => api.put(`/execution-plans/${id}`, data),
+  delete: (id: string) => api.delete(`/execution-plans/${id}`),
+  duplicate: (id: string) => api.post(`/execution-plans/${id}/duplicate`),
+  // Draft validation — no save needed, debounced while the user edits.
+  validateDraft: (data: any) => api.post('/execution-plans/validate', data),
+  validate: (id: string) => api.get(`/execution-plans/${id}/validate`),
+  resolveDevices: (id: string) => api.post(`/execution-plans/${id}/resolve-devices`),
+  run: (id: string) => api.post(`/execution-plans/${id}/run`),
+}
+
+// Batch run APIs
+export const planRunAPI = {
+  list: (planId?: string) =>
+    api.get('/execution-runs/', { params: { plan_id: planId, page_size: 50 } }),
+  get: (id: string) => api.get(`/execution-runs/${id}`),
+  stop: (id: string) => api.post(`/execution-runs/${id}/stop`),
+  stopItem: (runId: string, itemId: string) =>
+    api.post(`/execution-runs/${runId}/items/${itemId}/stop`),
+}
+
 // Log APIs
 export const logAPI = {
   list: (params?: any) => api.get('/logs/', { params }),

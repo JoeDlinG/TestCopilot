@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-10-07
+> 最后更新：2026-10-09
 
 ---
 
@@ -82,6 +82,8 @@
   NaN/Infinity 序列化防御（#13）+ 新增执行日志（per-execution 文件夹 + 全局程序/通信日志，10MB 轮转）
 - **v0.8.6**（优化/修复版，同分支）：启动按钮补 loading 反馈（实测后端仅 43~179ms，观感问题）+
   代码生成回退下发原文时输出 ⚠️ 提示 + 修复 `test_codegen` 三处过期断言（既有失败）
+- **v0.9.0**（新功能，同分支）：**测试用例执行管理器** — 多用例编排（顺序/并行分组/循环/延时）+ 设备与端口静态冲突检测告警；
+  顺带修复 Issue #7 时区（时间统一为带 UTC 偏移，前端显示不再差 8 小时）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -91,6 +93,28 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.9.0 — 测试用例执行管理器（2026-10-09，分支 `feature/flow-enhancements`）
+
+> 依据 `docs/PRD_执行管理器_ExecutionManager - Copy.md` 实施。用户拍板：只做最小可用闭环（不做运行时设备租约 FR8、不做 WS 监控）；
+> 时区 Issue #7 先修再动工；冲突判定按设备粒度，**且两个不同设备共用同一端口也算冲突**。
+
+- [x] **P0 时区（Issue #7）**：新增 `app/core/timeutils.py`（`utc_now()` / `from_timestamp()` / `parse_iso_utc()` /
+      `UTCDateTime` 列类型）；58 处 `datetime.utcnow` 全量替换；存库仍为 naive UTC 串（兼容老数据与排序），
+      读出为 aware UTC → API 输出带 `+00:00`，前端 `new Date()` 解析正确（原先慢 8 小时）
+- [x] **数据模型**：新增 `execution_plans` / `execution_plan_items` / `execution_plan_runs` 三表；
+      `test_executions` 扩展 `plan_run_id`/`plan_item_id`/`iteration`/`group_no`（单用例执行为 NULL，行为不变）
+- [x] **设备解析**：`resolve_item_devices()` 按「显式指定 > 流程内 device_id > 协议推断」三级解析，返回**集合**；
+      新增设备资源键（device/serial/can/visa/net），支持**同端口冲突**判定
+- [x] **校验引擎**：`DEVICE_CONFLICT` / `PORT_CONFLICT` / `UNRESOLVED_DEVICE_IN_PARALLEL` /
+      `PARALLEL_LIMIT_EXCEEDED` / `DUPLICATE_CASE_IN_GROUP` 为 Error（阻断）；设备离线/多候选/空流程为 Warning；含时长预估
+- [x] **调度器**：组间串行、组内并行（受 `max_parallel` 限制）、迭代串行（含 `loop_interval_ms`）、前后置延时（可中断）；
+      每次迭代生成独立 `TestExecution` 带批次归属；失败策略 `abort_all`/`continue`/`abort_group`
+- [x] **API**：计划 CRUD + 复制 + 草稿校验 `/validate`（免保存）+ `/resolve-devices` + `/run`（**409 阻断**）+ 批次详情/列表/停止
+- [x] **前端**：新增 `ExecutionPlanner` 页（路由 `/execution-plans`，菜单「执行管理器」）——三栏布局、
+      多选用例加入、上下排序、并行分组、循环/延时、设备三态、冲突面板（含自动串行化）、运行监控抽屉（轮询）
+- [x] 验证：同设备冲突 / **异设备同端口冲突** / 并行组内未确定设备 / 组大小超限 均正确检出；
+      绕过前端 `POST /run` 返回 **409 不启动**；真实硬件批次 3/3 passed（组内并行同刻开始、迭代 2 次、组2 串行在后）
 
 ### v0.8.6 — 启动反馈 + 代码生成提示 + 过期断言修复（2026-10-09，分支 `feature/flow-enhancements`）
 

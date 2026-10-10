@@ -15,6 +15,7 @@ import {
   SettingOutlined,
   MenuUnfoldOutlined,
   ReloadOutlined,
+  OrderedListOutlined,
 } from '@ant-design/icons'
 import { systemAPI } from '../../services/api'
 
@@ -28,6 +29,7 @@ const menuItems = [
   { key: '/ai', icon: <RobotOutlined />, label: 'AI 助手' },
   { key: '/testcases', icon: <ExperimentOutlined />, label: '测试用例' },
   { key: '/executions', icon: <PlayCircleOutlined />, label: '测试执行' },
+  { key: '/execution-plans', icon: <OrderedListOutlined />, label: '执行管理器' },
   { key: '/logs', icon: <FileTextOutlined />, label: '通信日志' },
   { key: '/reports', icon: <BarChartOutlined />, label: '测试报告' },
   { key: '/plugins', icon: <AppstoreAddOutlined />, label: '插件管理' },

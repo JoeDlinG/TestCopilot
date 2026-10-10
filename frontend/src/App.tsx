@@ -8,6 +8,7 @@ import AIChat from './pages/AIChat'
 import TestCases from './pages/TestCases'
 import TestFlowEditor from './pages/TestFlowEditor'
 import Executions from './pages/Executions'
+import ExecutionPlanner from './pages/ExecutionPlanner'
 import Logs from './pages/Logs'
 import Reports from './pages/Reports'
 import Plugins from './pages/Plugins'
@@ -27,6 +28,7 @@ function App() {
         <Route path="testcases" element={<TestCases />} />
         <Route path="testcases/:id/flow" element={<TestFlowEditor />} />
         <Route path="executions" element={<Executions />} />
+        <Route path="execution-plans" element={<ExecutionPlanner />} />
         <Route path="logs" element={<Logs />} />
         <Route path="reports" element={<Reports />} />
         <Route path="plugins" element={<Plugins />} />

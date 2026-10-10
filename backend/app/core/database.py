@@ -38,6 +38,12 @@ def _apply_light_migrations(conn):
     added = []
     for table, column, decl in (
         ("test_step_results", "parsed_results", "TEXT"),
+        # execution manager: batch linkage on existing single-run records
+        ("test_executions", "plan_run_id", "TEXT"),
+        ("test_executions", "plan_item_id", "TEXT"),
+        ("test_executions", "iteration", "INTEGER"),
+        ("test_executions", "group_no", "INTEGER"),
+        ("execution_plan_items", "node_count", "INTEGER"),
     ):
         try:
             cols = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]

@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.timeutils import parse_iso_utc
 from app.services.log_service import log_service
 
 router = APIRouter(prefix="/api/logs", tags=["Logs"])
@@ -57,8 +58,8 @@ async def list_logs(
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    st = datetime.fromisoformat(start_time) if start_time else None
-    et = datetime.fromisoformat(end_time) if end_time else None
+    st = parse_iso_utc(start_time) if start_time else None
+    et = parse_iso_utc(end_time) if end_time else None
 
     logs, total = await log_service.query_logs(
         db, device_id=device_id, execution_id=execution_id,
@@ -95,8 +96,8 @@ async def export_logs_csv(
     end_time: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    st = datetime.fromisoformat(start_time) if start_time else None
-    et = datetime.fromisoformat(end_time) if end_time else None
+    st = parse_iso_utc(start_time) if start_time else None
+    et = parse_iso_utc(end_time) if end_time else None
 
     buffer, filename = await log_service.export_csv(
         db, device_id=device_id, execution_id=execution_id,

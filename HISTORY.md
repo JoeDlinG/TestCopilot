@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-10-09: 测试用例执行管理器（v0.9.0）
+
+依据 `docs/PRD_执行管理器_ExecutionManager - Copy.md` 实施。用户拍板的三个决策：
+① 只做**最小可用闭环**（运行时设备租约 FR8 与 WS 监控留后续）；② **先修时区 Issue #7 再动工**；
+③ 冲突按设备粒度，且**两个不同设备共用同一端口也算冲突**。
+
+### 1. P0 — 先修时区（Issue #7）
+
+**根因**：后端 58 处全部 `datetime.utcnow()`（naive UTC）→ API 序列化输出**无时区后缀**
+（`"2026-10-09T12:00:00"`）→ 前端 `new Date(t).toLocaleString()` 把无偏移的 ISO 串**按本地时间解析**
+→ UTC+8 下所有时间戳**显示慢 8 小时**。另外 `datetime.fromtimestamp()`（本地）与
+`utcfromtimestamp()`（UTC）与 `utcnow` 三者语义不一致。
+
+**修复**：新增 `app/core/timeutils.py`
+
+| 组件 | 作用 |
+|---|---|
+| `utc_now()` | 返回 aware UTC（替换全部 `datetime.utcnow`） |
+| `from_timestamp()` | 统一 `fromtimestamp` / `utcfromtimestamp` 为 aware UTC |
+| `parse_iso_utc()` | API 入参解析，无偏移串按 UTC 处理 |
+| `UTCDateTime` 列类型 | **写**：剥离偏移存 naive UTC 串（与老数据字节一致、排序不变）；**读**：补回 UTC 变 aware |
+
+全程无 naive/aware 混用，序列化自动带 `+00:00`，前端零改动即正确。
+
+### 2. 数据模型
+
+- 新增 `execution_plans`（模板，可重复运行）/ `execution_plan_items`（项）/ `execution_plan_runs`（批次，含 `plan_snapshot` 快照）
+- `test_executions` 扩展 `plan_run_id` / `plan_item_id` / `iteration` / `group_no`——**单用例执行全为 NULL，既有统计口径不变**
+
+### 3. 设备解析与冲突判定（核心）
+
+`resolve_item_devices()` 三级解析：显式 `device_id` > 流程节点内 `device_id` > 协议推断，返回**集合**（非单值）。
+新增**设备资源键**（`device:` / `serial:` / `can:` / `visa:` / `net:`），同一并行组内**资源键相交即冲突**——
+因此「两台不同设备占用同一串口/CAN 通道」同样会被拦截。
+
+| 级别 | 错误码 | 场景 |
+|---|---|---|
+| 🔴 Error（阻断） | `DEVICE_CONFLICT` / `PORT_CONFLICT` / `UNRESOLVED_DEVICE_IN_PARALLEL` / `PARALLEL_LIMIT_EXCEEDED` / `DUPLICATE_CASE_IN_GROUP` | 同组抢同一设备或端口、并行组内未确定设备、组大小超 `max_parallel`、同组重复用例 |
+| 🟡 Warning | `DEVICE_OFFLINE` / `CANDIDATE_DEVICE_IN_PARALLEL` / `EMPTY_FLOW` / `UNRESOLVED_DEVICE_SERIAL` | 设备离线、多候选、空流程、串行项未确定设备 |
+
+### 4. 调度语义
+
+`group_no` 升序**组间串行**，同组**并行**（受 `max_parallel` 限制），单项的 N 次迭代**串行**，
+`delay_before_ms` → 迭代1 → `loop_interval_ms` → 迭代2 … → `delay_after_ms`（前后置延时为**项级**，非每次迭代）。
+
+### 5. 验证
+
+| 项 | 结果 |
+|---|---|
+| 同设备并行 | `DEVICE_CONFLICT` 阻断 |
+| **异设备同端口** | `PORT_CONFLICT` 阻断（临时把两台设备设为同一 `can0` 验证） |
+| 并行组内未确定设备 | `UNRESOLVED_DEVICE_IN_PARALLEL` 阻断 |
+| 组大小 > max_parallel / 同组重复用例 | `PARALLEL_LIMIT_EXCEEDED` / `DUPLICATE_CASE_IN_GROUP` 阻断 |
+| 绕过前端直接 `POST /run` | **409 + 校验报告，不启动**（后端独立校验） |
+| 真实硬件批次 | 3/3 passed，90s：组1 两项**同刻 16:42:50 开始**（并行）、PeakCAN 迭代 2 次、组2 **16:43:42 串行在后** |
+| 时区 | API 输出 `2026-10-09T16:06:18+00:00`，老数据读出为 aware UTC |
+| `tsc --noEmit` / `npm run build` / `compileall` | 全通过 |
+
+---
+
 ## 2026-10-09: 启动按钮加载反馈 + 代码生成原文下发提示 + 修复过期回归断言（v0.8.6）
 
 ### 1. 启动测试用例「像卡住」——补加载反馈（UX，非后端慢）

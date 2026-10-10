@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
+from app.core.timeutils import from_timestamp, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class PluginEditorService:
             "VERSION": version or "1.0.0",
             "DESCRIPTION": description or f"{plugin_name} 插件",
             "AUTHOR": author or "AITestLab",
-            "DATE": datetime.utcnow().strftime("%Y-%m-%d"),
+            "DATE": utc_now().strftime("%Y-%m-%d"),
             "MODULE_NAME": _module_name(protocol_name),
         }
         return PLACEHOLDER_RE.sub(
@@ -160,7 +161,7 @@ class PluginEditorService:
                 "file_name": filename,
                 "file_path": str(path),
                 "size": stat.st_size,
-                "updated_at": datetime.utcfromtimestamp(stat.st_mtime).isoformat(),
+                "updated_at": from_timestamp(stat.st_mtime).isoformat(),
                 "classes": self._plugin_classes(text),
             })
         return files

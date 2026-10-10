@@ -26,6 +26,7 @@ from app.core.database import get_db
 from app.models.models import Dashboard, Device, TestExecution, TestCase
 from app.schemas.schemas import DashboardCreate, DashboardUpdate
 from app.services.trend_service import collect_parsed_series, summarise_judgement
+from app.core.timeutils import utc_now
 
 router = APIRouter(prefix="/api/dashboards", tags=["Dashboards"])
 
@@ -241,7 +242,7 @@ async def dashboard_snapshot(
     return {
         "code": 0, "message": "success",
         "data": {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": utc_now().isoformat(),
             "test_case_id": test_case_id,
             "test_case_name": test_case_name,
             "devices": {
@@ -331,7 +332,7 @@ async def update_dashboard(
         )
     if "is_default" in payload:
         d.is_default = bool(payload["is_default"])
-    d.updated_at = datetime.utcnow()
+    d.updated_at = utc_now()
     await db.commit()
     await db.refresh(d)
     if d.is_default:

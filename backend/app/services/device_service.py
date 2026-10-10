@@ -25,6 +25,7 @@ from app.api.websocket import (
     stop_device_monitor,
     broadcast_device_update,
 )
+from app.core.timeutils import utc_now
 
 # Protocols handled natively by the communication layer (not by plugins).
 _STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
@@ -54,7 +55,7 @@ class DeviceService:
                 .where(Device.status == DeviceStatus.CONNECTED.value)
                 .values(
                     status=DeviceStatus.DISCONNECTED.value,
-                    disconnected_at=datetime.utcnow(),
+                    disconnected_at=utc_now(),
                 )
             )
             await db.commit()
@@ -199,7 +200,7 @@ class DeviceService:
             elif value is not None:
                 setattr(device, key, value)
 
-        device.updated_at = datetime.utcnow()
+        device.updated_at = utc_now()
         await db.commit()
         await db.refresh(device)
         return device
@@ -253,8 +254,8 @@ class DeviceService:
             start_device_monitor(device.id, protocol=device.protocol or "unknown")
 
             device.status = DeviceStatus.CONNECTED.value
-            device.connected_at = datetime.utcnow()
-            device.last_seen = datetime.utcnow()
+            device.connected_at = utc_now()
+            device.last_seen = utc_now()
             if config:
                 existing_config = self._parse_json_field(device.config) or {}
                 existing_config.update(config)
@@ -282,7 +283,7 @@ class DeviceService:
         stop_device_monitor(device_id)
 
         device.status = DeviceStatus.DISCONNECTED.value
-        device.disconnected_at = datetime.utcnow()
+        device.disconnected_at = utc_now()
         await db.commit()
         return {"status": "disconnected", "device_id": device_id}
 
@@ -302,11 +303,11 @@ class DeviceService:
         if not interface:
             # Stale DB state: mark device as disconnected
             device.status = DeviceStatus.DISCONNECTED.value
-            device.disconnected_at = datetime.utcnow()
+            device.disconnected_at = utc_now()
             await db.commit()
             raise ValueError(f"No active connection for device {device_id}. Please reconnect the device.")
 
-        start_time = datetime.utcnow()
+        start_time = utc_now()
 
         # Log sent command to file
         com_logger.log_sent(device_id, command, timestamp=start_time.isoformat())
@@ -349,7 +350,7 @@ class DeviceService:
         try:
             # Execute command
             response = await interface.send(command)
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            duration_ms = int((utc_now() - start_time).total_seconds() * 1000)
 
             # Log received response to file
             com_logger.log_received(device_id, response)
@@ -359,7 +360,7 @@ class DeviceService:
                     _el.communication(device_id, "RECV", str(response))
 
             # Push the received response to the communication terminal in real time
-            recv_ts = datetime.utcnow().isoformat()
+            recv_ts = utc_now().isoformat()
             await broadcast_device_update(device_id, {
                 "type": "command_response",
                 "command": command,
@@ -403,7 +404,7 @@ class DeviceService:
             )
             db.add(recv_log)
 
-            device.last_seen = datetime.utcnow()
+            device.last_seen = utc_now()
             await db.commit()
 
             return {
@@ -424,7 +425,7 @@ class DeviceService:
             # Auto-cleanup broken connection
             _active_connections.pop(device_id, None)
             device.status = DeviceStatus.DISCONNECTED.value
-            device.disconnected_at = datetime.utcnow()
+            device.disconnected_at = utc_now()
             await db.commit()
             logger.warning(f"Connection to {device_id} broken, auto-disconnected: {e}")
 
