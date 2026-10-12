@@ -525,6 +525,12 @@ async def generate_flow_code(test_case_id: str, db: AsyncSession = Depends(get_d
     nodes = _parse_json(flow.nodes) or []
     edges = _parse_json(flow.edges) or []
 
+    if not nodes:
+        raise HTTPException(status_code=400, detail={
+            "code": 40013,
+            "message": "流程图为空 — 请先添加节点并保存后再生成代码",
+        })
+
     code = codegen_service.generate_python(nodes, edges, test_case_name=tc.name)
     summary = codegen_service.generate_json_summary(nodes, edges, name=tc.name)
 

@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-10-09
+> 最后更新：2026-10-13
 
 ---
 
@@ -84,6 +84,10 @@
   代码生成回退下发原文时输出 ⚠️ 提示 + 修复 `test_codegen` 三处过期断言（既有失败）
 - **v0.9.0**（新功能，同分支）：**测试用例执行管理器** — 多用例编排（顺序/并行分组/循环/延时）+ 设备与端口静态冲突检测告警；
   顺带修复 Issue #7 时区（时间统一为带 UTC 偏移，前端显示不再差 8 小时）
+- **v0.10.0**（新功能 + 修复版，同分支）：**AI 助手增强**（生成用例预览 / 一键添加 / 对话式修改用例 /
+  项目记忆文件 `Project_xxx Memory.md`）+ **项目工程文件**（7 类配置打包成一个 JSON，支持另存为/导入/导出/重命名）；
+  修复「流程图编辑后重新生成代码失败」（保存失败被裸 catch 吞掉，仍用旧版本生成）；
+  版本号统一：`APP_VERSION` 与安装包版本同步到看板口径
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -93,6 +97,37 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.10.0 — AI 助手增强 + 项目工程文件 + 流程图代码生成修复（2026-10-13，分支 `feature/flow-enhancements`）
+
+- [x] **版本号统一（遗留项）**：`config.py` 的 `APP_VERSION` 与 `aitestlab.nsi` 安装包版本同步到看板口径
+- [x] **修复「流程图编辑后重新生成代码失败」**：根因是 `handleSaveFlow()` 的**裸 `catch`** 把 `PUT /flow` 的任何失败
+      都当成「流程不存在」并回退 `POST`（同样 400）→ 弹出「保存失败」后 **`handleGenerateCode()` 并未中止**，
+      继续用库里**上一版旧流程**生成，于是"生成成功却是旧代码"。改为：仅 404 回退创建、其余错误如实上报并返回 `false`，
+      **保存失败即中止生成**并在抽屉里说明原因
+- [x] **后端加固**：`generate_python()` 空流程 `nodes[0]` 抛 `IndexError` → 500，改为防御式归一化；
+      `generate-code` 空流程返回 **400 + `40013`** 明确提示
+- [x] **AI 助手 · 预览**：新增 `TestCasePreviewModal`，展示名称/描述/整体预期/设备/标签 + 步骤表
+      （命令、参数、预期、`flow_type`），弹窗内可直接「添加到测试用例列表」
+- [x] **AI 助手 · 一键添加**：保留「一键添加全部」，单项按钮改名为「添加」
+- [x] **AI 助手 · 对话式修改**：新增 `ai_service.refine_test_cases()` + `POST /api/ai/refine-testcases`——
+      把完整用例集 + 自然语言指令交给模型，返回**完整修订集**（非 diff）；模型返回不可解析 JSON 或空集时
+      **保留原用例**并告警，绝不静默清空。实测：延时 1000→500ms 且新增步骤 3
+- [x] **项目记忆文件**：新增 `memory_service.py` + `app/api/memory.py`（`backend/memory/Project_<名> Memory.md`）；
+      `POST /api/ai/memory/extract` 由 AI 提炼**决策/约定/事实/约束与风险**四类要点（带已有记忆去重），
+      前端**先审阅修改再写入**；支持追加/覆写、查看、删除
+- [x] **项目工程文件**：新增 `project_service.py` + `app/api/projects.py`（`backend/projects/Project_<名>.json`），
+      打包**插件 / Skill / 测试用例（含流程图）/ 执行管理器 / 设备 / 仪表盘 / 模型** 7 段；
+      **`api_key_encrypted` 永不写入**；导入按 `id` → 自然键匹配，**重复导入零新增（幂等）**；
+      `merge`/`replace` 两种模式；跳过机器相关字段（插件 `file_path`、设备 `status`）
+- [x] **前端新增「项目工程」页**（路由 `/projects`）：导出下载 / 上传导入 / 另存为 / 覆盖同步 / 重命名 / 删除，
+      展示各段条数与导入结果统计
+- [x] **踩坑**：`Column.key` 不可信——`extra_meta = Column("metadata")` 的 `key` 仍是 `"metadata"`，
+      `getattr` 取到 SQLAlchemy `MetaData` 导致 `jsonable_encoder` **无限递归（裸 500）**；
+      改用 mapper `get_property_by_column(col).key`
+- [x] 验证：工程文件 7 段导出（模型1/设备6/插件3/Skill5/用例88/计划2/仪表盘2）；另存为→读取→导入→重命名→删除全 200；
+      **二次导入 7 段 `created=0`（幂等）**；全文**不含** `api_key_encrypted`；空流程生成 **400（修复前 500）**；
+      节点编辑后生成正常且反映修改；回归 **12 个端点失败数 0**；`tsc --noEmit` / `npm run build` / `compileall` 全通过
 
 ### v0.9.0 — 测试用例执行管理器（2026-10-09，分支 `feature/flow-enhancements`）
 

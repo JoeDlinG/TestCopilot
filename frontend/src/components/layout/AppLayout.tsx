@@ -16,6 +16,7 @@ import {
   MenuUnfoldOutlined,
   ReloadOutlined,
   OrderedListOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons'
 import { systemAPI } from '../../services/api'
 
@@ -36,6 +37,7 @@ const menuItems = [
   { key: '/plugin-editor', icon: <CodeOutlined />, label: '插件编辑器' },
   { key: '/skill-editor', icon: <FileTextOutlined />, label: 'Skill 编辑器' },
   { key: '/model-config', icon: <SettingOutlined />, label: '模型配置' },
+  { key: '/projects', icon: <FolderOpenOutlined />, label: '项目工程' },
 ]
 
 export default function AppLayout() {

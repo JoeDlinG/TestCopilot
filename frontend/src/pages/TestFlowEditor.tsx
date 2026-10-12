@@ -31,7 +31,7 @@ import {
   FullscreenOutlined, FullscreenExitOutlined,
 } from '@ant-design/icons'
 import { testCaseAPI, deviceAPI } from '../services/api'
-import { extractData, extractItems, handleApiError } from '../services/apiHelper'
+import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
 import type { TestCase } from '../types'
 
 const { Title, Text } = Typography
@@ -654,34 +654,62 @@ export default function TestFlowEditor() {
   )
 
   // ---- Save flow ----
-  const handleSaveFlow = async () => {
-    if (!id) return
+  /**
+   * Persist the current canvas.
+   *
+   * @returns true only when the flow really reached the backend.  Callers that
+   * depend on the stored revision (code generation) MUST check this: the
+   * backend generates from what is in the database, so continuing after a
+   * failed save would silently emit code for the *previous* revision.
+   */
+  const handleSaveFlow = async (): Promise<boolean> => {
+    if (!id) return false
     try {
-      // Try PUT first (update existing), fallback to POST (create)
-      try {
-        await testCaseAPI.updateFlow(id, { nodes, edges })
-      } catch {
-        await testCaseAPI.createFlow(id, { nodes, edges })
+      await testCaseAPI.updateFlow(id, { nodes, edges })
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        // No flow stored for this test case yet — create it.
+        try {
+          await testCaseAPI.createFlow(id, { nodes, edges })
+        } catch (err2) {
+          handleApiError(err2, '保存失败')
+          return false
+        }
+      } else {
+        // 400 (validation) / 409 / 5xx: a genuine failure.  Treating it as
+        // "flow missing" and falling back to create() used to mask the error
+        // and leave the old revision in place.
+        handleApiError(err, '保存失败')
+        return false
       }
-      message.success('流程图已保存')
-    } catch (err) {
-      handleApiError(err, '保存失败')
     }
+    message.success('流程图已保存')
+    return true
   }
 
   // ---- Generate code ----
   const handleGenerateCode = async () => {
     if (!id) return
-    // Save first
-    await handleSaveFlow()
-    setCodeLoading(true)
     setCodeDrawerOpen(true)
+    setCodeLoading(true)
+    setCodeText('')
+    // Persist first — the backend reads the *stored* flow, so an unsaved edit
+    // would otherwise regenerate the previous (unchanged) revision.
+    const saved = await handleSaveFlow()
+    if (!saved) {
+      setCodeText(
+        '# 代码生成已中止：流程图保存失败。\n'
+        + '# 请先修正上方报错（例如：解析项名称为空 / 重复），再重新点击「生成代码」。',
+      )
+      setCodeLoading(false)
+      return
+    }
     try {
       const res = await testCaseAPI.generateCode(id)
       const data: any = res.data?.data || res.data
       setCodeText(data?.code || '// No code generated')
     } catch (err) {
-      setCodeText(`# Error generating code:\n# ${(err as any)?.message || err}`)
+      setCodeText(`# Error generating code:\n# ${_errorMessage(err, '生成代码失败')}`)
     } finally {
       setCodeLoading(false)
     }

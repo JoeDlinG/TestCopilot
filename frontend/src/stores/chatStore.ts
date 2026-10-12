@@ -14,6 +14,10 @@ interface ChatStore {
   activeTab: string
   selectedSkills: string[]
   input: string
+  /** Draft of the "keep refining the generated cases" input box. */
+  refineInput: string
+  /** Memory file (Project_<name> Memory.md) the AI panel writes to. */
+  memoryProject: string
 
   setSessionId: (id: string) => void
   addMessage: (msg: AIChatMessage) => void
@@ -23,6 +27,8 @@ interface ChatStore {
   setActiveTab: (tab: string) => void
   setSelectedSkills: (skills: string[]) => void
   setInput: (v: string) => void
+  setRefineInput: (v: string) => void
+  setMemoryProject: (v: string) => void
   clear: () => void
 }
 
@@ -34,6 +40,8 @@ export const useChatStore = create<ChatStore>((set) => ({
   activeTab: 'chat',
   selectedSkills: [],
   input: '',
+  refineInput: '',
+  memoryProject: 'AITestLab',
 
   setSessionId: (id) => set({ sessionId: id }),
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
@@ -43,6 +51,8 @@ export const useChatStore = create<ChatStore>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   setSelectedSkills: (skills) => set({ selectedSkills: skills }),
   setInput: (v) => set({ input: v }),
+  setRefineInput: (v) => set({ refineInput: v }),
+  setMemoryProject: (v) => set({ memoryProject: v }),
 
   clear: () =>
     set({
@@ -52,5 +62,6 @@ export const useChatStore = create<ChatStore>((set) => ({
       queryResult: null,
       activeTab: 'chat',
       input: '',
+      refineInput: '',
     }),
 }))

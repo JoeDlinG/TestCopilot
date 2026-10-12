@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card, Input, Button, Select, Space, Typography, message, Tag,
-  Collapse, Empty, List, Tabs, Tooltip
+  Collapse, Empty, List, Tabs, Tooltip, Modal, Divider, Alert,
 } from 'antd'
 import {
   SendOutlined, AudioOutlined, RobotOutlined, UserOutlined,
   ExperimentOutlined, SearchOutlined, SettingOutlined,
-  ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined
+  ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined,
+  EyeOutlined, BulbOutlined, SaveOutlined, DeleteOutlined,
+  FileMarkdownOutlined, EditOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
-import { aiAPI, testCaseAPI, pluginAPI, deviceAPI } from '../services/api'
+import { aiAPI, testCaseAPI, pluginAPI, deviceAPI, memoryAPI } from '../services/api'
 import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
 import { useChatStore } from '../stores/chatStore'
+import TestCasePreviewModal from '../components/ai/TestCasePreviewModal'
 import type { AIModel, TestCase } from '../types'
 
 const { Title, Text } = Typography
@@ -35,6 +38,8 @@ export default function AIChat() {
   const activeTab = useChatStore((s) => s.activeTab)
   const selectedSkills = useChatStore((s) => s.selectedSkills)
   const input = useChatStore((s) => s.input)
+  const refineInput = useChatStore((s) => s.refineInput)
+  const memoryProject = useChatStore((s) => s.memoryProject)
 
   const setSessionId = useChatStore((s) => s.setSessionId)
   const addMessage = useChatStore((s) => s.addMessage)
@@ -44,6 +49,8 @@ export default function AIChat() {
   const setActiveTab = useChatStore((s) => s.setActiveTab)
   const setSelectedSkills = useChatStore((s) => s.setSelectedSkills)
   const setInput = useChatStore((s) => s.setInput)
+  const setRefineInput = useChatStore((s) => s.setRefineInput)
+  const setMemoryProject = useChatStore((s) => s.setMemoryProject)
   const clearStore = useChatStore((s) => s.clear)
 
   // --- local UI-only state ---
@@ -58,6 +65,18 @@ export default function AIChat() {
   // Real devices, so the AI can target them and the generated flow nodes get a
   // concrete 执行设备 instead of an empty column.
   const [devices, setDevices] = useState<any[]>([])
+
+  // --- generated test case: preview + conversational refinement ---
+  const [previewCase, setPreviewCase] = useState<any | null>(null)
+  const [refining, setRefining] = useState(false)
+  const [refineLog, setRefineLog] = useState<string[]>([])
+
+  // --- project memory ---
+  const [memories, setMemories] = useState<any[]>([])
+  const [memDraft, setMemDraft] = useState('')
+  const [memView, setMemView] = useState<{ name: string; content: string } | null>(null)
+  const [extracting, setExtracting] = useState(false)
+  const [memSaving, setMemSaving] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -75,6 +94,7 @@ export default function AIChat() {
     loadModels()
     loadPluginSkills()
     loadDevices()
+    loadMemories()
     // Default-select builtin skills
     const store = useChatStore.getState()
     if (store.selectedSkills.length === 0) {
@@ -116,6 +136,100 @@ export default function AIChat() {
       const res = await pluginAPI.listSkills()
       setPluginSkills(extractData(res, []))
     } catch { /* ignore */ }
+  }
+
+  // --- Project memory ---
+  const loadMemories = async () => {
+    try {
+      const res = await memoryAPI.list()
+      setMemories(extractData(res, []))
+    } catch { /* memory list is optional */ }
+  }
+
+  const handleExtractMemory = async () => {
+    if (!activeModel) {
+      message.warning('请先选择 AI 模型')
+      return
+    }
+    if (messages.length === 0) {
+      message.warning('当前没有可提炼的对话内容')
+      return
+    }
+    setExtracting(true)
+    try {
+      const existing = (memories.find((m) => m.name === memoryProject) && memView?.content) || ''
+      const res = await aiAPI.extractMemory({
+        model_id: activeModel,
+        messages: messages.slice(-40).map((m) => ({ role: m.role, content: m.content })),
+        project_name: memoryProject,
+        existing_memory: existing,
+      })
+      const data: any = res.data?.data || res.data
+      if (!data?.content) {
+        message.warning('AI 未提炼出内容')
+        return
+      }
+      setMemDraft(data.content)
+      message.success('已提炼对话要点，确认后写入记忆文件')
+    } catch (err) {
+      handleApiError(err, '提炼失败')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  const handleWriteMemory = async () => {
+    if (!memDraft.trim()) {
+      message.warning('没有可写入的内容，请先提炼或手动输入')
+      return
+    }
+    setMemSaving(true)
+    try {
+      await memoryAPI.write({
+        name: memoryProject,
+        content: memDraft,
+        mode: 'append',
+        title: 'AI 助手对话要点',
+      })
+      message.success(`已写入 Project_${memoryProject} Memory.md`)
+      setMemDraft('')
+      loadMemories()
+      setMemView(null)
+    } catch (err) {
+      handleApiError(err, '写入记忆失败')
+    } finally {
+      setMemSaving(false)
+    }
+  }
+
+  const handleReadMemory = async (name: string) => {
+    try {
+      const res = await memoryAPI.read(name)
+      const data: any = extractData(res, {})
+      setMemView({ name, content: data.content || '' })
+    } catch (err) {
+      handleApiError(err, '读取记忆失败')
+    }
+  }
+
+  const handleDeleteMemory = (name: string) => {
+    Modal.confirm({
+      title: `删除记忆文件 Project_${name} Memory.md？`,
+      content: '删除后无法恢复。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await memoryAPI.remove(name)
+          message.success('已删除')
+          if (memView?.name === name) setMemView(null)
+          loadMemories()
+        } catch (err) {
+          handleApiError(err, '删除失败')
+        }
+      },
+    })
   }
 
   // --- Chat ---
@@ -162,6 +276,7 @@ export default function AIChat() {
       })
       const data: any = res.data?.data || res.data
       setTestCaseResult(data)
+      setRefineLog([])
       // Also add AI's raw response to chat history so users can see the full conversation
       if (data?.raw_response) {
         addMessage({ role: 'assistant', content: data.raw_response })
@@ -172,6 +287,42 @@ export default function AIChat() {
       addMessage({ role: 'assistant', content: `⚠️ 生成测试用例失败：${_errorMessage(err, '生成测试用例失败')}` })
     } finally {
       setGenLoading(false)
+    }
+  }
+
+  // --- Conversational refinement of the generated test cases ---
+  const handleRefine = async () => {
+    const instruction = refineInput.trim()
+    const cases = testCaseResult?.parsed?.test_cases || []
+    if (!instruction || !activeModel) return
+    if (cases.length === 0) {
+      message.warning('没有可修改的测试用例，请先生成')
+      return
+    }
+    setRefining(true)
+    try {
+      const res = await aiAPI.refineTestCases({
+        model_id: activeModel,
+        test_cases: cases,
+        instruction,
+        available_devices: devicePayload(),
+        skill_protocols: selectedSkills.filter((s) => !s.startsWith('__builtin_')),
+        requirements: input || '',
+      })
+      const data: any = res.data?.data || res.data
+      setTestCaseResult(data)
+      setRefineLog((prev) => [...prev, instruction])
+      setRefineInput('')
+      addMessage({ role: 'user', content: `（修改用例）${instruction}` })
+      if (data?.warning) {
+        message.warning(data.warning)
+      } else {
+        message.success('已按你的要求修改测试用例')
+      }
+    } catch (err) {
+      handleApiError(err, '修改测试用例失败')
+    } finally {
+      setRefining(false)
     }
   }
 
@@ -241,6 +392,8 @@ export default function AIChat() {
   // --- Clear ---
   const handleClear = () => {
     clearStore()
+    setRefineLog([])
+    setPreviewCase(null)
   }
 
   const handleVoiceInput = () => {
@@ -410,10 +563,46 @@ export default function AIChat() {
                           onClick={handleImportAll}
                           loading={importingAll}
                         >
-                          一键导入全部 ({caseCount} 个)
+                          一键添加全部 ({caseCount} 个)
                         </Button>
                       )}
                     </div>
+
+                    {/* Conversational refinement */}
+                    {caseCount > 0 && (
+                      <Card size="small" style={{ marginBottom: 12, background: '#fafcff' }}>
+                        <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                          <EditOutlined /> 继续修改
+                        </Text>
+                        <TextArea
+                          value={refineInput}
+                          onChange={(e) => setRefineInput(e.target.value)}
+                          placeholder="用自然语言描述修改意见，例如：把第 2 步的延时改成 500ms，最后增加一个读取版本号的步骤"
+                          autoSize={{ minRows: 2, maxRows: 5 }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            AI 会返回修改后的完整用例集，确认无误后再一键添加
+                          </Text>
+                          <Button
+                            icon={<CheckCircleOutlined />}
+                            onClick={handleRefine}
+                            loading={refining}
+                            disabled={!activeModel || !refineInput.trim()}
+                          >
+                            应用修改
+                          </Button>
+                        </div>
+                        {refineLog.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>已应用的修改：</Text>
+                            {refineLog.map((r, i) => (
+                              <Tag key={i} color="green" style={{ marginTop: 4 }}>{i + 1}. {r}</Tag>
+                            ))}
+                          </div>
+                        )}
+                      </Card>
+                    )}
 
                     {/* Show AI raw response / conversation content */}
                     {testCaseResult?.raw_response && (
@@ -456,6 +645,16 @@ export default function AIChat() {
                                 <Tag color="default" key="steps">
                                   {stepCount} 步骤
                                 </Tag>,
+                                <Tooltip title="预览用例详情" key="preview">
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    icon={<EyeOutlined />}
+                                    onClick={() => setPreviewCase(tc)}
+                                  >
+                                    预览
+                                  </Button>
+                                </Tooltip>,
                                 <Tooltip title="导入到测试用例列表" key="import">
                                   <Button
                                     type="link"
@@ -464,7 +663,7 @@ export default function AIChat() {
                                     loading={importingIds.has(tc.name)}
                                     onClick={() => handleSaveOne(tc)}
                                   >
-                                    导入
+                                    添加
                                   </Button>
                                 </Tooltip>,
                               ]}
@@ -488,6 +687,118 @@ export default function AIChat() {
                 ) : (
                   <Empty description="尚未生成测试用例。输入需求后点击「生成测试用例」" />
                 )}
+              </Card>
+            ),
+          },
+          {
+            key: 'memory',
+            label: '项目记忆',
+            children: (
+              <Card>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                  message="把对话中确认的关键决策、约定与事实沉淀到 Project_<项目名> Memory.md"
+                  description="先让 AI 从当前对话提炼要点，确认或修改后再写入文件。文件保存在 backend/memory/ 目录下，可直接提交到 Git。"
+                />
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <Space wrap>
+                    <Text strong>项目名：</Text>
+                    <Input
+                      value={memoryProject}
+                      onChange={(e) => setMemoryProject(e.target.value)}
+                      style={{ width: 240 }}
+                      placeholder="例如 AITestLab"
+                    />
+                    <Button
+                      icon={<BulbOutlined />}
+                      onClick={handleExtractMemory}
+                      loading={extracting}
+                      disabled={!activeModel || messages.length === 0}
+                    >
+                      从对话提炼要点
+                    </Button>
+                    <Button
+                      type="primary"
+                      icon={<SaveOutlined />}
+                      onClick={handleWriteMemory}
+                      loading={memSaving}
+                      disabled={!memDraft.trim()}
+                    >
+                      写入记忆文件
+                    </Button>
+                  </Space>
+
+                  <TextArea
+                    value={memDraft}
+                    onChange={(e) => setMemDraft(e.target.value)}
+                    placeholder="提炼结果会显示在这里，可手动修改后再写入"
+                    autoSize={{ minRows: 6, maxRows: 16 }}
+                  />
+
+                  <Divider orientation="left" style={{ margin: '8px 0' }}>已有记忆文件</Divider>
+                  {memories.length === 0 ? (
+                    <Empty description="还没有记忆文件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  ) : (
+                    <List
+                      size="small"
+                      dataSource={memories}
+                      renderItem={(m: any) => (
+                        <List.Item
+                          actions={[
+                            <Button
+                              key="view" type="link" size="small"
+                              icon={<FileMarkdownOutlined />}
+                              onClick={() => handleReadMemory(m.name)}
+                            >
+                              查看
+                            </Button>,
+                            <Button
+                              key="del" type="link" size="small" danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => handleDeleteMemory(m.name)}
+                            >
+                              删除
+                            </Button>,
+                          ]}
+                        >
+                          <List.Item.Meta
+                            title={
+                              <Space>
+                                <Text strong>{m.name}</Text>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  {m.file_name}
+                                </Text>
+                              </Space>
+                            }
+                            description={
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {m.section_count} 条记录 · {m.preview || '（无摘要）'}
+                              </Text>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  )}
+
+                  {memView && (
+                    <>
+                      <Divider orientation="left" style={{ margin: '8px 0' }}>
+                        {memView.name} 的内容
+                      </Divider>
+                      <pre
+                        style={{
+                          background: '#fafafa', padding: 16, borderRadius: 8,
+                          maxHeight: 360, overflow: 'auto', fontSize: 12,
+                        }}
+                      >
+                        {memView.content}
+                      </pre>
+                    </>
+                  )}
+                </Space>
               </Card>
             ),
           },
@@ -521,6 +832,14 @@ export default function AIChat() {
             ),
           },
         ]}
+      />
+
+      <TestCasePreviewModal
+        open={!!previewCase}
+        testCase={previewCase}
+        onClose={() => setPreviewCase(null)}
+        onImport={handleSaveOne}
+        importing={!!previewCase && importingIds.has(previewCase.name)}
       />
     </div>
   )

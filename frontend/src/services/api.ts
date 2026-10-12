@@ -87,6 +87,10 @@ export const aiAPI = {
   testModel: (id: string) => apiLongTimeout.post(`/ai/models/${id}/test`),
   chat: (data: any) => apiLongTimeout.post('/ai/chat', data),
   generateTestCases: (data: any) => apiLongTimeout.post('/ai/generate-testcases', data),
+  // Conversational revision of an already generated test-case set
+  refineTestCases: (data: any) => apiLongTimeout.post('/ai/refine-testcases', data),
+  // Condense a conversation into durable project memory notes
+  extractMemory: (data: any) => apiLongTimeout.post('/ai/memory/extract', data),
   naturalLanguageQuery: (data: any) => apiLongTimeout.post('/ai/query', data),
   transcribeSpeech: (file: File) => {
     const formData = new FormData()
@@ -231,5 +235,43 @@ export const pluginEditorAPI = {
   validate: (moduleName: string, content?: string) =>
     api.post('/plugin-editor/validate', { module_name: moduleName, content }),
 }
+
+// Project memory (Project_<name> Memory.md)
+export const memoryAPI = {
+  list: () => api.get('/memory'),
+  read: (name: string) => api.get(`/memory/${encodeURIComponent(name)}`),
+  write: (data: { name: string; content: string; mode?: string; title?: string }) =>
+    api.post('/memory', data),
+  remove: (name: string) => api.delete(`/memory/${encodeURIComponent(name)}`),
+}
+
+// Project engineering file — bundle / 另存为 / 导入 / 导出 / 重命名
+export const projectAPI = {
+  list: () => api.get('/projects'),
+  exportBundle: (data?: { sections?: string[]; project_name?: string }) =>
+    api.post('/projects/export', data || {}),
+  save: (name: string, sections?: string[]) =>
+    api.post('/projects/save', { name, sections }),
+  importBundle: (bundle: any, sections?: string[], mode: string = 'merge') =>
+    api.post('/projects/import', { bundle, sections, mode }),
+  get: (name: string) => api.get(`/projects/${encodeURIComponent(name)}`),
+  rename: (name: string, newName: string) =>
+    api.put(`/projects/${encodeURIComponent(name)}`, { new_name: newName }),
+  remove: (name: string) => api.delete(`/projects/${encodeURIComponent(name)}`),
+  sync: (name: string, sections?: string[]) =>
+    api.post(`/projects/${encodeURIComponent(name)}/sync`, { sections }),
+}
+
+export const PROJECT_SECTIONS = [
+  { key: 'models', label: '模型配置' },
+  { key: 'devices', label: '设备配置' },
+  { key: 'plugins', label: '插件配置' },
+  { key: 'skills', label: 'Skill 配置' },
+  { key: 'test_cases', label: '测试用例' },
+  { key: 'execution_plans', label: '执行管理器' },
+  { key: 'dashboards', label: '仪表盘配置' },
+]
+
+export const MEMORY_SECTIONS = PROJECT_SECTIONS
 
 export default api

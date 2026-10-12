@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-10-13: AI 助手增强 + 项目工程文件 + 流程图代码生成修复（v0.10.0）
+
+### 0. 版本号统一（遗留项）
+
+`backend/app/core/config.py` 的 `APP_VERSION` 一直是 `1.0.0`，与看板口径（v0.9.0）脱节。
+连同 `backend/aitestlab.nsi` 的安装包版本号一起同步为 **v0.9.0 → 本次发布 v0.10.0**。
+
+### 1. 修复：流程图编辑后重新生成代码失败（P1）
+
+**现象**：改动流程图后再点「生成代码」不生效；**未改动**的流程图反而能正常生成。
+
+**根因（实证复现）**：`TestFlowEditor.handleSaveFlow()` 用**裸 `catch`** 把 `PUT /flow` 的
+**任何**失败都当成「流程还不存在」，回退 `POST /flow`；而 `POST` 同样返回 400（解析项名称为空 / 重名，
+`_validate_parser_names` 拦截）→ 外层弹出「保存失败」。但 `handleGenerateCode()` **并未中止**，
+仍继续调用 `POST /generate-code`——后端读的是**库里上一次保存成功的旧版本**，于是生成成功却是旧代码。
+
+复现证据（`tc_f80378e9` 真实流程，临时用例）：
+
+| 场景 | 保存 | 生成 |
+|---|---|---|
+| 未编辑 | 200 | OK（14982 字符） |
+| 改节点标签 | 200 | OK（14990） |
+| **新增空名解析项** | **400**（`40011`）→ 回退 POST 仍 400 | **OK（14990＝上一版旧代码）** |
+| **解析项重名** | **400**（`40012`）→ 回退 POST 仍 400 | **OK（14990＝上一版旧代码）** |
+
+**修复**：
+
+1. `handleSaveFlow()` 改为返回 `Promise<boolean>`，**仅 404 才回退 `POST` 创建**；
+   400/409/5xx 一律上报真实错误并返回 `false`。
+2. `handleGenerateCode()` **保存失败即中止**，抽屉里直接说明原因（解析项名称为空/重复），
+   不再拿旧版本"假装成功"。
+3. 后端加固：`codegen_service.generate_python()` 的 `nodes[0]` 在**空流程**时抛 `IndexError` → 500，
+   改为防御式归一化；`generate-code` 对空流程返回 **400 + `40013` 明确提示**而非 500。
+
+### 2. AI 助手增强
+
+| 能力 | 实现 |
+|---|---|
+| **预览生成的用例** | 新增 `TestCasePreviewModal`：名称/描述/整体预期/设备/标签 + 步骤表（命令、参数、预期、flow_type），预览弹窗内即可直接「添加到测试用例列表」 |
+| **一键添加** | 原「一键导入全部」保留并改名为「一键添加全部」，单项「导入」改名「添加」 |
+| **对话式修改用例** | 新后端 `ai_service.refine_test_cases()` + `POST /api/ai/refine-testcases`：把**当前完整用例集**连同自然语言指令交给模型，返回**完整修订集**（非 diff），前端整体替换。模型忘返回/返回不可解析 JSON 时**保留原用例**并告警，绝不静默清空用户成果 |
+
+实测：指令「把第 2 步的等待时间从 1000ms 改成 500ms，并在最后增加一个步骤：读取版本号」
+→ 步骤 2 `duration_ms` 由 1000 变 500，并新增步骤 3 `AT+VERSION?`。
+
+### 3. 项目记忆文件（`Project_<项目名> Memory.md`）
+
+- 新服务 `app/services/memory_service.py` + `app/api/memory.py`，文件落在 `backend/memory/`。
+- `POST /api/ai/memory/extract`：AI 把对话提炼成 **决策 / 约定 / 事实 / 约束与风险** 四类 Markdown 要点
+  （带已有记忆去重），前端可**先审阅修改再写入**。
+- `POST /api/memory` 追加（`append`）或覆写（`replace`），每个条目带 `## 时间 · 标题` 小节。
+- 前端「项目记忆」页签：项目名输入、提炼、编辑草稿、写入、查看/删除已有文件。
+
+### 4. 项目工程文件（插件/Skill/用例/执行管理器/设备/仪表盘/模型 一体化）
+
+- 新服务 `app/services/project_service.py` + `app/api/projects.py`，文件落在 `backend/projects/Project_<名>.json`。
+- **导出**：7 个配置段可勾选，JSON 列的存储串解码为可读对象；**`ai_models.api_key_encrypted` 永不写入**。
+- **导入**：先按 `id` 再按自然键（名称 / 名称+provider+model_name）匹配，已存在则更新——
+  **重复导入零新增，幂等**。支持 `merge`（默认）与 `replace`（先清空该段，子表先删）。
+- 导入时跳过机器相关字段（插件 `file_path`/`module_name`、设备 `status`/`last_seen`），避免声称"已连接"。
+- 前端新增「项目工程」页面：导出下载 / 上传导入 / 另存为 / 覆盖同步 / 重命名 / 删除，并展示各段条数与导入结果。
+
+**踩坑**：`Column.key` 不可信——`extra_meta = Column("metadata", Text)` 的 `key` 仍是 `"metadata"`，
+`getattr(row, "metadata")` 取到的是 **SQLAlchemy `MetaData` 对象**，导致 `jsonable_encoder` 无限递归
+（`RecursionError` → 裸 500）。改用 mapper 的 `get_property_by_column(col).key` 取真实属性名。
+
+### 5. 验证
+
+| 项 | 结果 |
+|---|---|
+| 工程文件全量导出 | 7 段：模型 1 / 设备 6 / 插件 3 / Skill 5 / 用例 88 / 计划 2 / 仪表盘 2 |
+| 另存为 → 读取 → 导入 → 重命名 → 删除 | 全 200 |
+| **导入幂等**（连导两次） | 二次导入 7 段 `created=0`（全为 updated） |
+| **密钥泄漏检查** | 工程文件全文不含 `api_key_encrypted` |
+| 记忆文件 | 写入/追加/列出/读取/删除全通过，文件名 `Project_AITestLab Memory.md` |
+| 对话修改用例 | 真实模型调用，步骤 2 延时 1000→500 且新增步骤 3 |
+| 空流程生成代码 | **400 + `40013`**（修复前 500） |
+| 节点编辑后生成 | OK，代码含新标签与 `duration=500` |
+| 回归：12 个既有 + 新增端点 | 失败数 **0**；计划校验 2/2 valid；代码生成 7426 字符 |
+| `tsc --noEmit` / `npm run build` / `compileall` | 全通过（4259 模块） |
+
+---
+
 ## 2026-10-09: 测试用例执行管理器（v0.9.0）
 
 依据 `docs/PRD_执行管理器_ExecutionManager - Copy.md` 实施。用户拍板的三个决策：

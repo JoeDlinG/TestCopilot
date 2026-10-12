@@ -210,7 +210,13 @@ class CodeGenService:
         test_case_name: str = "auto_generated_test",
     ) -> str:
         """Return a complete Python script string for the given flow."""
-        node_map: Dict[str, dict] = {n["id"]: n for n in nodes} if isinstance(nodes[0], dict) else {}
+        # Defensive normalisation: a hand-edited / partially saved flow may
+        # contain nulls or non-dict entries, and an empty flow used to crash on
+        # ``nodes[0]``.  Both are tolerated here so the caller can report a
+        # meaningful error instead of a 500.
+        nodes = [n for n in (nodes or []) if isinstance(n, dict)]
+        edges = [e for e in (edges or []) if isinstance(e, dict)]
+        node_map: Dict[str, dict] = {n["id"]: n for n in nodes if n.get("id")}
 
         # Build adjacency sorted by position for deterministic output
         adj: Dict[str, List[Dict[str, Any]]] = defaultdict(list)

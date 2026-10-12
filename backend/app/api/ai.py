@@ -14,9 +14,10 @@ POST   /api/ai/speech/transcribe         - Speech to text
 """
 import json
 import uuid
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -30,6 +31,26 @@ from app.schemas.schemas import (
 from app.services.ai_service import ai_service
 
 router = APIRouter(prefix="/api/ai", tags=["AI"])
+
+
+class TestCaseRefineRequest(BaseModel):
+    """Conversational edit of an already generated test-case set."""
+
+    model_id: Optional[str] = None
+    test_cases: List[Dict[str, Any]] = Field(default_factory=list)
+    instruction: str = Field(..., min_length=1)
+    available_devices: Optional[List[Dict[str, Any]]] = None
+    skill_protocols: Optional[List[str]] = None
+    requirements: Optional[str] = None
+
+
+class MemoryExtractRequest(BaseModel):
+    """Condense a conversation into durable project memory notes."""
+
+    model_id: Optional[str] = None
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    project_name: Optional[str] = None
+    existing_memory: Optional[str] = None
 
 
 def _model_to_dict(model) -> dict:
@@ -172,6 +193,49 @@ async def generate_test_cases(data: TestCaseGenerateRequest, db: AsyncSession = 
     except Exception as e:
         raise HTTPException(status_code=400, detail={
             "code": 40007, "message": "Generation failed", "detail": _unwrap_error(e),
+        })
+
+
+@router.post("/refine-testcases")
+async def refine_test_cases(data: TestCaseRefineRequest, db: AsyncSession = Depends(get_db)):
+    """Revise an already generated test-case set from a chat instruction."""
+    try:
+        result = await ai_service.refine_test_cases(
+            db, data.model_id, data.test_cases, data.instruction,
+            available_devices=data.available_devices,
+            skill_protocols=data.skill_protocols,
+            requirements=data.requirements or "",
+        )
+        return {"code": 0, "message": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40008, "message": "无法修改测试用例", "detail": str(e),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40007, "message": "Refinement failed", "detail": _unwrap_error(e),
+        })
+
+
+# ============ Project Memory ============
+
+@router.post("/memory/extract")
+async def extract_memory(data: MemoryExtractRequest, db: AsyncSession = Depends(get_db)):
+    """Condense the current conversation into Markdown memory notes."""
+    try:
+        result = await ai_service.extract_memory(
+            db, data.model_id, data.messages,
+            project_name=data.project_name or "",
+            existing_memory=data.existing_memory or "",
+        )
+        return {"code": 0, "message": "success", "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40008, "message": "提炼记忆失败", "detail": str(e),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40007, "message": "Memory extraction failed", "detail": _unwrap_error(e),
         })
 
 

@@ -20,7 +20,7 @@ from app.core.database import init_db
 from app.core.exceptions import AITestLabException
 from app.api import (
     devices, ai, testcases, executions, logs, reports, plugins,
-    plugin_editor, dashboards, websocket, plans,
+    plugin_editor, dashboards, websocket, plans, memory, projects,
 )
 
 logging.basicConfig(
@@ -105,6 +105,8 @@ async def aitestlab_exception_handler(request: Request, exc: AITestLabException)
 # Register API routers
 app.include_router(devices.router)
 app.include_router(ai.router)
+app.include_router(memory.router)
+app.include_router(projects.router)
 app.include_router(testcases.router)
 app.include_router(executions.router)
 app.include_router(logs.router)

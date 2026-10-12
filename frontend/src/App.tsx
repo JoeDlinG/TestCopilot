@@ -15,6 +15,7 @@ import Plugins from './pages/Plugins'
 import PluginEditor from './pages/PluginEditor'
 import SkillEditor from './pages/SkillEditor'
 import ModelConfig from './pages/ModelConfig'
+import ProjectManager from './pages/ProjectManager'
 
 function App() {
   return (
@@ -35,6 +36,7 @@ function App() {
         <Route path="plugin-editor" element={<PluginEditor />} />
         <Route path="skill-editor" element={<SkillEditor />} />
       <Route path="model-config" element={<ModelConfig />} />
+      <Route path="projects" element={<ProjectManager />} />
       </Route>
     </Routes>
   )

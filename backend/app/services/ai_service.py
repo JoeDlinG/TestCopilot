@@ -807,5 +807,201 @@ Rules:
                 "explanation": f"Query execution failed: {str(e)}",
             }
 
+    # ------------------------------------------------------------------ #
+    # Conversational refinement of generated test cases
+    # ------------------------------------------------------------------ #
+
+    async def refine_test_cases(
+        self,
+        db: AsyncSession,
+        model_id: Optional[str],
+        current_cases: List[Dict[str, Any]],
+        instruction: str,
+        available_devices: Optional[List[Dict[str, Any]]] = None,
+        skill_protocols: Optional[List[str]] = None,
+        requirements: str = "",
+    ) -> dict:
+        """Apply a conversational edit instruction to generated test cases.
+
+        The model receives the *complete* current case set and returns the
+        complete revised set, so the UI can simply swap its state — no fragile
+        per-field patching on either side.
+        """
+        if model_id:
+            model = await self.get_model(db, model_id)
+        else:
+            model = await self.get_active_model(db)
+        if not model:
+            raise AIModelNotFoundError(model_id or "default")
+
+        if not current_cases:
+            raise ValueError("没有可修改的测试用例，请先生成")
+
+        provider = _provider_with_min_tokens(model, 32768)
+
+        system_prompt = """You are a test automation expert revising an existing set of test case definitions.
+
+You will receive the CURRENT test cases as JSON and a MODIFICATION INSTRUCTION in Chinese.
+
+Rules:
+1. Apply ONLY what the instruction asks. Everything else must stay byte-identical.
+2. Return the COMPLETE revised test case set — never a diff, never a subset.
+3. Output exactly one JSON object: {"test_cases": [ ... ]}. No markdown fences, no commentary.
+4. Preserve the schema of every test case object:
+   {name, description, steps, expected_result, parameters, devices_required, tags, flow_description}
+   and every step object:
+   {step_number, action, expected_result, parameters, device_type?, flow_type?}
+5. Renumber step_number sequentially from 1 within each case.
+6. Keep device command syntax exactly as the attached skills define it. Never
+   invent Python/driver pseudo-code as a command.
+7. If the instruction is ambiguous, choose the most conservative interpretation
+   that satisfies it literally.
+
+Output ONLY the JSON object."""
+
+        skill_context = _build_skill_context(
+            skill_protocols, auto_detect_text=instruction
+        )
+        if skill_context:
+            system_prompt += f"\n\n{skill_context}"
+
+        devices_info = ""
+        if available_devices:
+            devices_info = "\nAvailable devices:\n" + json.dumps(available_devices, indent=2)
+
+        payload = {
+            "original_requirement": requirements or "(未提供)",
+            "test_cases": current_cases,
+        }
+        user_content = (
+            f"CURRENT TEST CASES (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+            f"\n{devices_info}"
+            f"\n\nMODIFICATION INSTRUCTION:\n{instruction}"
+        )
+
+        try:
+            t0 = time.monotonic()
+            result = await provider.chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ])
+            logger.info(
+                "refine_test_cases: model=%s elapsed=%.1fs",
+                model.model_name, time.monotonic() - t0,
+            )
+        except Exception as e:
+            raise AICallError(model.provider, str(e))
+
+        response_text = result["content"] or ""
+        parsed_raw = _extract_json_object(response_text)
+        if parsed_raw is None:
+            logger.warning(
+                "refine_test_cases: unparsable response (len=%d) — keeping the "
+                "previous test cases untouched.",
+                len(response_text),
+            )
+            return {
+                "raw_response": response_text,
+                "parsed": {"test_cases": current_cases},
+                "usage": _sanitize_json(result.get("usage")),
+                "changed": False,
+                "warning": "AI 返回内容无法解析为 JSON，已保留原测试用例。",
+            }
+
+        parsed = _normalize_test_cases(parsed_raw)
+        revised = (parsed.get("test_cases") or [])
+        if not revised:
+            # A model that "forgets" the cases must not wipe the user's work.
+            return {
+                "raw_response": response_text,
+                "parsed": {"test_cases": current_cases},
+                "usage": _sanitize_json(result.get("usage")),
+                "changed": False,
+                "warning": "AI 未返回任何测试用例，已保留原测试用例。",
+            }
+
+        return {
+            "raw_response": response_text,
+            "parsed": _sanitize_json(parsed),
+            "usage": _sanitize_json(result.get("usage")),
+            "changed": True,
+            "warning": None,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Project memory — condense a conversation into durable notes
+    # ------------------------------------------------------------------ #
+
+    async def extract_memory(
+        self,
+        db: AsyncSession,
+        model_id: Optional[str],
+        messages: List[Dict[str, Any]],
+        project_name: str = "",
+        existing_memory: str = "",
+    ) -> dict:
+        """Summarise the key content of a conversation into Markdown notes."""
+        if model_id:
+            model = await self.get_model(db, model_id)
+        else:
+            model = await self.get_active_model(db)
+        if not model:
+            raise AIModelNotFoundError(model_id or "default")
+
+        transcript = "\n".join(
+            f"[{m.get('role', 'user')}] {m.get('content', '')}"
+            for m in (messages or [])
+            if (m.get("content") or "").strip()
+        )
+        if not transcript.strip():
+            raise ValueError("没有可提炼的对话内容")
+
+        provider = _provider_with_min_tokens(model, 16384)
+
+        system_prompt = """你是项目记忆助理。请从对话中提炼**值得长期保留的关键内容**，输出 Markdown 片段（不要输出 ```markdown 代码块围栏）。
+
+保留：
+1. **决策** — 已确认的方案取舍、技术选型、版本/范围决定
+2. **约定** — 命名规范、格式约定、接口约定、流程约定
+3. **事实** — 环境信息、设备/端口/协议、已验证通过的结论
+4. **约束与风险** — 已知限制、待办、未决问题
+
+要求：
+- 使用 `### 决策` / `### 约定` / `### 事实` / `### 约束与风险` 作为小标题，只保留有内容的分类
+- 每条用 `- ` 开头，一条一行，简洁具体，包含必要的数值与名称
+- 忽略寒暄、重复表述和中间试错过程
+- 若某分类无内容，直接省略该小标题
+- 不要写"以上是…"之类的总结句"""
+
+        user_content = (
+            f"项目名称：{project_name or '未命名项目'}\n\n"
+            f"=== 对话记录 ===\n{transcript}\n"
+        )
+        if (existing_memory or "").strip():
+            user_content += (
+                "\n=== 已有记忆（避免重复记录已存在的内容）===\n"
+                f"{existing_memory.strip()[:6000]}\n"
+            )
+
+        try:
+            result = await provider.chat([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ])
+        except Exception as e:
+            raise AICallError(model.provider, str(e))
+
+        content = (result["content"] or "").strip()
+        # Strip an occasional ```markdown fence.
+        fence = re.search(r"```(?:markdown|md)?\n?([\s\S]*?)```", content)
+        if fence:
+            content = fence.group(1).strip()
+
+        return {
+            "content": content,
+            "raw_response": result["content"],
+            "usage": _sanitize_json(result.get("usage")),
+        }
+
 
 ai_service = AIService()
