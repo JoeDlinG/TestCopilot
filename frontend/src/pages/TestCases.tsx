@@ -334,44 +334,68 @@ export default function TestCases() {
     failed: 'red',
   }
 
+  // Every column declares an explicit width. AntD switches the table to
+  // `table-layout: fixed` as soon as any column sets `ellipsis`; without
+  // widths the remaining space is distributed by content, so a long "标签"
+  // cell pushed into 状态 / 创建时间 / 操作 and the text overlapped.
   const columns = [
     {
       title: '用例名称',
       dataIndex: 'name',
       key: 'name',
+      width: 240,
+      ellipsis: true,
       render: (text: string, record: TestCase) => (
-        <a onClick={() => navigate(`/testcases/${record.id}/flow`)}>
-          <ExperimentOutlined /> {text}
-        </a>
+        <Tooltip title={text}>
+          <a onClick={() => navigate(`/testcases/${record.id}/flow`)}>
+            <ExperimentOutlined /> {text}
+          </a>
+        </Tooltip>
       ),
     },
     {
       title: '描述',
       dataIndex: 'description',
       key: 'description',
+      width: 260,
       ellipsis: true,
     },
     {
       title: '步骤数',
       key: 'steps',
+      width: 80,
+      align: 'center' as const,
       render: (_: any, record: TestCase) => record.steps?.length || 0,
     },
     {
       title: '标签',
       dataIndex: 'tags',
       key: 'tags',
-      render: (tags: string[]) => (
-        <Space>
-          {(tags || []).map((tag) => (
-            <Tag key={tag} color="blue">{tag}</Tag>
-          ))}
-        </Space>
-      ),
+      width: 220,
+      render: (tags: string[]) => {
+        const list = tags || []
+        if (list.length === 0) return <Text type="secondary">-</Text>
+        return (
+          <Tooltip title={list.join('、')}>
+            <span
+              style={{
+                display: 'inline-block', maxWidth: '100%',
+                overflow: 'hidden', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+              }}
+            >
+              {list.map((tag) => (
+                <Tag key={tag} color="blue" style={{ marginInlineEnd: 4 }}>{tag}</Tag>
+              ))}
+            </span>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 90,
       render: (status: string) => (
         <Tag color={statusColor[status] || 'default'}>{status}</Tag>
       ),
@@ -380,11 +404,13 @@ export default function TestCases() {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 170,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
       title: '操作',
       key: 'actions',
+      width: 210,
       render: (_: any, record: TestCase) => (
         <Space>
           <Tooltip title="运行测试">

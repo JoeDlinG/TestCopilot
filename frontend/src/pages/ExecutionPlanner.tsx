@@ -333,7 +333,9 @@ export default function ExecutionPlanner() {
               allowClear
               placeholder="自动推断"
               value={r.device_id || undefined}
-              onChange={(v) => update(r.id, { device_id: v })}
+              // Explicit type: with `options` supplied but no generic parameter,
+              // antd cannot infer the value type and `v` degrades to any.
+              onChange={(v: string | undefined) => update(r.id, { device_id: v })}
               options={devices.map((d) => ({ value: d.id, label: d.name }))}
             />
             {!!ids.length && (
