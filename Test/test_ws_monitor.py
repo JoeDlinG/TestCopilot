@@ -9,10 +9,14 @@ Run: python3 Test/test_ws_monitor.py
 """
 import asyncio
 import json
+import os
 import sys
 
 import requests
 import websockets
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _testutil import ensure_connected, find_device  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
 WS = "ws://127.0.0.1:8000"
@@ -28,8 +32,12 @@ def check(cond, msg):
 
 
 def pick_device():
+    """Return the Mini Gateway 100 device, or ``None`` when it is not attached.
+
+    A bare ``next(...)`` raised ``StopIteration`` without hardware (issue #9).
+    """
     items = requests.get(f"{BASE}/devices/", timeout=10).json()["data"]["items"]
-    return next(d for d in items if d["protocol"] == "mini_gateway100")
+    return find_device(items, "mini_gateway100")
 
 
 async def test_device_ws(dev_id):
@@ -118,9 +126,13 @@ async def test_execution_ws(dev_id, tc_id):
 
 async def main():
     dev = pick_device()
+    if dev is None:
+        print("  [SKIP] 未找到 mini_gateway100 设备（需要硬件），跳过本测试")
+        return 0
     print(f"  设备: {dev['id']} ({dev['protocol']}) status={dev['status']}\n")
-    if dev["status"] != "connected":
-        requests.post(f"{BASE}/devices/connect", json={"device_id": dev["id"]}, timeout=30)
+    if not ensure_connected(BASE, dev):
+        print("  [SKIP] mini_gateway100 无法连接（需要硬件），跳过本测试")
+        return 0
 
     await test_device_ws(dev["id"])
     await test_execution_ws(dev["id"], "tc_0c55f55c")

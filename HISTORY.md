@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-10-14: MG100 以太网 + 设备接口可配置 + 修复 GitHub Open Issue（v0.11.0）
+
+### 1. Mini Gateway 100 插件支持以太网
+
+用户确认：**MG100 支持以太网，端口 6025，默认 IP 192.168.0.120**；PeakCAN 不支持，不改。
+
+插件原来把传输写死在 `connect()` 里（`import serial` + `serial.Serial`），完全绕过了平台通用通信层。
+改造为**双传输**（照 `rigol_oscilloscope_plugin.py` 的 `TRANSPORTS` 模式）：
+
+| `transport` | 参数 | 说明 |
+|---|---|---|
+| `serial`（默认） | `port` / `baudrate` | 与改造前行为完全一致，向后兼容 |
+| `ethernet` | `host`（默认 `192.168.0.120`）/ `tcp_port`（默认 `6025`）/ `connect_timeout` | asyncio TCP |
+
+要点：
+
+- 抽出 `_write_frame()` / `_read_frame(timeout)` / `_flush_input()` 三个传输原语，串口与以太网共用同一套收发逻辑
+- 以太网收帧带回退缓冲（一次 `read(4096)` 而非逐字节），超时返回已收部分，不会挂死
+- **键名冲突**：串口的串口号占用 `port`，故 TCP 端口另用 `tcp_port`，避免同一字段两种语义
+- 连接失败给出可操作报错（超时 / 不可达分别提示），而非静默成功
+
+### 2. 设备管理：可手动配置连接方式（含 PCIe / PXI）
+
+原来只能在「添加设备」时填地址，事后改不了。新增：
+
+- `app/core/interfaces.py` —— **接口注册表**，7 种接口的参数单一数据源，前端按此动态渲染
+  （串口 / USB / 以太网 / **PCIe** / **PXI** / CAN / GPIB）
+- 新增 `GET /api/devices/interfaces`、`GET|PUT /api/devices/{id}/interface`
+- 切换接口时**清空其它接口的地址列**（否则切到以太网后 `serial_port` 仍显示并参与执行管理器的资源键计算），
+  并**移除其它接口的 config 键**（否则把 `baudrate` 交给 TCP socket）
+- 前端新增「配置接口」弹窗（`InterfaceConfigModal`），按接口类型动态出字段
+
+参数存放：能落到 `devices` 列的用列（`serial_port`/`ip_address`/`port`/`visa_address`/`can_channel`），
+其余进 `config` JSON。PCIe 用 `bdf`（如 `0000:01:00.0`），PXI 用 `chassis`+`slot`（VISA 资源 `PXI0::2::INSTR`）。
+
+### 3. 通信层：新增 PCIe / PXI，修复以太网「假装连上」
+
+- 新增 `PCIeInterface` / `PXIInterface`（`BusInstrumentInterface`），**明确模拟模式**：连接成功但收发均带
+  `[Simulated PCIe:...]` 标记，且 `simulated` 属性可给 UI 打徽标（当前无内核驱动集成）
+- **修复隐患**：`EthernetInterface.connect()` 失败时原本 `self._is_connected = True`（注释 "Allow mock fallback"），
+  导致不可达设备也显示「已连接」并返回 `[Mock Ethernet]` 假数据。改为**默认严格报错**，
+  模拟需显式 `simulate: true`（界面上就是以太网参数里的「模拟模式」开关）
+
+### 4. GitHub Open Issue（16 个）
+
+逐一核对后：**11 个为历史版本已修但未关闭**，本轮实际修复 5 个。
+
+| # | 结论 |
+|---|---|
+| #8 | **修复**：9 个集合路由无尾斜杠返回 307（打包模式下会落到 SPA 兜底返回 index.html）。用 `main.py` 统一中间件内部改写路径，不逐个改路由。`/api/health`、`/api/ai/models` 等单资源路径不受影响 |
+| #9 | **修复**：`test_codegen.py` 的 `os.chdir()` 改为 `sys.path` 导入（可从任意目录运行）；新增 `Test/_testutil.py`，`find_device()` 不再抛 `StopIteration`、`ensure_connected()` 连不上就 SKIP；修正 3 处过期断言（`parsed_results` 已改为 `{count,samples,last}` 逐回复序列；生成代码现为 `send_command(_r('...', ctx))`） |
+| #10 | **修复**：文档与 `GET /` 自述的 `ws://.../ws` 不存在（403）。改为列出真实端点 `/ws/executions/{id}`、`/ws/devices/{id}`；同步修正 `API_SPEC.md`（`/ws/devices/{id}/monitor` → `/ws/devices/{id}`）与 `ARCHITECTURE.md` |
+| #11 | **修复**：RIGOL `usbtmc` 默认 `/dev/usbtmc0` 在 Windows 必然失败。改为必须显式填 `device`，并按 OS 给出提示 |
+| #12 | **修复**：前端单一 2.33 MB chunk → 路由级 `React.lazy` + `manualChunks` 分包（antd / 图标 / charts / flow / react / markdown / grid / http）。路由块降到 1.5–30 kB |
+| #1 #2 #3 #4 #5 #6 #7 #13 #14 #15 #16 | 核对为**历史已修**：复制粘贴与节点类型切换、循环节点命令/预期、while 进入/跳出条件、节点输入输出、初始化节点、PeakCAN 10047 提示、时区、NaN 防御、`is_rx` 自回环过滤、`_errorMessage` 422 数组 codegen 保存失败（均已在 v0.7.0~v0.10.0 落地） |
+
+### 5. 验证
+
+| 项 | 结果 |
+|---|---|
+| MG100 以太网（mock TCP 服务器） | 29/29，HELLO/SYSID/GETVOLT 解析正确，帧格式 `@11_…;` |
+| 设备接口配置 | 32/32，切接口清空旧列、必填校验、PCIe/PXI 模拟连接、以太网不可达正确报错 |
+| 工程文件闭环（回归） | 7 段，二次导入 `created=0`（幂等），不含 `api_key_encrypted` |
+| `Test/` 全部 7 个脚本 | **全 PASS**（test_codegen / result_parsing / ws_monitor / parser_unique_and_trend / mg100_skill_syntax / serial_multiline / can_comlog） |
+| 集合路由无尾斜杠 | 10 个路径全部 200；`/api/health`、`/api/ai/models` 仍 200 |
+| 前端构建 | `tsc --noEmit` + `npm run build` 通过，路由块 1.5–30 kB |
+
+---
+
 ## 2026-10-13: AI 助手增强 + 项目工程文件 + 流程图代码生成修复（v0.10.0）
 
 ### 0. 版本号统一（遗留项）

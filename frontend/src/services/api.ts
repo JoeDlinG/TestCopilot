@@ -75,6 +75,15 @@ export const deviceAPI = {
   disconnect: (id: string) => api.post(`/devices/${id}/disconnect`),
   sendCommand: (id: string, command: string) =>
     api.post(`/devices/${id}/command`, { command }),
+  // Physical interface (connection) configuration
+  listInterfaces: () => api.get('/devices/interfaces'),
+  getInterface: (id: string) => api.get(`/devices/${id}/interface`),
+  updateInterface: (id: string, connectionType: string, params: any, protocol?: string) =>
+    api.put(`/devices/${id}/interface`, {
+      connection_type: connectionType,
+      params,
+      protocol,
+    }),
 }
 
 // AI APIs — use long timeout because reasoning models can take minutes

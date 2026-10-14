@@ -303,6 +303,8 @@ export const INTERFACE_TYPES: Record<string, string> = {
   serial: '串口',
   ethernet: '以太网',
   gpib: 'GPIB',
+  pcie: 'PCIe',
+  pxi: 'PXI / PXIe',
   custom: '自定义',
   mini_gateway100: 'Mini Gateway 100',
 }

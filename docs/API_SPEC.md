@@ -3,7 +3,8 @@
 ## 基础信息
 
 - **Base URL**: `http://localhost:8000/api`
-- **WebSocket Base**: `ws://localhost:8000/ws`
+- **WebSocket Base**: 无统一的 `/ws` 基址（该地址不存在，会返回 403）。实际端点见 [第 9 节](#9-websocket-端点)：
+  `ws://localhost:8000/ws/executions/{execution_id}`、`ws://localhost:8000/ws/devices/{device_id}`
 - **Content-Type**: `application/json`（除文件上传外）
 - **认证方式**: Bearer Token（Phase 1 预留，暂不强制）
 
@@ -1245,7 +1246,7 @@ WS /ws/executions/{execution_id}
 ### 9.2 设备实时监控
 
 ```
-WS /ws/devices/{device_id}/monitor
+WS /ws/devices/{device_id}
 ```
 
 **服务端推送：**

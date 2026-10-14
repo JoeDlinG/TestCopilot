@@ -122,6 +122,32 @@ app.include_router(websocket.router)
 
 
 # ---------------------------------------------------------------------------
+# Accept both "/api/devices" and "/api/devices/" for collection routes.
+#
+# FastAPI answers the slash-less form with a 307 redirect, which costs an extra
+# round trip, breaks clients that do not follow redirects, and — in packaged
+# mode, where the SPA catch-all lives — used to surface as index.html instead
+# of JSON (issue #8).  Rewriting the path internally fixes every collection
+# route at once instead of patching each router.
+# ---------------------------------------------------------------------------
+_API_ROUTE_PATHS = {getattr(r, "path", None) for r in app.routes}
+
+
+@app.middleware("http")
+async def _api_trailing_slash(request, call_next):
+    path = request.scope.get("path") or ""
+    if (
+        path.startswith("/api/")
+        and not path.endswith("/")
+        and path not in _API_ROUTE_PATHS
+        and f"{path}/" in _API_ROUTE_PATHS
+    ):
+        request.scope["path"] = f"{path}/"
+        request.scope["raw_path"] = f"{path}/".encode()
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # Static frontend serving (standalone / packaged mode).
 #
 # When a built frontend (``static/``) is present next to the backend — or
@@ -142,11 +168,16 @@ if _HAS_STATIC:
 async def root():
     if _HAS_STATIC:
         return FileResponse(_STATIC_INDEX)
+    # NOTE: there is no plain "/ws" endpoint — advertising it (as the docs and
+    # this response used to do) sent clients to a 403 (issue #10).
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "docs": "/docs",
-        "websocket": "ws://localhost:8000/ws",
+        "websocket": {
+            "executions": "ws://localhost:8000/ws/executions/{execution_id}",
+            "devices": "ws://localhost:8000/ws/devices/{device_id}",
+        },
     }
 
 

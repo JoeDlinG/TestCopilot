@@ -387,7 +387,17 @@ class RigolOscilloscopePlugin(BaseProtocolPlugin):
                 self._sock = await self._run(_open_tcp)
 
             elif transport == "usbtmc":
-                device = config.get("device") or "/dev/usbtmc0"
+                # A hardcoded "/dev/usbtmc0" default is meaningless on Windows
+                # (no character device) and silently wrong on Linux when several
+                # instruments are attached — require it explicitly instead.
+                device = config.get("device")
+                if not device:
+                    raise ConnectionError(
+                        "usbtmc 连接方式需要填写 device（USB-TMC 字符设备路径，"
+                        "例如 Linux 的 /dev/usbtmc0）。"
+                        + ("Windows 下没有 USB-TMC 字符设备，请改用 tcpip 或 visa 连接方式。"
+                           if os.name == "nt" else "")
+                    )
                 if not os.path.exists(device):
                     raise ConnectionError(f"USB-TMC 设备不存在: {device}")
                 self._fd = await self._run(os.open, device, os.O_RDWR)

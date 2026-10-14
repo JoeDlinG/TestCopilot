@@ -16,8 +16,10 @@ Run: python3 Test/test_codegen.py
 import os
 import sys
 
+# Import the backend package via sys.path. The previous ``os.chdir()`` made the
+# test depend on the directory it was launched from and mutated the process CWD
+# for everything that ran afterwards (issue #9).
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
-os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
 
 from app.services.codegen_service import codegen_service as gen  # noqa: E402
 

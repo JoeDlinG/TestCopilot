@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-10-13
+> 最后更新：2026-10-14
 
 ---
 
@@ -88,6 +88,10 @@
   项目记忆文件 `Project_xxx Memory.md`）+ **项目工程文件**（7 类配置打包成一个 JSON，支持另存为/导入/导出/重命名）；
   修复「流程图编辑后重新生成代码失败」（保存失败被裸 catch 吞掉，仍用旧版本生成）；
   版本号统一：`APP_VERSION` 与安装包版本同步到看板口径
+- **v0.11.0**（新功能 + 修复版，同分支）：**MG100 插件支持以太网**（TCP，默认 `192.168.0.120:6025`，串口/以太网双传输）+
+  **设备接口可手动配置**（新增 PCIe / PXI 及各自参数，接口注册表驱动前端动态表单）+
+  修复以太网「连接失败却假装已连接」；并清理 GitHub Open Issue（实际修复 #8/#9/#10/#11/#12，
+  核对 #1–#7/#13–#16 为历史已修）
 - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -97,6 +101,29 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.11.0 — MG100 以太网 + 设备接口可配置 + 修复 GitHub Open Issue（2026-10-14，分支 `feature/flow-enhancements`）
+
+- [x] **MG100 插件双传输**：新增 `transport` 配置（`serial` 默认 / `ethernet`）；以太网默认
+      `host=192.168.0.120`、`tcp_port=6025`（**串口号已占 `port` 键，TCP 端口另用 `tcp_port`**）；
+      抽出 `_write_frame` / `_read_frame` / `_flush_input` 三原语供两种传输共用；
+      以太网收帧带回退缓冲，超时返回已收部分不挂死；连接失败给出可操作报错
+- [x] **PeakCAN 不改**（用户确认硬件不支持以太网）
+- [x] **接口注册表** `app/core/interfaces.py`：串口 / USB / 以太网 / **PCIe** / **PXI** / CAN / GPIB
+      共 7 种接口的参数单一数据源；能落列的用列，其余进 `config` JSON
+- [x] **设备接口可编辑**：`GET /api/devices/interfaces`、`GET|PUT /api/devices/{id}/interface`；
+      切换接口会清空其它接口的地址列与其它接口的 config 键
+- [x] **前端**：新增 `InterfaceConfigModal`，按接口类型动态渲染参数；设备列表每行加「配置接口」按钮
+- [x] **通信层**：新增 `PCIeInterface` / `PXIInterface`（明确模拟模式，收发带 `[Simulated …]` 标记）；
+      修复 `EthernetInterface` 连接失败却 `_is_connected = True` 返回假数据的隐患（模拟改为显式 `simulate`）
+- [x] **GitHub Open Issue 清理**（16 个）：实际修复 **#8**（9 个集合路由无尾斜杠 307 → 中间件内部改写）、
+      **#9**（`os.chdir` → `sys.path`；`Test/_testutil.py` 消除 `StopIteration` 并支持 SKIP；修正 3 处过期断言）、
+      **#10**（WS 地址 `/ws` 不存在 → 改为真实端点，同步修 4 处文档）、
+      **#11**（RIGOL `usbtmc` 默认 `/dev/usbtmc0` → 必须显式填 `device`）、
+      **#12**（单一 2.33MB chunk → 路由级 lazy + manualChunks，路由块 1.5–30 kB）
+- [x] 核对 #1 #2 #3 #4 #5 #6 #7 #13 #14 #15 #16 为**历史已修**（v0.7.0~v0.10.0 已落地）
+- [x] 验证：MG100 以太网 29/29（mock TCP）；设备接口 32/32；工程文件闭环幂等；
+      **`Test/` 全部 7 个脚本全 PASS**；10 个集合路径无尾斜杠 200；`tsc` + `npm run build` 通过
 
 ### v0.10.0 — AI 助手增强 + 项目工程文件 + 流程图代码生成修复（2026-10-13，分支 `feature/flow-enhancements`）
 

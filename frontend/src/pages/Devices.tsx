@@ -6,10 +6,11 @@ import {
 import {
   PlusOutlined, LinkOutlined, DisconnectOutlined,
   DeleteOutlined, ReloadOutlined, ApiOutlined,
-  SearchOutlined
+  SearchOutlined, EditOutlined
 } from '@ant-design/icons'
 import { deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError } from '../services/apiHelper'
+import InterfaceConfigModal from '../components/devices/InterfaceConfigModal'
 import { DEVICE_TYPES, INTERFACE_TYPES } from '../types'
 import type { Device } from '../types'
 
@@ -26,6 +27,8 @@ export default function Devices() {
   const [discovering, setDiscovering] = useState(false)
   const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([])
   const [discoverModalVisible, setDiscoverModalVisible] = useState(false)
+  const [ifaceModalVisible, setIfaceModalVisible] = useState(false)
+  const [ifaceDevice, setIfaceDevice] = useState<Device | null>(null)
   const [form] = Form.useForm()
 
   const loadDevices = async () => {
@@ -229,6 +232,16 @@ export default function Devices() {
               }}
             />
           </Tooltip>
+          <Tooltip title="配置接口（串口 / USB / 以太网 / PCIe / PXI …）">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => {
+                setIfaceDevice(record)
+                setIfaceModalVisible(true)
+              }}
+            />
+          </Tooltip>
           <Popconfirm
             title="确定删除此设备？"
             onConfirm={() => handleDelete(record.id)}
@@ -394,6 +407,14 @@ export default function Devices() {
           />
         )}
       </Modal>
+
+      {/* Interface (connection) configuration */}
+      <InterfaceConfigModal
+        open={ifaceModalVisible}
+        device={ifaceDevice}
+        onClose={() => setIfaceModalVisible(false)}
+        onSaved={loadDevices}
+      />
     </div>
   )
 }

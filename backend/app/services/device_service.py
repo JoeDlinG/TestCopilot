@@ -28,7 +28,9 @@ from app.api.websocket import (
 from app.core.timeutils import utc_now
 
 # Protocols handled natively by the communication layer (not by plugins).
-_STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
+_STANDARD_PROTOCOLS = {
+    "scpi", "gpib", "can", "serial", "ethernet", "usb", "pcie", "pxi",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,15 @@ class DeviceService:
             return device.serial_port or ""
         elif device.protocol == "ethernet":
             return device.ip_address or ""
+        elif device.protocol == "pcie":
+            return (self._parse_json_field(device.config) or {}).get("bdf") or ""
+        elif device.protocol == "pxi":
+            cfg = self._parse_json_field(device.config) or {}
+            if device.visa_address:
+                return device.visa_address
+            chassis = cfg.get("chassis", 0)
+            slot = cfg.get("slot")
+            return f"PXI{chassis}::{slot}::INSTR" if slot is not None else ""
         elif device.protocol == "usb":
             # For USB protocol, address is not a single string;
             # VID/PID come from config

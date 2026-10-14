@@ -50,6 +50,8 @@ class ProtocolType(str, enum.Enum):
     SERIAL = "serial"
     ETHERNET = "ethernet"
     GPIB = "gpib"
+    PCIE = "pcie"
+    PXI = "pxi"
     CUSTOM = "custom"
 
 
@@ -59,6 +61,8 @@ class ConnectionType(str, enum.Enum):
     GPIB = "gpib"
     SERIAL = "serial"
     CAN = "can"
+    PCIE = "pcie"
+    PXI = "pxi"
 
 
 class DeviceStatus(str, enum.Enum):
