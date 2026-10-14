@@ -12,6 +12,7 @@ import { deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError } from '../services/apiHelper'
 import InterfaceConfigModal from '../components/devices/InterfaceConfigModal'
 import { DEVICE_TYPES, INTERFACE_TYPES } from '../types'
+import { useI18n } from '../i18n'
 import type { Device } from '../types'
 
 const { Title } = Typography
@@ -30,6 +31,7 @@ export default function Devices() {
   const [ifaceModalVisible, setIfaceModalVisible] = useState(false)
   const [ifaceDevice, setIfaceDevice] = useState<Device | null>(null)
   const [form] = Form.useForm()
+  const { t } = useI18n()
 
   const loadDevices = async () => {
     setLoading(true)
@@ -166,38 +168,43 @@ export default function Devices() {
       render: (text: string) => <a><ApiOutlined /> {text}</a>,
     },
     {
-      title: '设备类型',
+      title: t('device.deviceType'),
       dataIndex: 'type',
       key: 'type',
+      width: 140,
       render: (type: string) => DEVICE_TYPES[type] || type,
     },
     {
-      title: '接口类型',
+      title: t('device.interfaceType'),
       dataIndex: 'protocol',
       key: 'protocol',
+      width: 130,
       render: (type: string) => <Tag color="blue">{INTERFACE_TYPES[type] || type}</Tag>,
     },
     {
-      title: '连接地址',
+      title: t('common.address'),
       key: 'address',
+      ellipsis: true,
       render: (_: any, record: any) => (
         record.visa_address || record.serial_port || record.can_channel ||
         record.ip_address || '-'
       ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       key: 'status',
+      width: 90,
       render: (status: string) => (
         <Tag color={status === 'connected' ? 'green' : 'default'}>
-          {status === 'connected' ? '已连接' : '未连接'}
+          {status === 'connected' ? t('common.connected') : t('common.disconnected')}
         </Tag>
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
+      width: 230,
       render: (_: any, record: Device) => (
         <Space>
           {(record as any).status === 'connected' ? (
@@ -232,7 +239,7 @@ export default function Devices() {
               }}
             />
           </Tooltip>
-          <Tooltip title="配置接口（串口 / USB / 以太网 / PCIe / PXI …）">
+          <Tooltip title={t('device.configureInterface')}>
             <Button
               size="small"
               icon={<EditOutlined />}
@@ -243,7 +250,7 @@ export default function Devices() {
             />
           </Tooltip>
           <Popconfirm
-            title="确定删除此设备？"
+            title={t('device.confirmDelete')}
             onConfirm={() => handleDelete(record.id)}
           >
             <Tooltip title="删除设备">
@@ -258,15 +265,17 @@ export default function Devices() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>设备管理</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('device.title')}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadDevices}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadDevices}>
+            {t('common.refresh')}
+          </Button>
           <Button
             icon={<SearchOutlined />}
             onClick={handleDiscover}
             loading={discovering}
           >
-            扫描设备
+            {t('common.search')}
           </Button>
           <Button
             type="primary"
@@ -276,7 +285,7 @@ export default function Devices() {
               form.resetFields()
             }}
           >
-            添加设备
+            {t('device.add')}
           </Button>
         </Space>
       </div>

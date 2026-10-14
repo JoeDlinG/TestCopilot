@@ -269,6 +269,9 @@ export const projectAPI = {
   remove: (name: string) => api.delete(`/projects/${encodeURIComponent(name)}`),
   sync: (name: string, sections?: string[]) =>
     api.post(`/projects/${encodeURIComponent(name)}/sync`, { sections }),
+  // 新建项目工程：清空配置（默认保留 AI 模型设置）
+  newProject: (sections?: string[], keepModels: boolean = true) =>
+    api.post('/projects/new', { sections, keep_models: keepModels, confirm: true }),
 }
 
 export const PROJECT_SECTIONS = [

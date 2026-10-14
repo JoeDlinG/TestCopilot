@@ -116,6 +116,19 @@ class AIModelConfigResponse(BaseModel):
     created_at: datetime
 
 
+class ChatAttachment(BaseModel):
+    """A file or image attached to a chat message.
+
+    ``data`` holds the payload base64-encoded **without** any ``data:`` prefix;
+    the server adds the prefix in whatever shape the provider expects.
+    """
+
+    name: str
+    mime: str = ""
+    size: int = 0
+    data: str = ""
+
+
 class AIChatRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
 
@@ -126,6 +139,8 @@ class AIChatRequest(BaseModel):
     system_prompt: Optional[str] = None
     # Plugin skills to import into the conversation context (protocol names).
     skill_protocols: List[str] = Field(default_factory=list)
+    # Files / images the user attached to this message.
+    attachments: Optional[List[ChatAttachment]] = None
 
 
 class AIChatResponse(BaseModel):

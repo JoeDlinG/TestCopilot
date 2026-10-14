@@ -2,15 +2,16 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { ConfigProvider, theme } from 'antd'
-import zhCN from 'antd/locale/zh_CN'
 import App from './App'
+import { LanguageProvider } from './i18n'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
+      {/* Outer provider owns the visual theme; LanguageProvider owns the
+          language and injects antd's matching locale pack. */}
       <ConfigProvider
-        locale={zhCN}
         theme={{
           algorithm: theme.defaultAlgorithm,
           token: {
@@ -19,7 +20,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           },
         }}
       >
-        <App />
+        <LanguageProvider>
+          <App />
+        </LanguageProvider>
       </ConfigProvider>
     </BrowserRouter>
   </React.StrictMode>,

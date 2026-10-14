@@ -50,6 +50,14 @@ class RenameRequest(BaseModel):
     new_name: str = Field(..., min_length=1)
 
 
+class NewProjectRequest(BaseModel):
+    """Start a brand new project: wipe the workspace, keep AI model settings."""
+
+    sections: Optional[List[str]] = None
+    keep_models: bool = True
+    confirm: bool = Field(False, description="必须显式确认，避免误清空")
+
+
 # ---------------------------------------------------------------------- #
 # Routes
 # ---------------------------------------------------------------------- #
@@ -112,6 +120,33 @@ async def import_project(
         await db.rollback()
         raise HTTPException(status_code=500, detail={
             "code": 50002, "message": "导入工程失败", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": result}
+
+
+@router.post("/new")
+async def new_project(
+    data: NewProjectRequest, db: AsyncSession = Depends(get_db),
+):
+    """清空工作区以开始一个新项目（默认保留 AI 模型配置）。"""
+    if not data.confirm:
+        raise HTTPException(status_code=400, detail={
+            "code": 40017,
+            "message": "新建项目工程会清空现有配置，请确认后重试",
+        })
+    try:
+        result = await project_service.reset_workspace(
+            db, data.sections, data.keep_models
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40014, "message": "新建项目失败", "detail": str(e),
+        })
+    except Exception as e:
+        logger.exception("new project failed")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "code": 50008, "message": "新建项目失败", "detail": str(e),
         })
     return {"code": 0, "message": "success", "data": result}
 

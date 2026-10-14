@@ -5,6 +5,7 @@ import {
 } from 'antd'
 import { deviceAPI } from '../../services/api'
 import { extractData, handleApiError } from '../../services/apiHelper'
+import { useI18n } from '../../i18n'
 import type { Device } from '../../types'
 
 const { Text } = Typography
@@ -45,6 +46,13 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
+  const { t } = useI18n()
+
+  /** Backend labels are Chinese; use the catalogue entry when we have one. */
+  const labelFor = (key: string, fallback: string) => {
+    const value = t(key)
+    return value === key ? fallback : value
+  }
 
   useEffect(() => {
     if (!open) return
@@ -145,12 +153,12 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
       onCancel={onClose}
       onOk={handleSave}
       confirmLoading={saving}
-      okText="保存"
-      cancelText="取消"
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
       width={620}
       title={
         <Space>
-          <span>配置设备接口</span>
+          <span>{t('iface.configTitle')}</span>
           {device && <Tag>{device.name}</Tag>}
         </Space>
       }
@@ -171,13 +179,15 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
 
           <Form.Item
             name="connection_type"
-            label="接口类型"
-            rules={[{ required: true, message: '请选择接口类型' }]}
+            label={t('iface.type')}
+            rules={[{ required: true, message: t('iface.type') }]}
           >
             <Select
               onChange={onTypeChange}
               options={specs.map((s) => ({
-                label: s.simulated ? `${s.label}（模拟）` : s.label,
+                label: s.simulated
+                  ? `${labelFor(`iface.t.${s.type}`, s.label)}（模拟/simulated）`
+                  : labelFor(`iface.t.${s.type}`, s.label),
                 value: s.type,
               }))}
             />
@@ -188,9 +198,13 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
               <Form.Item
                 key={f.key}
                 name={f.key}
-                label={f.label}
+                label={labelFor(`iface.f.${f.key}`, f.label)}
                 valuePropName={f.type === 'boolean' ? 'checked' : 'value'}
-                rules={f.required ? [{ required: true, message: `请填写${f.label}` }] : undefined}
+                rules={
+                  f.required
+                    ? [{ required: true, message: labelFor(`iface.f.${f.key}`, f.label) }]
+                    : undefined
+                }
                 extra={f.help}
               >
                 {renderField(f)}
@@ -207,7 +221,9 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
               type="info"
               showIcon
               style={{ marginTop: 8 }}
-              message={`切换到「${spec.label}」会清空其它接口对应的地址字段，并替换相关参数`}
+              message={t('iface.switchHint', {
+                label: labelFor(`iface.t.${spec.type}`, spec.label),
+              })}
             />
           )}
         </Form>

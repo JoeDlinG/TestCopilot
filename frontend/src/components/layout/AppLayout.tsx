@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Button, theme, message } from 'antd'
+import { Layout, Menu, Button, theme, message, Select, Tooltip } from 'antd'
 import {
   DashboardOutlined,
   ApiOutlined,
@@ -19,25 +19,27 @@ import {
   FolderOpenOutlined,
 } from '@ant-design/icons'
 import { systemAPI } from '../../services/api'
+import { useI18n, LOCALES } from '../../i18n'
 
 const { Header, Sider, Content } = Layout
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/dashboards', icon: <AppstoreAddOutlined />, label: '自定义仪表盘' },
-  { key: '/devices', icon: <ApiOutlined />, label: '设备管理' },
-  { key: '/debug-terminal', icon: <CodeOutlined />, label: '调试终端' },
-  { key: '/ai', icon: <RobotOutlined />, label: 'AI 助手' },
-  { key: '/testcases', icon: <ExperimentOutlined />, label: '测试用例' },
-  { key: '/executions', icon: <PlayCircleOutlined />, label: '测试执行' },
-  { key: '/execution-plans', icon: <OrderedListOutlined />, label: '执行管理器' },
-  { key: '/logs', icon: <FileTextOutlined />, label: '通信日志' },
-  { key: '/reports', icon: <BarChartOutlined />, label: '测试报告' },
-  { key: '/plugins', icon: <AppstoreAddOutlined />, label: '插件管理' },
-  { key: '/plugin-editor', icon: <CodeOutlined />, label: '插件编辑器' },
-  { key: '/skill-editor', icon: <FileTextOutlined />, label: 'Skill 编辑器' },
-  { key: '/model-config', icon: <SettingOutlined />, label: '模型配置' },
-  { key: '/projects', icon: <FolderOpenOutlined />, label: '项目工程' },
+/** Menu definition — labels are i18n keys resolved at render time. */
+const MENU_DEFINITION: { key: string; icon: React.ReactNode; labelKey: string }[] = [
+  { key: '/', icon: <DashboardOutlined />, labelKey: 'nav.dashboard' },
+  { key: '/dashboards', icon: <AppstoreAddOutlined />, labelKey: 'nav.customDashboard' },
+  { key: '/devices', icon: <ApiOutlined />, labelKey: 'nav.devices' },
+  { key: '/debug-terminal', icon: <CodeOutlined />, labelKey: 'nav.debugTerminal' },
+  { key: '/ai', icon: <RobotOutlined />, labelKey: 'nav.ai' },
+  { key: '/testcases', icon: <ExperimentOutlined />, labelKey: 'nav.testcases' },
+  { key: '/executions', icon: <PlayCircleOutlined />, labelKey: 'nav.executions' },
+  { key: '/execution-plans', icon: <OrderedListOutlined />, labelKey: 'nav.plans' },
+  { key: '/logs', icon: <FileTextOutlined />, labelKey: 'nav.logs' },
+  { key: '/reports', icon: <BarChartOutlined />, labelKey: 'nav.reports' },
+  { key: '/plugins', icon: <AppstoreAddOutlined />, labelKey: 'nav.plugins' },
+  { key: '/plugin-editor', icon: <CodeOutlined />, labelKey: 'nav.pluginEditor' },
+  { key: '/skill-editor', icon: <FileTextOutlined />, labelKey: 'nav.skillEditor' },
+  { key: '/model-config', icon: <SettingOutlined />, labelKey: 'nav.modelConfig' },
+  { key: '/projects', icon: <FolderOpenOutlined />, labelKey: 'nav.projects' },
 ]
 
 export default function AppLayout() {
@@ -46,17 +48,24 @@ export default function AppLayout() {
   const location = useLocation()
   const { token } = theme.useToken()
   const [restarting, setRestarting] = useState(false)
+  const { t, locale, setLocale } = useI18n()
+
+  const menuItems = MENU_DEFINITION.map((item) => ({
+    key: item.key,
+    icon: item.icon,
+    label: t(item.labelKey),
+  }))
 
   const handleRestart = async () => {
     setRestarting(true)
     try {
       await systemAPI.restart()
       // Wait for the backend to restart, then refresh the UI.
-      message.loading({ content: '正在重启软件，刷新界面…', key: 'restart', duration: 3 })
+      message.loading({ content: t('app.restarting'), key: 'restart', duration: 3 })
       setTimeout(() => window.location.reload(), 3000)
     } catch (err) {
       setRestarting(false)
-      message.error('重启失败，请手动重启服务')
+      message.error(t('app.restartFailed'))
     }
   }
 
@@ -113,12 +122,21 @@ export default function AppLayout() {
             onClick={() => setCollapsed(!collapsed)}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <Tooltip title={t('common.language')}>
+              <Select
+                value={locale}
+                onChange={(v) => setLocale(v)}
+                size="small"
+                style={{ width: 110 }}
+                options={LOCALES.map((l) => ({ value: l.value, label: l.label }))}
+              />
+            </Tooltip>
             <Button
               icon={<ReloadOutlined />}
               loading={restarting}
               onClick={handleRestart}
             >
-              重置软件
+              {t('app.restart')}
             </Button>
             <span style={{ color: token.colorTextSecondary, fontSize: 13 }}>
               AI 测试应用平台 v1.0

@@ -33,7 +33,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
-    # Startup
+    # Startup — timed, so a slow boot is attributable to a specific step
+    # instead of being a black box.
+    import time as _time
+
+    _boot = _time.monotonic()
+
+    def _mark(step: str) -> None:
+        logger.info(f"[boot] {step}: {(_time.monotonic() - _boot) * 1000:.0f} ms")
+
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     os.makedirs(settings.LOG_DIR, exist_ok=True)
     os.makedirs(settings.EXPORT_DIR, exist_ok=True)
@@ -48,7 +56,7 @@ async def lifespan(app: FastAPI):
     logger.info("Program logging installed (logs/program, 10MB rotation)")
 
     await init_db()
-    logger.info("Database initialized")
+    _mark("database initialized")
 
     # Reset stale connections (in-memory state lost on restart)
     from app.core.database import async_session
@@ -65,6 +73,7 @@ async def lifespan(app: FastAPI):
         # Same for batch runs left 'running' by a previous process.
         from app.services.plan_runner import plan_runner
         await plan_runner.reset_stale_runs(db)
+    _mark("stale state reset")
 
     yield
 

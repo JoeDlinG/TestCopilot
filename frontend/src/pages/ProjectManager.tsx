@@ -4,12 +4,13 @@ import {
   Tag, Typography, message, Popconfirm, Alert, Upload, Divider, Empty,
 } from 'antd'
 import {
-  DownloadOutlined, UploadOutlined, SaveOutlined, EditOutlined,
+  DownloadOutlined, UploadOutlined,   SaveOutlined, EditOutlined,
   DeleteOutlined, SyncOutlined, ImportOutlined, FileTextOutlined,
-  ReloadOutlined,
+  ReloadOutlined, FileAddOutlined,
 } from '@ant-design/icons'
 import { projectAPI, PROJECT_SECTIONS } from '../services/api'
 import { extractData, handleApiError, _errorMessage } from '../services/apiHelper'
+import { useI18n } from '../i18n'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -34,12 +35,16 @@ export default function ProjectManager() {
 
   const [saveOpen, setSaveOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [newOpen, setNewOpen] = useState(false)
+  const [keepModels, setKeepModels] = useState(true)
+  const [newResult, setNewResult] = useState<any>(null)
   const [importResult, setImportResult] = useState<any>(null)
   const [busy, setBusy] = useState<string>('')
 
   const [saveForm] = Form.useForm()
   const [renameForm] = Form.useForm()
   const renamingRef = useRef<string>('')
+  const { t } = useI18n()
 
   const load = async () => {
     setLoading(true)
@@ -183,6 +188,24 @@ export default function ProjectManager() {
     }
   }
 
+  // ---- 新建项目工程：清空工作区（默认保留 AI 模型配置）----
+  const handleNewProject = async () => {
+    setBusy('new')
+    setNewResult(null)
+    try {
+      const res = await projectAPI.newProject(undefined, keepModels)
+      const data: any = res.data?.data || res.data
+      setNewResult(data)
+      message.success(`已清空 ${data.total_cleared} 项配置，可以开始新项目`)
+      setNewOpen(false)
+      load()
+    } catch (err) {
+      handleApiError(err, '新建项目失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
   const handleSync = async (row: ProjectRow) => {
     setBusy('sync:' + row.name)
     try {
@@ -260,21 +283,21 @@ export default function ProjectManager() {
             disabled={!!row.error}
             onClick={() => handleImportSaved(row)}
           >
-            导入
+            {t('common.import')}
           </Button>
           <Button
             size="small" icon={<DownloadOutlined />}
             disabled={!!row.error}
             onClick={() => handleDownloadSaved(row)}
           >
-            下载
+            {t('common.download')}
           </Button>
           <Button
             size="small" icon={<SyncOutlined />}
             loading={busy === 'sync:' + row.name}
             onClick={() => handleSync(row)}
           >
-            覆盖
+            {t('common.overwrite')}
           </Button>
           <Button
             size="small" icon={<EditOutlined />}
@@ -284,7 +307,7 @@ export default function ProjectManager() {
               setRenameOpen(true)
             }}
           >
-            重命名
+            {t('common.rename')}
           </Button>
           <Popconfirm title={`删除工程「${row.name}」？`} onConfirm={() => handleDelete(row)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
@@ -297,8 +320,10 @@ export default function ProjectManager() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>项目工程文件</Title>
-        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+        <Title level={3} style={{ margin: 0 }}>{t('project.title')}</Title>
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          {t('common.refresh')}
+        </Button>
       </div>
 
       <Alert
@@ -309,10 +334,10 @@ export default function ProjectManager() {
         description="AI 模型的 api_key 属于敏感信息，始终不会写入工程文件；导入时也不会覆盖已有的密钥。"
       />
 
-      <Card title="操作" style={{ marginBottom: 16 }}>
+      <Card title={t('common.actions')} style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <div>
-            <Text strong style={{ marginRight: 8 }}>包含的配置段：</Text>
+            <Text strong style={{ marginRight: 8 }}>{t('project.sections')}</Text>
             <Checkbox.Group
               options={PROJECT_SECTIONS.map((s) => ({ label: s.label, value: s.key }))}
               value={sections}
@@ -326,10 +351,13 @@ export default function ProjectManager() {
               loading={busy === 'export'}
               onClick={handleExport}
             >
-              导出当前配置（下载文件）
+              {t('project.export')}
             </Button>
             <Button icon={<SaveOutlined />} onClick={() => setSaveOpen(true)}>
-              另存为工程…
+              {t('project.saveAs')}
+            </Button>
+            <Button danger icon={<FileAddOutlined />} onClick={() => setNewOpen(true)}>
+              {t('project.new')}
             </Button>
             <Upload
               beforeUpload={handleUpload}
@@ -337,12 +365,12 @@ export default function ProjectManager() {
               accept=".json,application/json"
             >
               <Button icon={<UploadOutlined />} loading={busy === 'import'}>
-                导入工程文件…
+                {t('project.importFile')}
               </Button>
             </Upload>
             <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)}>
-              <Radio value="merge">合并导入</Radio>
-              <Radio value="replace">替换导入</Radio>
+              <Radio value="merge">{t('project.merge')}</Radio>
+              <Radio value="replace">{t('project.replace')}</Radio>
             </Radio.Group>
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>
@@ -353,7 +381,7 @@ export default function ProjectManager() {
       </Card>
 
       {importResult && (
-        <Card title="导入结果" size="small" style={{ marginBottom: 16 }}>
+        <Card title={t('project.importResult')} size="small" style={{ marginBottom: 16 }}>
           {importResult.error ? (
             <Alert type="error" showIcon message={importResult.error} />
           ) : (
@@ -376,7 +404,27 @@ export default function ProjectManager() {
         </Card>
       )}
 
-      <Card title="已保存的工程文件">
+      {newResult && (
+        <Card title={t('project.newResult')} size="small" style={{ marginBottom: 16 }}>
+          <Space direction="vertical" size={4}>
+            <Text>{t('project.clearedTotal', { n: newResult.total_cleared })}</Text>
+            <Space size={[6, 6]} wrap>
+              {Object.entries(newResult.cleared || {}).map(([key, n]: any) => (
+                <Tag key={key} color="red">
+                  {PROJECT_SECTIONS.find((s) => s.key === key)?.label || key}：{n}
+                </Tag>
+              ))}
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('project.kept')}{(newResult.kept || [])
+                .map((k: string) => PROJECT_SECTIONS.find((s) => s.key === k)?.label || k)
+                .join('、') || '无'}
+            </Text>
+          </Space>
+        </Card>
+      )}
+
+      <Card title={t('project.saved')}>
         <Table
           rowKey="name"
           loading={loading}
@@ -394,13 +442,13 @@ export default function ProjectManager() {
       </Card>
 
       <Modal
-        title="另存为工程"
+        title={t('project.saveAs')}
         open={saveOpen}
         onOk={handleSaveAs}
         confirmLoading={busy === 'save'}
         onCancel={() => setSaveOpen(false)}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
       >
         <Form form={saveForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
@@ -415,12 +463,53 @@ export default function ProjectManager() {
       </Modal>
 
       <Modal
-        title="重命名工程"
+        title={t('project.newTitle')}
+        open={newOpen}
+        onOk={handleNewProject}
+        confirmLoading={busy === 'new'}
+        onCancel={() => setNewOpen(false)}
+        okText={t('common.confirm')}
+        okButtonProps={{ danger: true }}
+        cancelText={t('common.cancel')}
+        width={560}
+      >
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="此操作会清空当前工作区的配置，且无法撤销"
+          description="执行历史与通信日志不会被删除，但设备、插件、Skill、测试用例（含流程图）、执行计划、仪表盘会被全部移除。"
+        />
+        <Checkbox
+          checked={keepModels}
+          onChange={(e) => setKeepModels(e.target.checked)}
+        >
+          保留 AI 模型配置（推荐）
+        </Checkbox>
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            AI 模型的接口地址与 API Key 属于环境配置而非项目数据，
+            取消勾选后需要重新填写才能继续使用 AI 功能。
+          </Text>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Text strong>将被清空：</Text>
+          <div style={{ marginTop: 6 }}>
+            {PROJECT_SECTIONS.filter((s) => s.key !== 'models').map((s) => (
+              <Tag key={s.key} color="red">{s.label}</Tag>
+            ))}
+            {!keepModels && <Tag color="red">模型配置</Tag>}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title={t('common.rename')}
         open={renameOpen}
         onOk={handleRename}
         onCancel={() => setRenameOpen(false)}
-        okText="确定"
-        cancelText="取消"
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       >
         <Form form={renameForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item

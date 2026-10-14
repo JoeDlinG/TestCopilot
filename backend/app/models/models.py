@@ -344,9 +344,13 @@ class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
     id = Column(String(20), primary_key=True, default=lambda: generate_short_id("log"))
-    timestamp = Column(UTCDateTime, nullable=False, default=utc_now, index=True)
-    device_id = Column(String(20), ForeignKey("devices.id"), nullable=False, index=True)
-    execution_id = Column(String(20), ForeignKey("test_executions.id"), nullable=True, index=True)
+    # NOTE: no ``index=True`` here — ``__table_args__`` below already declares
+    # idx_logs_* on the same columns. Having both silently created a second,
+    # byte-identical ix_communication_logs_* index, doubling the index
+    # maintenance cost on every logged frame (this is the hottest write path).
+    timestamp = Column(UTCDateTime, nullable=False, default=utc_now)
+    device_id = Column(String(20), ForeignKey("devices.id"), nullable=False)
+    execution_id = Column(String(20), ForeignKey("test_executions.id"), nullable=True)
     step_result_id = Column(String(20), ForeignKey("test_step_results.id"), nullable=True)
     direction = Column(String(10), nullable=False)  # sent / received
     protocol = Column(String(20), nullable=False)

@@ -4,6 +4,7 @@ Supports OpenAI, Anthropic Claude, Ollama, LocalAI, vLLM, and more
 through a unified ProviderFactory.
 """
 from __future__ import annotations
+import base64
 import json
 import logging
 import re
@@ -20,6 +21,72 @@ from app.services.plugin_service import plugin_service
 from app.core.crypto import encrypt_value, decrypt_value
 
 logger = logging.getLogger(__name__)
+
+
+# Cap for an inlined text attachment so one huge log cannot blow the budget.
+_MAX_INLINE_TEXT = 120_000
+
+
+def _attachment_text_block(att: Dict[str, Any]) -> str:
+    """Render a non-image attachment as an inline, labelled text block."""
+    name = att.get("name") or "attachment"
+    try:
+        raw = base64.b64decode(att.get("data") or "")
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - a bad payload must not break the chat
+        return f"\n[附件 {name}：无法解码为文本]\n"
+    if len(text) > _MAX_INLINE_TEXT:
+        text = text[:_MAX_INLINE_TEXT] + "\n…（附件内容过长，已截断）"
+    return f"\n=== 附件：{name} ===\n{text}\n=== 附件结束：{name} ===\n"
+
+
+def _build_user_content(
+    message: str,
+    attachments: Optional[List[Dict[str, Any]]],
+    provider_name: str,
+):
+    """Build the ``content`` of the user turn.
+
+    Returns a plain string when nothing is attached (identical to the previous
+    behaviour), otherwise a list of content parts in the shape the provider
+    expects.  Anthropic and OpenAI-compatible APIs disagree on how an image is
+    expressed, so both are handled explicitly.
+    """
+    if not attachments:
+        return message
+
+    images: List[tuple] = []
+    blobs: List[str] = []
+    for att in attachments:
+        data = att.get("data") or ""
+        if not data:
+            continue
+        mime = (att.get("mime") or "").lower()
+        if mime.startswith("image/"):
+            images.append((att.get("name") or "image", mime, data))
+        else:
+            blobs.append(_attachment_text_block(att))
+
+    text = (message or "") + "".join(blobs)
+    if not images:
+        return text or "（仅附件）"
+
+    prompt = text or "请分析这些图片"
+    if provider_name == "anthropic":
+        parts: List[Any] = [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}
+            for _n, mime, data in images
+        ]
+        parts.append({"type": "text", "text": prompt})
+        return parts
+
+    # OpenAI-compatible: openai / deepseek / ollama / vLLM / LocalAI …
+    parts = [{"type": "text", "text": prompt}]
+    parts.extend(
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+        for _n, mime, data in images
+    )
+    return parts
 
 
 def _build_skill_context(
@@ -512,6 +579,7 @@ class AIService:
         system_prompt: Optional[str] = None,
         input_type: str = "text",
         skill_protocols: Optional[List[str]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> dict:
         model = await self.get_model(db, model_id)
         if not model:
@@ -561,14 +629,47 @@ class AIService:
             for h in reversed(history):
                 messages.append({"role": h.role, "content": h.content})
 
+        content = _build_user_content(message, attachments, model.provider)
         if not messages or messages[-1].get("role") != "user":
-            messages.append({"role": "user", "content": message})
+            messages.append({"role": "user", "content": content})
+        else:
+            # The freshly stored user turn came back through the history query;
+            # swap in the multimodal payload.
+            messages[-1]["content"] = content
 
+        has_images = bool(attachments) and any(
+            (a.get("mime") or "").lower().startswith("image/") and a.get("data")
+            for a in attachments
+        )
         try:
             result = await provider.chat(messages)
         except Exception as e:
-            logger.error(f"AI chat error ({model.provider}): {e}")
-            raise AICallError(model.provider, str(e))
+            if has_images:
+                # Most text-only models reject an image part outright. Retry
+                # with the text content so the user still gets an answer
+                # instead of an opaque failure.
+                logger.warning(
+                    "AI chat rejected the image attachment (%s); retrying text-only: %s",
+                    model.provider, e,
+                )
+                text_only = _build_user_content(message, [
+                    a for a in (attachments or [])
+                    if not (a.get("mime") or "").lower().startswith("image/")
+                ], model.provider)
+                if messages and messages[-1].get("role") == "user":
+                    messages[-1]["content"] = text_only or message
+                try:
+                    result = await provider.chat(messages)
+                except Exception as e2:
+                    logger.error(f"AI chat error ({model.provider}): {e2}")
+                    raise AICallError(model.provider, str(e2))
+                result["content"] = (
+                    "⚠️ 当前模型不支持图片输入，已忽略附件图片，仅按文字内容回答：\n\n"
+                    + (result.get("content") or "")
+                )
+            else:
+                logger.error(f"AI chat error ({model.provider}): {e}")
+                raise AICallError(model.provider, str(e))
 
         # Save assistant response
         assistant_msg = ChatHistory(

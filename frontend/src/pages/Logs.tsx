@@ -176,10 +176,18 @@ export default function Logs() {
           dataSource={logs}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+          // 性能优化：通信日志可以积到几十万行。开启虚拟滚动后，即使把每页
+          // 调到 200 条也只渲染可视区域内的行，滚动不再掉帧。
+          virtual
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: [20, 50, 100, 200],
+            showTotal: (total) => `共 ${total} 条`,
+          }}
           locale={{ emptyText: <Empty description="暂无通信日志" /> }}
           size="small"
-          scroll={{ x: 1000 }}
+          scroll={{ x: 1000, y: 'calc(100vh - 430px)' }}
         />
       </Card>
     </div>
