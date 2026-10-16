@@ -69,7 +69,8 @@ class ExecutionEngine:
     #   bus.send_periodic(can.Message(arbitration_id=0x20, ...), 0.2)
     _PYCAN_FN_RE = re.compile(
         r"(?:(?:bus|self\._bus)\s*\.\s*)?"
-        r"(?:send_periodic|send_cyclic|cyclic_send|send|recv|receive|can\.Message)\s*\(",
+        r"(?:send_periodic|send_cyclic|cyclic_send|send|recv|receive"
+        r"|can\.Message|can\.Bus|Bus)\s*\(",
         re.IGNORECASE,
     )
     # keys that identify a dict as a *device command*, not a random object
@@ -201,8 +202,11 @@ class ExecutionEngine:
         # python-can string form: 123#11223344
         if re.match(r"^[0-9A-Fa-f]{1,8}#[0-9A-Fa-f]*$", text):
             return "peakcan"
-        # python-can pseudo-code: bus.send_periodic(...) / bus.send(...) / bus.recv(...)
-        if ExecutionEngine._PYCAN_FN_RE.match(text):
+        # python-can pseudo-code: bus.send_periodic(...) / can.Bus(...) / bus.recv(...)
+        # ``search`` rather than ``match``: the call is usually embedded in a
+        # Chinese description, e.g. "打开 PCAN 通道：can.Bus(interface='pcan', …)",
+        # which an anchored match silently failed to recognise.
+        if ExecutionEngine._PYCAN_FN_RE.search(text):
             return "peakcan"
         if text.startswith("@"):
             return "mini_gateway100"
@@ -231,40 +235,78 @@ class ExecutionEngine:
     ) -> Optional[str]:
         """Pick the connected device that should execute these commands.
 
-        The device is resolved from, in order: an explicit ``device_id``, the
-        protocol the commands imply, and only then "any connected device".
-        When a protocol *is* identified but no matching device is connected the
-        answer is ``None`` — sending a PeakCAN payload to an unrelated device is
-        exactly how a test could "pass" without the CAN frame ever leaving the
-        adapter.
+        Resolution order: an explicit ``device_id``, then the protocol the
+        commands imply, and only then "any connected device". When a protocol
+        *is* identified but no matching device is connected the answer is
+        ``None`` — sending a PeakCAN payload to an unrelated device is exactly
+        how a test could "pass" without the CAN frame ever leaving the adapter.
+
+        A pinned ``device_id`` is only honoured while it still points at a
+        **reachable** device. Deleting and re-adding a device keeps its name and
+        protocol but assigns a **new id**, so the pinned id dangles: honouring
+        it made every step fail with "device is not connected", no command was
+        ever sent and the communication pane stayed completely empty. A dangling
+        id now falls through to protocol inference instead.
         """
+        async with async_session() as session:
+            result = await session.execute(select(Device))
+            devices = result.scalars().all()
+
+        by_id = {d.id: d for d in devices}
+
+        pinned: Optional[str] = None
         for source in (config or {}, options or {}):
             did = source.get("device_id")
             if did:
-                return did
+                pinned = did
+                break
+
+        if pinned:
+            dev = by_id.get(pinned)
+            if dev is None:
+                logger.warning(
+                    "flow pins device_id=%s which no longer exists (the device was "
+                    "re-created with a new id) — falling back to protocol inference",
+                    pinned,
+                )
+            elif (dev.status or "") != "connected":
+                # The device exists but is offline. Do NOT silently retarget
+                # another device — that would send e.g. a PeakCAN payload to a
+                # Mini Gateway and the test would look like it ran.
+                logger.warning(
+                    "flow pins device_id=%s (%s) which is not connected",
+                    pinned, dev.name,
+                )
+                return None
+            else:
+                return pinned
+
+        connected = [d for d in devices if (d.status or "") == "connected"]
+        if not connected:
+            return None
 
         desired = self._desired_protocols(config, commands)
-
-        async with async_session() as session:
-            result = await session.execute(
-                select(Device).where(Device.status == "connected")
-            )
-            devices = result.scalars().all()
-
-        if not devices:
-            return None
         for proto in desired:
-            for dev in devices:
+            for dev in connected:
                 if (dev.protocol or "").lower() == proto.lower():
                     return dev.id
         if desired:
             return None
-        return devices[0].id
+        return connected[0].id
 
     async def _missing_device_hint(
         self, config: Dict[str, Any], commands: List[str]
     ) -> str:
         """Human readable reason for an unresolvable device."""
+        pinned = (config or {}).get("device_id")
+        if pinned:
+            async with async_session() as session:
+                dev = (
+                    await session.execute(select(Device).where(Device.id == pinned))
+                ).scalar_one_or_none()
+            if dev is not None:
+                return f"步骤绑定的设备「{dev.name or pinned}」当前未连接，请先连接该设备"
+
         desired = self._desired_protocols(config, commands)
         if not desired:
             return "没有已连接的设备可下发指令"
@@ -1087,6 +1129,135 @@ class ExecutionEngine:
             .order_by(TestStepResult.step_index)
         )
         return result.scalars().all()
+
+
+# --------------------------------------------------------------------------- #
+# Maintenance: repair device bindings that outlived their device
+# --------------------------------------------------------------------------- #
+
+async def rebind_stale_devices(db: AsyncSession) -> Dict[str, Any]:
+    """Re-point flow nodes whose pinned ``device_id`` no longer exists.
+
+    Deleting and re-adding a device keeps its name and protocol but hands out a
+    **new id**. Every flow that pinned the old id then dangles: the step fails
+    with "device is not connected", no command is ever sent and the
+    communication pane stays empty — with no hint that the real cause is a stale
+    binding rather than a missing device.
+
+    The replacement is chosen from the protocol the node's own commands imply
+    (the same inference the engine uses at run time), so a CAN step is never
+    re-pointed at a gateway and vice versa.
+
+    Returns the list of applied changes; nothing is written when no stale id is
+    found.
+    """
+    # Imported lazily: codegen_service and this module are mutually adjacent and
+    # a top-level import would risk a cycle.
+    from app.services.codegen_service import node_commands
+
+    devices = (await db.execute(select(Device))).scalars().all()
+    if not devices:
+        return {"rebound": 0, "changes": [], "note": "当前没有任何设备，无法重绑定"}
+
+    valid_ids = {d.id for d in devices}
+    by_protocol: Dict[str, List[Device]] = {}
+    for d in devices:
+        by_protocol.setdefault((d.protocol or "").lower(), []).append(d)
+
+    changes: List[Dict[str, Any]] = []
+    flows = (await db.execute(select(TestFlow))).scalars().all()
+
+    for flow in flows:
+        try:
+            nodes = json.loads(flow.nodes or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(nodes, list):
+            continue
+
+        dirty = False
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            cfg = node.get("config")
+            if not isinstance(cfg, dict):
+                continue
+            stale_id = cfg.get("device_id")
+            if not stale_id or stale_id in valid_ids:
+                continue
+
+            protocols = {
+                p
+                for p in (ExecutionEngine._infer_protocol(c) for c in node_commands(node))
+                if p
+            }
+            cfg_protocol = str(cfg.get("device_protocol") or "").strip()
+            if cfg_protocol:
+                protocols.add(cfg_protocol)
+
+            target = None
+            for proto in protocols:
+                candidates = by_protocol.get(proto.lower()) or []
+                if candidates:
+                    target = candidates[0]
+                    break
+            if target is None:
+                logger.warning(
+                    "rebind: testcase=%s node=%s pinned missing device %s but no "
+                    "protocol could be inferred — left untouched",
+                    flow.testcase_id, node.get("id"), stale_id,
+                )
+                continue
+
+            changes.append({
+                "testcase_id": flow.testcase_id,
+                "node_id": node.get("id"),
+                "from_device_id": stale_id,
+                "to_device_id": target.id,
+                "to_device_name": target.name,
+                "protocol": target.protocol,
+            })
+            cfg["device_id"] = target.id
+            dirty = True
+
+        if dirty:
+            flow.nodes = json.dumps(nodes, ensure_ascii=False)
+
+    if changes:
+        await db.commit()
+        logger.info("rebind: updated %d stale device bindings", len(changes))
+
+    return {"rebound": len(changes), "changes": changes}
+
+
+async def count_stale_bindings(db: AsyncSession) -> Dict[str, Any]:
+    """Report (without modifying) how many flow nodes pin a missing device."""
+    devices = (await db.execute(select(Device))).scalars().all()
+    valid_ids = {d.id for d in devices}
+    flows = (await db.execute(select(TestFlow))).scalars().all()
+
+    stale_per_case: Dict[str, Any] = {}
+    for flow in flows:
+        try:
+            nodes = json.loads(flow.nodes or "[]")
+        except (ValueError, TypeError):
+            continue
+        found = set()
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            cfg = node.get("config") or {}
+            did = cfg.get("device_id")
+            if did and did not in valid_ids:
+                found.add(did)
+        if found:
+            stale_per_case[flow.testcase_id] = sorted(found)
+
+    return {
+        "affected_test_cases": len(stale_per_case),
+        "stale_device_ids": sorted({i for v in stale_per_case.values() for i in v}),
+        "test_cases": stale_per_case,
+    }
 
 
 execution_engine = ExecutionEngine()

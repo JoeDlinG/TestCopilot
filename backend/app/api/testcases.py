@@ -28,6 +28,10 @@ from app.services.testgen_service import testgen_service
 from app.services.codegen_service import codegen_service
 from app.services.response_parser import response_parser
 from app.services.trend_service import collect_parsed_series
+from app.services.execution_service import (
+    count_stale_bindings,
+    rebind_stale_devices,
+)
 
 router = APIRouter(prefix="/api/testcases", tags=["Test Cases"])
 
@@ -42,6 +46,35 @@ def _parse_json(value):
         except (json.JSONDecodeError, TypeError):
             return value
     return value
+
+
+@router.get("/stale-devices")
+async def list_stale_device_bindings(db: AsyncSession = Depends(get_db)):
+    """Report flows that pin a device id which no longer exists.
+
+    This is the usual cause of "the case runs but nothing ever appears in the
+    communication pane": the device was deleted and re-added, so it got a new
+    id while the flow still points at the old one.
+    """
+    return {"code": 0, "message": "success", "data": await count_stale_bindings(db)}
+
+
+@router.post("/rebind-devices")
+async def rebind_device_bindings(db: AsyncSession = Depends(get_db)):
+    """Re-point those stale bindings at a current device of the same protocol.
+
+    The replacement is derived from the protocol the node's own commands imply,
+    so a CAN step is never re-pointed at a gateway.
+    """
+    try:
+        result = await rebind_stale_devices(db)
+    except Exception as e:
+        logger.exception("rebind failed")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "code": 50009, "message": "重新绑定设备失败", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": result}
 
 
 @router.post("/")

@@ -93,7 +93,11 @@ async def test_execution_ws(dev_id, tc_id):
 
     async with websockets.connect(f"{WS}/ws/executions/{exec_id}") as ws:
         events = []
-        deadline = asyncio.get_event_loop().time() + 60
+        # This case drives a 200 ms periodic transmission for many cycles, so a
+        # 60 s window used to expire mid-run and `execution_completed` was never
+        # observed. Wait until the run is actually terminal instead of guessing
+        # a duration.
+        deadline = asyncio.get_event_loop().time() + 300
         while asyncio.get_event_loop().time() < deadline:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=3)
@@ -102,6 +106,20 @@ async def test_execution_ws(dev_id, tc_id):
                 if st["status"] in ("passed", "failed", "error", "stopped"):
                     break
                 continue
+            msg = json.loads(raw)
+            events.append(msg)
+            if msg.get("type") == "execution_completed":
+                break
+
+        # The status poll can win the race against the final frame: as soon as
+        # the run is reported terminal the loop above exits, which may happen
+        # before `execution_completed` is delivered. Drain what is still in
+        # flight so the assertion reflects the protocol, not the polling order.
+        for _ in range(5):
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=1)
+            except asyncio.TimeoutError:
+                break
             msg = json.loads(raw)
             events.append(msg)
             if msg.get("type") == "execution_completed":

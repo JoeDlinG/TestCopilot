@@ -126,6 +126,9 @@ export const testCaseAPI = {
   updateFlow: (id: string, data: any) => api.put(`/testcases/${id}/flow`, data),
   // Code generation
   generateCode: (id: string) => api.post(`/testcases/${id}/generate-code`),
+  // Device bindings that outlived their device (device deleted + re-added)
+  staleDevices: () => api.get('/testcases/stale-devices'),
+  rebindDevices: () => api.post('/testcases/rebind-devices'),
   // Result parsing preview (uses the same engine as the execution)
   parsePreview: (raw: string, parsers: any[]) =>
     api.post('/testcases/parse-preview', { raw, parsers }),

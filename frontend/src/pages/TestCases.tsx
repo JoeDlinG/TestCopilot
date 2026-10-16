@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Card, Table, Button, Space, Tag, message, Modal,
   Popconfirm, Typography, Tooltip, Form, Input, Select,
-  Row, Col, Empty, Divider, Badge
+  Row, Col, Empty, Divider, Badge, Alert
 } from 'antd'
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
@@ -56,6 +56,10 @@ export default function TestCases() {
     sample: string; otherNames: string[]
   } | null>(null)
 
+  // ---- flows pinning a device id that no longer exists ----
+  const [staleBindings, setStale] = useState(0)
+  const [rebinding, setRebinding] = useState(false)
+
   const loadTestCases = async () => {
     setLoading(true)
     try {
@@ -68,7 +72,39 @@ export default function TestCases() {
     }
   }
 
-  useEffect(() => { loadTestCases() }, [])
+  // Flows pin a device by id. When a device is deleted and re-added it gets a
+  // NEW id, so those pins dangle: the step aborts with "device is not
+  // connected", no command is ever sent and the communication pane stays empty.
+  // Surface it here instead of letting the user debug a silent failure.
+  const checkStaleBindings = async () => {
+    try {
+      const res = await testCaseAPI.staleDevices()
+      const data: any = res.data?.data || res.data
+      setStale(data?.affected_test_cases || 0)
+    } catch {
+      /* best effort */
+    }
+  }
+
+  const handleRebind = async () => {
+    setRebinding(true)
+    try {
+      const res = await testCaseAPI.rebindDevices()
+      const data: any = res.data?.data || res.data
+      message.success(`已重新绑定 ${data.rebound ?? 0} 个节点到当前设备`)
+      setStale(0)
+      loadTestCases()
+    } catch (err) {
+      handleApiError(err, '重新绑定设备失败')
+    } finally {
+      setRebinding(false)
+    }
+  }
+
+  useEffect(() => {
+    loadTestCases()
+    checkStaleBindings()
+  }, [])
 
   // ---- load a case's flow (steps) + last-run responses for preview ----
   const loadFlow = async (tcId: string) => {
@@ -451,6 +487,21 @@ export default function TestCases() {
 
   return (
     <div className="page-container">
+      {staleBindings > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`有 ${staleBindings} 个用例绑定了已不存在的设备`}
+          description="设备被删除后重新添加会得到新的 ID，而这些用例仍指向旧 ID：执行时会直接判定失败、不下发任何指令，因此通信窗口看不到任何消息。点击下方按钮可按节点命令推断出的协议重新绑定到当前设备。"
+          action={
+            <Button size="small" type="primary" icon={<ApartmentOutlined />}
+              loading={rebinding} onClick={handleRebind}>
+              重新绑定设备
+            </Button>
+          }
+        />
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>测试用例</Title>
         <Space>
