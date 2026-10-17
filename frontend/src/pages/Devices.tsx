@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Table, Button, Modal, Form, Input, Select, Space, Tag,
-  message, Popconfirm, Typography, Tooltip
+  message, Popconfirm, Typography, Tooltip, Alert
 } from 'antd'
 import {
   PlusOutlined, LinkOutlined, DisconnectOutlined,
@@ -30,6 +30,10 @@ export default function Devices() {
   const [discoverModalVisible, setDiscoverModalVisible] = useState(false)
   const [ifaceModalVisible, setIfaceModalVisible] = useState(false)
   const [ifaceDevice, setIfaceDevice] = useState<Device | null>(null)
+  const [keyOpen, setKeyOpen] = useState(false)
+  const [keyDevice, setKeyDevice] = useState<any>(null)
+  const [keySaving, setKeySaving] = useState(false)
+  const [keyForm] = Form.useForm()
   const [form] = Form.useForm()
   const { t } = useI18n()
 
@@ -66,6 +70,28 @@ export default function Devices() {
       loadDevices()
     } catch (err) {
       handleApiError(err, '断开连接失败')
+    }
+  }
+
+  // ---- 设备ID号（用例通过它关联设备，更换硬件时可复用同一个号）----
+  const handleSaveDeviceKey = async () => {
+    let values: any
+    try {
+      values = await keyForm.validateFields()
+    } catch {
+      return
+    }
+    if (!keyDevice) return
+    setKeySaving(true)
+    try {
+      await deviceAPI.update(keyDevice.id, { device_key: (values.device_key || '').trim() })
+      message.success('设备ID号已更新')
+      setKeyOpen(false)
+      loadDevices()
+    } catch (err) {
+      handleApiError(err, '修改设备ID号失败')
+    } finally {
+      setKeySaving(false)
     }
   }
 
@@ -161,6 +187,28 @@ export default function Devices() {
   }
 
   const columns = [
+    {
+      // Stable identifier test cases bind to — it survives a hardware swap.
+      title: '设备ID号',
+      dataIndex: 'device_key',
+      key: 'device_key',
+      width: 110,
+      render: (key: string, record: any) => (
+        <Tooltip title="点击修改设备ID号（用例通过它关联设备，更换硬件时把这个号赋给新设备即可）">
+          <Tag
+            color="geekblue"
+            style={{ cursor: 'pointer' }}
+            onClick={() => {
+              setKeyDevice(record)
+              keyForm.setFieldsValue({ device_key: key || '' })
+              setKeyOpen(true)
+            }}
+          >
+            {key || '未分配'}
+          </Tag>
+        </Tooltip>
+      ),
+    },
     {
       title: '设备名称',
       dataIndex: 'name',
@@ -415,6 +463,35 @@ export default function Devices() {
             ]}
           />
         )}
+      </Modal>
+
+      {/* 设备ID号 */}
+      <Modal
+        title="修改设备ID号"
+        open={keyOpen}
+        onOk={handleSaveDeviceKey}
+        confirmLoading={keySaving}
+        onCancel={() => setKeyOpen(false)}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="设备ID号是设备的唯一识别号"
+          description="测试用例通过它来关联设备。更换硬件时，把同一个设备ID号赋给新设备，原有用例即可继续使用，无需逐个修改。"
+        />
+        <Form form={keyForm} layout="vertical">
+          <Form.Item
+            name="device_key"
+            label="设备ID号"
+            rules={[{ required: true, message: '请输入设备ID号' }]}
+            extra={keyDevice ? `设备：${keyDevice.name}` : ''}
+          >
+            <Input placeholder="例如 DEV-001" autoFocus />
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* Interface (connection) configuration */}

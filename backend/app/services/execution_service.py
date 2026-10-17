@@ -254,32 +254,52 @@ class ExecutionEngine:
 
         by_id = {d.id: d for d in devices}
 
-        pinned: Optional[str] = None
+        pinned_key: Optional[str] = None
+        pinned_id: Optional[str] = None
         for source in (config or {}, options or {}):
-            did = source.get("device_id")
-            if did:
-                pinned = did
-                break
+            pinned_key = source.get("device_key") or pinned_key
+            pinned_id = source.get("device_id") or pinned_id
 
-        if pinned:
-            dev = by_id.get(pinned)
+        # 1) The stable 设备ID号 wins: it is what survives a hardware swap,
+        #    because the replacement device simply inherits the same key.
+        if pinned_key:
+            wanted = str(pinned_key).strip()
+            dev = next((d for d in devices if (d.device_key or "") == wanted), None)
+            if dev is None:
+                logger.warning(
+                    "flow pins device_key=%s but no device carries it — falling back "
+                    "to protocol inference", wanted,
+                )
+            elif (dev.status or "") != "connected":
+                logger.warning(
+                    "flow pins device_key=%s (%s) which is not connected",
+                    wanted, dev.name,
+                )
+                return None
+            else:
+                return dev.id
+
+        # 2) Legacy binding by primary key. Kept for old flows; a dangling id
+        #    falls through to protocol inference instead of aborting the step.
+        if pinned_id:
+            dev = by_id.get(pinned_id)
             if dev is None:
                 logger.warning(
                     "flow pins device_id=%s which no longer exists (the device was "
                     "re-created with a new id) — falling back to protocol inference",
-                    pinned,
+                    pinned_id,
                 )
             elif (dev.status or "") != "connected":
-                # The device exists but is offline. Do NOT silently retarget
-                # another device — that would send e.g. a PeakCAN payload to a
-                # Mini Gateway and the test would look like it ran.
+                # Exists but offline: do NOT silently retarget another device —
+                # that would send e.g. a PeakCAN payload to a Mini Gateway and
+                # the test would look like it ran.
                 logger.warning(
                     "flow pins device_id=%s (%s) which is not connected",
-                    pinned, dev.name,
+                    pinned_id, dev.name,
                 )
                 return None
             else:
-                return pinned
+                return pinned_id
 
         connected = [d for d in devices if (d.status or "") == "connected"]
         if not connected:
@@ -298,14 +318,21 @@ class ExecutionEngine:
         self, config: Dict[str, Any], commands: List[str]
     ) -> str:
         """Human readable reason for an unresolvable device."""
-        pinned = (config or {}).get("device_id")
-        if pinned:
+        for column, pinned in (
+            (Device.device_key, (config or {}).get("device_key")),
+            (Device.id, (config or {}).get("device_id")),
+        ):
+            if not pinned:
+                continue
             async with async_session() as session:
                 dev = (
-                    await session.execute(select(Device).where(Device.id == pinned))
+                    await session.execute(select(Device).where(column == pinned))
                 ).scalar_one_or_none()
             if dev is not None:
-                return f"步骤绑定的设备「{dev.name or pinned}」当前未连接，请先连接该设备"
+                label = f"「{dev.name or pinned}」"
+                if dev.device_key:
+                    label = f"「{dev.name}（{dev.device_key}）」"
+                return f"步骤绑定的设备{label}当前未连接，请先连接该设备"
 
         desired = self._desired_protocols(config, commands)
         if not desired:
@@ -1230,10 +1257,155 @@ async def rebind_stale_devices(db: AsyncSession) -> Dict[str, Any]:
     return {"rebound": len(changes), "changes": changes}
 
 
+async def backfill_device_keys(db: AsyncSession) -> Dict[str, Any]:
+    """Copy every node's legacy ``device_id`` binding into a ``device_key``.
+
+    Existing flows were written before the stable identifier existed, so they
+    only carry the primary key. Translating them here is what lets an old flow
+    keep working after its device is replaced.
+    """
+    devices = (await db.execute(select(Device))).scalars().all()
+    key_by_id = {d.id: d.device_key for d in devices if d.device_key}
+    if not key_by_id:
+        return {"updated": 0, "note": "当前没有已分配设备ID号的设备"}
+
+    flows = (await db.execute(select(TestFlow))).scalars().all()
+    updated = 0
+    for flow in flows:
+        try:
+            nodes = json.loads(flow.nodes or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(nodes, list):
+            continue
+        dirty = False
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            cfg = node.get("config")
+            if not isinstance(cfg, dict) or cfg.get("device_key"):
+                continue
+            key = key_by_id.get(cfg.get("device_id"))
+            if key:
+                cfg["device_key"] = key
+                updated += 1
+                dirty = True
+        if dirty:
+            flow.nodes = json.dumps(nodes, ensure_ascii=False)
+
+    if updated:
+        await db.commit()
+        logger.info("device_key backfill: tagged %d node(s)", updated)
+    return {"updated": updated}
+
+
+async def switch_case_device(
+    db: AsyncSession,
+    test_case_id: str,
+    to_device_key: str,
+    from_device_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Re-point a test case's device binding and regenerate its code.
+
+    ``from_device_key`` narrows the switch to the nodes bound to that device;
+    when omitted every device-bound node is moved to the target device.
+
+    The regenerated code is returned so the caller (and the UI) immediately has
+    the artefact that matches the new binding — a stale generated script is
+    exactly the kind of drift this is meant to remove.
+    """
+    from app.services.codegen_service import codegen_service
+
+    target = await device_service.get_by_key(db, to_device_key)
+    if target is None:
+        raise ValueError(f"未找到设备ID号为「{to_device_key}」的设备")
+
+    case = (
+        await db.execute(select(TestCase).where(TestCase.id == test_case_id))
+    ).scalar_one_or_none()
+    if case is None:
+        raise ValueError(f"未找到用例 {test_case_id}")
+
+    flow = (
+        await db.execute(select(TestFlow).where(TestFlow.testcase_id == test_case_id))
+    ).scalar_one_or_none()
+    if flow is None:
+        raise ValueError("该用例还没有流程图，无法切换设备")
+
+    try:
+        nodes = json.loads(flow.nodes or "[]")
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"流程图解析失败：{e}") from e
+    try:
+        edges = json.loads(flow.edges or "[]")
+    except (ValueError, TypeError):
+        edges = []
+
+    changed: List[Dict[str, Any]] = []
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        cfg = node.get("config")
+        if not isinstance(cfg, dict):
+            continue
+        current_key = cfg.get("device_key")
+        current_id = cfg.get("device_id")
+        has_binding = bool(current_key or current_id)
+        if not has_binding:
+            continue
+        if from_device_key:
+            matches = current_key == from_device_key
+            if not matches and current_id:
+                source = await device_service.get_device(db, current_id)
+                matches = bool(source and source.device_key == from_device_key)
+            if not matches:
+                continue
+        elif current_key == target.device_key:
+            continue  # already on the target device
+
+        changed.append({
+            "node_id": node.get("id"),
+            "label": (node.get("data") or {}).get("label"),
+            "from_device_key": current_key,
+            "from_device_id": current_id,
+        })
+        cfg["device_key"] = target.device_key
+        cfg["device_id"] = target.id
+
+    if not changed:
+        raise ValueError(
+            "没有可切换的步骤：该用例没有绑定设备，或绑定的不是指定设备"
+        )
+
+    flow.nodes = json.dumps(nodes, ensure_ascii=False)
+    await db.commit()
+
+    code = codegen_service.generate_python(nodes, edges, test_case_name=case.name)
+    summary = codegen_service.generate_json_summary(nodes, edges, name=case.name)
+
+    return {
+        "test_case_id": test_case_id,
+        "test_case_name": case.name,
+        "device": {
+            "id": target.id,
+            "device_key": target.device_key,
+            "name": target.name,
+            "protocol": target.protocol,
+            "status": target.status,
+        },
+        "changed_nodes": changed,
+        "changed_count": len(changed),
+        "code": code,
+        "summary": summary,
+    }
+
+
 async def count_stale_bindings(db: AsyncSession) -> Dict[str, Any]:
     """Report (without modifying) how many flow nodes pin a missing device."""
     devices = (await db.execute(select(Device))).scalars().all()
     valid_ids = {d.id for d in devices}
+    valid_keys = {d.device_key for d in devices if d.device_key}
+    key_by_id = {d.id: d.device_key for d in devices if d.device_key}
     flows = (await db.execute(select(TestFlow))).scalars().all()
 
     stale_per_case: Dict[str, Any] = {}
@@ -1247,9 +1419,14 @@ async def count_stale_bindings(db: AsyncSession) -> Dict[str, Any]:
             if not isinstance(node, dict):
                 continue
             cfg = node.get("config") or {}
+            key = cfg.get("device_key")
             did = cfg.get("device_id")
-            if did and did not in valid_ids:
-                found.add(did)
+            if key and key not in valid_keys:
+                found.add(key)
+            elif did and did not in valid_ids:
+                # Bound by primary key only: reported using its stable id so the
+                # message tells the user which 设备ID号 to (re)assign.
+                found.add(key_by_id.get(did) or did)
         if found:
             stale_per_case[flow.testcase_id] = sorted(found)
 

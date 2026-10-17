@@ -8,9 +8,9 @@ import {
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
   DeleteOutlined, ApartmentOutlined, ReloadOutlined,
-  ExperimentOutlined, SettingOutlined, ClearOutlined
+  ExperimentOutlined, SettingOutlined, ClearOutlined, SwapOutlined
 } from '@ant-design/icons'
-import { testCaseAPI, executionAPI } from '../services/api'
+import { testCaseAPI, executionAPI, deviceAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import ResultParserConfig, { DATA_TYPES } from '../components/ResultParserConfig'
 import type { ParserSpec } from '../components/ResultParserConfig'
@@ -60,6 +60,14 @@ export default function TestCases() {
   const [staleBindings, setStale] = useState(0)
   const [rebinding, setRebinding] = useState(false)
 
+  // ---- switch the case to another device (by 设备ID号) ----
+  const [switchOpen, setSwitchOpen] = useState(false)
+  const [switchTarget, setSwitchTarget] = useState<TestCase | null>(null)
+  const [switchSaving, setSwitchSaving] = useState(false)
+  const [switchResult, setSwitchResult] = useState<any>(null)
+  const [devices, setDevices] = useState<any[]>([])
+  const [switchForm] = Form.useForm()
+
   const loadTestCases = async () => {
     setLoading(true)
     try {
@@ -98,6 +106,48 @@ export default function TestCases() {
       handleApiError(err, '重新绑定设备失败')
     } finally {
       setRebinding(false)
+    }
+  }
+
+  const loadDevices = async () => {
+    try {
+      const res = await deviceAPI.list()
+      setDevices(extractItems(res))
+    } catch { /* optional */ }
+  }
+
+  const openSwitch = async (tc: TestCase) => {
+    setSwitchTarget(tc)
+    setSwitchResult(null)
+    if (!devices.length) await loadDevices()
+    switchForm.setFieldsValue({ to_device_key: undefined, from_device_key: undefined })
+    setSwitchOpen(true)
+  }
+
+  const handleSwitchDevice = async () => {
+    let values: any
+    try {
+      values = await switchForm.validateFields()
+    } catch {
+      return
+    }
+    if (!switchTarget) return
+    setSwitchSaving(true)
+    try {
+      const res = await testCaseAPI.switchDevice(
+        switchTarget.id, values.to_device_key, values.from_device_key || undefined,
+      )
+      const data: any = res.data?.data || res.data
+      setSwitchResult(data)
+      message.success(
+        `已将 ${data.changed_count} 个步骤切换到 ${data.device?.device_key}，并重新生成代码`,
+      )
+      loadTestCases()
+      checkStaleBindings()
+    } catch (err) {
+      handleApiError(err, '切换设备失败')
+    } finally {
+      setSwitchSaving(false)
     }
   }
 
@@ -446,7 +496,7 @@ export default function TestCases() {
     {
       title: '操作',
       key: 'actions',
-      width: 210,
+      width: 250,
       render: (_: any, record: TestCase) => (
         <Space>
           <Tooltip title="运行测试">
@@ -456,6 +506,13 @@ export default function TestCases() {
               icon={<PlayCircleOutlined />}
               loading={runningId === record.id}
               onClick={() => handleRun(record)}
+            />
+          </Tooltip>
+          <Tooltip title="切换设备（按设备ID号重新绑定并重新生成代码）">
+            <Button
+              size="small"
+              icon={<SwapOutlined />}
+              onClick={() => openSwitch(record)}
             />
           </Tooltip>
           <Tooltip title="重命名">
@@ -618,6 +675,67 @@ export default function TestCases() {
           onSave={saveParsers}
         />
       )}
+
+      {/* 切换设备：按设备ID号重新绑定，并重新生成代码 */}
+      <Modal
+        title="切换设备"
+        open={switchOpen}
+        onOk={handleSwitchDevice}
+        confirmLoading={switchSaving}
+        onCancel={() => setSwitchOpen(false)}
+        okText="切换并重新生成代码"
+        cancelText="取消"
+        width={560}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="用例通过「设备ID号」关联设备"
+          description="更换硬件时，把同一个设备ID号赋给新设备，或直接把用例切换到另一个设备ID号。切换后会自动按新设备重新生成代码。"
+        />
+        <Form form={switchForm} layout="vertical">
+          <Form.Item
+            name="to_device_key"
+            label="切换到（目标设备ID号）"
+            rules={[{ required: true, message: '请选择目标设备' }]}
+          >
+            <Select
+              placeholder="选择设备"
+              options={devices.map((d) => ({
+                value: d.device_key,
+                label: `${d.device_key}　${d.name}（${d.protocol}）`,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="from_device_key"
+            label="仅切换当前绑定（可选）"
+            extra="留空表示切换本用例所有已绑定设备的步骤"
+          >
+            <Select
+              allowClear
+              placeholder="全部（默认）"
+              options={devices.map((d) => ({
+                value: d.device_key,
+                label: `${d.device_key}　${d.name}`,
+              }))}
+            />
+          </Form.Item>
+        </Form>
+
+        {switchResult && (
+          <div style={{ marginTop: 8 }}>
+            <Text strong>切换结果</Text>
+            <div style={{ marginTop: 6 }}>
+              <Tag color="green">
+                已切换 {switchResult.changed_count} 个步骤 → {switchResult.device?.device_key}
+              </Tag>
+              <Tag color="blue">已重新生成代码（{switchResult.code?.length ?? 0} 字符）</Tag>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

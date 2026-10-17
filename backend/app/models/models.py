@@ -169,6 +169,14 @@ class Device(Base):
     __tablename__ = "devices"
 
     id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dev"))
+    # Stable, user-facing device identifier (e.g. "DEV-001").
+    #
+    # ``id`` above is a system-generated primary key: deleting and re-adding a
+    # device hands out a NEW one, which silently orphaned every test flow that
+    # pinned it. Flows therefore bind to ``device_key`` instead — it survives a
+    # hardware swap because the user simply assigns the same key to the
+    # replacement device.
+    device_key = Column(String(64), nullable=True, index=True, unique=True)
     name = Column(String(200), nullable=False)
     type = Column(String(50), nullable=False, index=True)
     protocol = Column(String(20), nullable=False, index=True)
@@ -191,6 +199,7 @@ class Device(Base):
         Index("idx_devices_status", "status"),
         Index("idx_devices_type", "type"),
         Index("idx_devices_protocol", "protocol"),
+        Index("idx_devices_key", "device_key", unique=True),
     )
 
     # Relationships

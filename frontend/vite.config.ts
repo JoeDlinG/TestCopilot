@@ -18,6 +18,27 @@ export default defineConfig({
       },
     },
   },
+  // An empty dependency cache makes every page switch in dev pull hundreds of
+  // individual module files (antd alone ships thousands), which is what made
+  // opening a page feel sluggish. Listing the heavy packages here guarantees
+  // they are pre-bundled into a handful of files instead.
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      'react-router-dom',
+      'antd',
+      '@ant-design/icons',
+      'reactflow',
+      'recharts',
+      'react-markdown',
+      'react-grid-layout',
+      'axios',
+      'dayjs',
+      'zustand',
+    ],
+  },
   build: {
     // Issue #12: the whole app used to land in one ~2.3 MB chunk, so every page
     // load pulled in the flow editor, the charts and all of antd even for users

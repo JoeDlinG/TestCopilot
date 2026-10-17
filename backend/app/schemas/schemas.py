@@ -15,6 +15,8 @@ class DeviceCreate(BaseModel):
     type: str  # device type: oscilloscope, power_supply, etc.
     protocol: str  # scpi, can, serial, ethernet, etc.
     connection_type: str  # usb, ethernet, gpib, serial, can
+    # Stable user-facing identifier (e.g. "DEV-001"); auto-assigned when omitted.
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None
@@ -32,6 +34,7 @@ class DeviceResponse(BaseModel):
     type: str
     protocol: str
     connection_type: str
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None
@@ -51,6 +54,7 @@ class DeviceUpdate(BaseModel):
     type: Optional[str] = None
     protocol: Optional[str] = None
     connection_type: Optional[str] = None
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None

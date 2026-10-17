@@ -84,6 +84,30 @@ class DeviceService:
             return value
         return json.dumps(value, ensure_ascii=False)
 
+    # ------------------------------------------------------------------ #
+    # Stable device identifier (device_key)
+    # ------------------------------------------------------------------ #
+
+    async def next_device_key(self, db: AsyncSession) -> str:
+        """Return the next unused ``DEV-xxx`` key."""
+        rows = (
+            await db.execute(select(Device.device_key).where(Device.device_key.isnot(None)))
+        ).scalars().all()
+        used = {r for r in rows if r}
+        seq = 1
+        while f"DEV-{seq:03d}" in used:
+            seq += 1
+        return f"DEV-{seq:03d}"
+
+    async def get_by_key(self, db: AsyncSession, device_key: str) -> Optional[Device]:
+        """Look a device up by its stable identifier."""
+        if not device_key:
+            return None
+        result = await db.execute(
+            select(Device).where(Device.device_key == device_key.strip())
+        )
+        return result.scalar_one_or_none()
+
     def _model_to_response(self, device: Device) -> dict:
         """Convert Device model to response dict with parsed JSON fields."""
         return {
@@ -92,6 +116,7 @@ class DeviceService:
             "type": device.type,
             "protocol": device.protocol,
             "connection_type": device.connection_type,
+            "device_key": device.device_key,
             "visa_address": device.visa_address,
             "can_channel": device.can_channel,
             "serial_port": device.serial_port,
@@ -147,11 +172,19 @@ class DeviceService:
         return merged if merged else None
 
     async def create_device(self, db: AsyncSession, data: DeviceCreate) -> Device:
+        # Stable identifier: taken from the request when supplied (that is how a
+        # replacement device inherits the bindings of the one it replaces),
+        # otherwise allocated as the next free DEV-xxx.
+        key = (data.device_key or "").strip() or await self.next_device_key(db)
+        if await self.get_by_key(db, key):
+            raise ValueError(f"设备ID号「{key}」已被占用")
+
         device = Device(
             name=data.name,
             type=data.type,
             protocol=data.protocol,
             connection_type=data.connection_type,
+            device_key=key,
             visa_address=data.visa_address,
             can_channel=data.can_channel,
             serial_port=data.serial_port,

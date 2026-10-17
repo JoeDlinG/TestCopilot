@@ -68,6 +68,7 @@ export const deviceAPI = {
   list: () => api.get('/devices/'),
   get: (id: string) => api.get(`/devices/${id}`),
   create: (data: any) => api.post('/devices/', data),
+  update: (id: string, data: any) => api.put(`/devices/${id}`, data),
   delete: (id: string) => api.delete(`/devices/${id}`),
   discover: () => api.get('/devices/discover'),
   connect: (deviceId: string, config?: any) =>
@@ -129,6 +130,13 @@ export const testCaseAPI = {
   // Device bindings that outlived their device (device deleted + re-added)
   staleDevices: () => api.get('/testcases/stale-devices'),
   rebindDevices: () => api.post('/testcases/rebind-devices'),
+  // Switch a case to another device by 设备ID号 — returns regenerated code
+  switchDevice: (id: string, toDeviceKey: string, fromDeviceKey?: string) =>
+    api.post(`/testcases/${id}/switch-device`, {
+      to_device_key: toDeviceKey,
+      from_device_key: fromDeviceKey || null,
+    }),
+  backfillDeviceKeys: () => api.post('/testcases/backfill-device-keys'),
   // Result parsing preview (uses the same engine as the execution)
   parsePreview: (raw: string, parsers: any[]) =>
     api.post('/testcases/parse-preview', { raw, parsers }),

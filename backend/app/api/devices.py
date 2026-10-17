@@ -356,7 +356,13 @@ async def list_devices(
 
 @router.post("/", status_code=201)
 async def create_device(data: DeviceCreate, db: AsyncSession = Depends(get_db)):
-    device = await device_service.create_device(db, data)
+    try:
+        device = await device_service.create_device(db, data)
+    except ValueError as e:
+        # Raised when the requested 设备ID号 is already taken.
+        raise HTTPException(status_code=409, detail={
+            "code": 40018, "message": "设备ID号冲突", "detail": str(e),
+        })
     return {
         "code": 0,
         "message": "success",
@@ -381,6 +387,15 @@ async def get_device(device_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/{device_id}")
 async def update_device(device_id: str, data: DeviceUpdate, db: AsyncSession = Depends(get_db)):
+    # A duplicate 设备ID号 would silently make existing bindings ambiguous.
+    if (data.device_key or "").strip():
+        clash = await device_service.get_by_key(db, data.device_key.strip())
+        if clash and clash.id != device_id:
+            raise HTTPException(status_code=409, detail={
+                "code": 40018,
+                "message": "设备ID号冲突",
+                "detail": f"设备ID号「{data.device_key.strip()}」已被其它设备占用",
+            })
     device = await device_service.update_device(db, device_id, data)
     if not device:
         raise HTTPException(status_code=404, detail={

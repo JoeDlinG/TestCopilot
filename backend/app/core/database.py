@@ -89,6 +89,8 @@ def _apply_light_migrations(conn):
         ("test_executions", "iteration", "INTEGER"),
         ("test_executions", "group_no", "INTEGER"),
         ("execution_plan_items", "node_count", "INTEGER"),
+        # stable, user-facing device identifier (see Device.device_key)
+        ("devices", "device_key", "VARCHAR(64)"),
     ):
         try:
             cols = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
@@ -99,6 +101,55 @@ def _apply_light_migrations(conn):
             added.append(f"{table}.{column}")
     if added:
         print(f"[db] schema updated: {', '.join(added)}")
+
+    _ensure_device_keys(conn)
+
+
+def _ensure_device_keys(conn) -> None:
+    """Give every device a stable, human-facing identifier (``DEV-001`` …).
+
+    ``devices.id`` is a random primary key: deleting and re-adding a device
+    hands out a new one, which orphaned every flow that pinned it. Flows now
+    bind to ``device_key`` instead, so existing rows are backfilled here —
+    ordered by creation time so the numbering is stable across restarts.
+    """
+    try:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(devices)"))]
+    except Exception:
+        return
+    if not cols or "device_key" not in cols:
+        return
+
+    try:
+        pending = conn.execute(
+            text(
+                "SELECT id FROM devices "
+                "WHERE device_key IS NULL OR TRIM(device_key) = '' "
+                "ORDER BY created_at, id"
+            )
+        ).fetchall()
+        if not pending:
+            return
+        used = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT device_key FROM devices WHERE device_key IS NOT NULL")
+            ).fetchall()
+        }
+    except Exception:
+        return
+
+    seq = 1
+    for (dev_id,) in pending:
+        while f"DEV-{seq:03d}" in used:
+            seq += 1
+        key = f"DEV-{seq:03d}"
+        used.add(key)
+        conn.execute(
+            text("UPDATE devices SET device_key = :k WHERE id = :i"),
+            {"k": key, "i": dev_id},
+        )
+    print(f"[db] assigned device_key to {len(pending)} device(s)")
 
 
 async def init_db():

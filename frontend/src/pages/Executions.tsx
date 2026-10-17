@@ -151,6 +151,19 @@ function useDeviceMonitor(devices: any[], slot: number) {
     if (pick) setSelectedDevice(prev => prev || pick.id)
   }, [devices, slot])
 
+  // A 200 ms periodic test produces several frames per second; rendering each
+  // one individually re-rendered this whole (very large) page every time and
+  // made the UI feel unresponsive. Bursts are coalesced into a single update.
+  const pendingRef = useRef<ComLine[]>([])
+  const flushTimerRef = useRef<number | null>(null)
+
+  const flushLines = useCallback(() => {
+    flushTimerRef.current = null
+    const batch = pendingRef.current
+    pendingRef.current = []
+    if (batch.length) setLines(prev => [...prev, ...batch].slice(-MAX_LINES))
+  }, [])
+
   const pushLine = useCallback((dir: ComLine['dir'], text: string) => {
     const line: ComLine = { id: ++lineSeq, ts: nowTs(), dir, text }
     if (pausedRef.current) {
@@ -161,7 +174,18 @@ function useDeviceMonitor(devices: any[], slot: number) {
       }
       return
     }
-    setLines(prev => [...prev, line].slice(-MAX_LINES))
+    pendingRef.current.push(line)
+    if (flushTimerRef.current == null) {
+      flushTimerRef.current = window.setTimeout(flushLines, 100)
+    }
+  }, [flushLines])
+
+  // Flush any pending burst on unmount so nothing is left un-rendered.
+  useEffect(() => () => {
+    if (flushTimerRef.current != null) {
+      window.clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
   }, [])
 
   useEffect(() => { pausedRef.current = paused }, [paused])
