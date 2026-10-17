@@ -214,7 +214,7 @@ export default function ResultParserConfig({
         <Card
           key={index}
           size="small"
-          style={{ marginBottom: 10, background: '#fafafa' }}
+          style={{ marginBottom: 10, background: 'var(--app-surface-muted)' }}
           title={<Space><Tag color="blue">解析项 {index + 1}</Tag><Text strong>{item.name || ''}</Text></Space>}
           extra={<Button size="small" danger type="text" icon={<DeleteOutlined />} onClick={() => removeItem(index)} disabled={items.length === 1}>删除</Button>}
         >

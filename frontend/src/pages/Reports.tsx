@@ -86,8 +86,8 @@ export default function Reports() {
 
   const formatIcon = (format: string) => {
     switch (format) {
-      case 'pdf': return <FilePdfOutlined style={{ color: '#ff4d4f' }} />
-      case 'csv': return <FileExcelOutlined style={{ color: '#52c41a' }} />
+      case 'pdf': return <FilePdfOutlined style={{ color: 'var(--app-fail)' }} />
+      case 'csv': return <FileExcelOutlined style={{ color: 'var(--app-pass)' }} />
       default: return <FileTextOutlined />
     }
   }

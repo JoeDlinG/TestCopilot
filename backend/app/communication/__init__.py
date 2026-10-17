@@ -5,25 +5,21 @@ with real hardware or mock backends for development/testing.
 """
 from __future__ import annotations
 import asyncio
-import concurrent.futures
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 
+from app.core.blocking import run_blocking
+
 logger = logging.getLogger(__name__)
-
-# Thread pool for running blocking I/O operations (Python 3.8 compatible
-# replacement for asyncio.to_thread which was added in Python 3.9).
-_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-
 
 async def _run_in_thread(func, *args):
     """Run a blocking function in a thread pool and await its result.
 
-    This is a backport of asyncio.to_thread() for Python 3.8.
+    Delegates to :mod:`app.core.blocking` so the whole process shares one pool
+    instead of creating a second one here.
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_thread_pool, func, *args)
+    return await run_blocking(func, *args)
 
 
 class CommunicationInterface(ABC):

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Empty, Statistic,
   Row, Col, Drawer, Descriptions, Select, List, Alert, Tooltip,
@@ -126,7 +127,7 @@ const compareRows = (a: any, b: any) => {
 // ---------------------------------------------------------------------------
 
 function lineColor(dir: ComLine['dir']): string {
-  return dir === 'TX' ? '#61dafb' : dir === 'RX' ? '#7ee787' : '#d4d4d4'
+  return dir === 'TX' ? 'var(--term-sent)' : dir === 'RX' ? 'var(--app-pass)' : 'var(--term-fg)'
 }
 
 /**
@@ -273,7 +274,7 @@ function StepList({ steps, stepStatusConfig }: {
         return (
           <List.Item
             style={{
-              background: running ? '#e6f4ff' : undefined,
+              background: running ? 'var(--app-accent-subtle)' : undefined,
               padding: '6px 12px',
               flexDirection: 'column',
               alignItems: 'stretch',
@@ -378,7 +379,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         style={{
           height,
           overflowY: 'auto',
-          background: '#1e1e1e',
+          background: 'var(--term-bg)',
           borderRadius: 4,
           padding: 8,
           fontFamily: 'Menlo, Consolas, monospace',
@@ -386,13 +387,13 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         }}
       >
         {m.lines.length === 0 ? (
-          <div style={{ color: '#888', padding: 8 }}>
+          <div style={{ color: 'var(--app-fg-muted)', padding: 8 }}>
             等待端口通信数据…（下发命令或设备主动上报时会实时显示）
           </div>
         ) : (
           m.lines.map(line => (
             <div key={line.id} style={{ color: lineColor(line.dir), lineHeight: 1.7 }}>
-              <span style={{ color: '#666' }}>{line.ts}</span>{' '}
+              <span style={{ color: 'var(--app-fg-subtle)' }}>{line.ts}</span>{' '}
               <span style={{ fontWeight: 'bold' }}>
                 {line.dir === 'TX'
                   ? <ArrowUpOutlined />
@@ -407,7 +408,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         )}
         <div ref={m.endRef} />
       </div>
-      <div style={{ marginTop: 6, color: '#888', fontSize: 12 }}>
+      <div style={{ marginTop: 6, color: 'var(--app-fg-muted)', fontSize: 12 }}>
         共 {m.lines.length} 行（最多保留 {MAX_LINES} 行）
         {m.paused && ` · 暂停期间已缓存 ${m.bufferRef.current.length} 行`}
       </div>
@@ -725,11 +726,7 @@ export default function Executions() {
   }, [trackedInfo?.testcase_id, caseNames])
 
   // poll the list while something is running
-  useEffect(() => {
-    if (!executions.some(e => e.status === 'running')) return
-    const timer = setInterval(loadExecutions, 2000)
-    return () => clearInterval(timer)
-  }, [executions, loadExecutions])
+  usePolling(loadExecutions, 2000, executions.some(e => e.status === 'running'))
 
   // Merge the planned flow with live results so the whole step list is visible
   // while running, each step showing its judgement outcome once finished.
@@ -1051,7 +1048,7 @@ export default function Executions() {
             <Statistic
               title="通过"
               value={stats.passed}
-              valueStyle={{ color: '#52c41a' }}
+              valueStyle={{ color: 'var(--app-pass)' }}
               prefix={<CheckCircleOutlined />}
             />
           </Card>
@@ -1061,7 +1058,7 @@ export default function Executions() {
             <Statistic
               title="失败"
               value={stats.failed}
-              valueStyle={{ color: '#ff4d4f' }}
+              valueStyle={{ color: 'var(--app-fail)' }}
               prefix={<CloseCircleOutlined />}
             />
           </Card>
@@ -1072,7 +1069,7 @@ export default function Executions() {
               title="通过率"
               value={stats.passRate}
               suffix="%"
-              valueStyle={{ color: stats.passRate >= 80 ? '#52c41a' : '#faad14' }}
+              valueStyle={{ color: stats.passRate >= 80 ? 'var(--app-pass)' : 'var(--app-warn)' }}
             />
           </Card>
         </Col>
@@ -1151,17 +1148,17 @@ export default function Executions() {
                       style={{
                         flex: '1 1 0',
                         minWidth: 260,
-                        border: '1px solid #f0f0f0',
+                        border: '1px solid var(--app-border)',
                         borderRadius: 6,
-                        background: '#fafafa',
+                        background: 'var(--app-surface-muted)',
                       }}
                     >
                       <div style={{
-                        padding: '6px 10px', borderBottom: '1px solid #f0f0f0',
+                        padding: '6px 10px', borderBottom: '1px solid var(--app-border)',
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       }}>
                         <Space size={6}>
-                          <ApiOutlined style={{ color: '#1677ff' }} />
+                          <ApiOutlined style={{ color: 'var(--app-accent)' }} />
                           <Text strong style={{ fontSize: 12 }}>{col.title}</Text>
                         </Space>
                         <Space size={4}>

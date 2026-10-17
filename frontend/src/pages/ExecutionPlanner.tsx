@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Row, Col, Card, Table, Button, Space, Input, InputNumber, Select, Tag,
   Alert, Modal, Drawer, Progress, Tooltip, Typography, Divider, message,
@@ -141,23 +142,19 @@ export default function ExecutionPlanner() {
   }, [items, planLoop, maxParallel, onError])
 
   // ---- poll the running batch -----------------------------------------
-  useEffect(() => {
+  const pollRun = useCallback(async () => {
     if (!runId) return
-    let alive = true
-    const tick = async () => {
-      try {
-        const data = extractData(await planRunAPI.get(runId))
-        if (!alive) return
-        setRun(data)
-        if (data?.status !== 'running') {
-          setRunId((cur) => (cur === runId ? null : cur))
-        }
-      } catch { /* keep polling */ }
-    }
-    tick()
-    const timer = setInterval(tick, 2000)
-    return () => { alive = false; clearInterval(timer) }
+    try {
+      const data = extractData(await planRunAPI.get(runId))
+      setRun(data)
+      if (data?.status !== 'running') {
+        setRunId((cur) => (cur === runId ? null : cur))
+      }
+    } catch { /* keep polling */ }
   }, [runId])
+
+  useEffect(() => { pollRun() }, [pollRun])
+  usePolling(pollRun, 2000, !!runId)
 
   // ---- item helpers ----------------------------------------------------
   const addSelected = () => {
@@ -578,8 +575,8 @@ export default function ExecutionPlanner() {
       </Drawer>
 
       <style>{`
-        .plan-row-error { background: #fff1f0; }
-        .plan-row-error:hover > td { background: #ffe7e5 !important; }
+        .plan-row-error { background: var(--app-danger-bg); }
+        .plan-row-error:hover > td { background: var(--app-danger-bg) !important; }
       `}</style>
     </div>
   )

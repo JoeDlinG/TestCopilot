@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -99,12 +100,10 @@ export default function Dashboard() {
     if (!bigScreen) return
     setNow(new Date())
     const clock = window.setInterval(() => setNow(new Date()), 1000)
-    const timer = window.setInterval(() => loadRef.current(), refreshSec * 1000)
-    return () => {
-      window.clearInterval(clock)
-      window.clearInterval(timer)
-    }
-  }, [bigScreen, refreshSec])
+    return () => window.clearInterval(clock)
+  }, [bigScreen])
+
+  usePolling(() => loadRef.current(), refreshSec * 1000, bigScreen)
 
   // leaving fullscreen with ESC / F11 should also leave big-screen mode
   useEffect(() => {
@@ -117,11 +116,11 @@ export default function Dashboard() {
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'passed': return <CheckCircleOutlined style={{ color: '#52c41a' }} />
-      case 'failed': return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
-      case 'running': return <SyncOutlined spin style={{ color: '#1890ff' }} />
-      case 'error': return <CloseCircleOutlined style={{ color: '#faad14' }} />
-      default: return <CheckCircleOutlined style={{ color: '#d9d9d9' }} />
+      case 'passed': return <CheckCircleOutlined style={{ color: 'var(--app-pass)' }} />
+      case 'failed': return <CloseCircleOutlined style={{ color: 'var(--app-fail)' }} />
+      case 'running': return <SyncOutlined spin style={{ color: 'var(--app-accent)' }} />
+      case 'error': return <CloseCircleOutlined style={{ color: 'var(--app-warn)' }} />
+      default: return <CheckCircleOutlined style={{ color: 'var(--app-border)' }} />
     }
   }
 
@@ -135,7 +134,7 @@ export default function Dashboard() {
     const passRate = stats.executions
       ? Math.round((stats.passedExecutions / stats.executions) * 100)
       : 0
-    const bg = '#0b1a2b'
+    const bg = 'var(--app-bigscreen-bg)'
     const cardBg = 'rgba(255,255,255,0.06)'
     const bigCard = (
       title: string,
@@ -171,7 +170,7 @@ export default function Dashboard() {
       <div
         style={{
           position: 'fixed', inset: 0, zIndex: 1200,
-          background: bg, color: '#fff',
+          background: bg, color: 'var(--app-on-dark)',
           padding: 28, display: 'flex', flexDirection: 'column',
           overflow: 'auto',
         }}
@@ -226,7 +225,7 @@ export default function Dashboard() {
               '设备总数',
               stats.devices,
               `${stats.connectedDevices} 台已连接`,
-              <ApiOutlined />, '#1677ff',
+              <ApiOutlined />, 'var(--app-accent)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
@@ -234,7 +233,7 @@ export default function Dashboard() {
               '测试用例',
               stats.testCases,
               '已创建的用例数',
-              <DiffOutlined />, '#52c41a',
+              <DiffOutlined />, 'var(--app-pass)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
@@ -242,7 +241,7 @@ export default function Dashboard() {
               '测试执行',
               stats.executions,
               `${stats.passedExecutions} 次通过`,
-              <PlayCircleOutlined />, '#fa8c16',
+              <PlayCircleOutlined />, 'var(--app-warn)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
@@ -252,11 +251,11 @@ export default function Dashboard() {
               <Progress
                 percent={passRate}
                 showInfo={false}
-                strokeColor={passRate >= 80 ? '#52c41a' : '#faad14'}
+                strokeColor={passRate >= 80 ? 'var(--app-pass)' : 'var(--app-warn)'}
                 trailColor="rgba(255,255,255,0.12)"
                 size="small"
               />,
-              <CheckCircleOutlined />, '#eb2f96',
+              <CheckCircleOutlined />, 'var(--app-series-4)',
             )}
           </Col>
         </Row>
@@ -283,7 +282,7 @@ export default function Dashboard() {
                   <List.Item.Meta
                     avatar={<span style={{ fontSize: 24 }}>{statusIcon(item.status)}</span>}
                     title={
-                      <span style={{ color: '#fff', fontSize: 17 }}>
+                      <span style={{ color: 'var(--app-on-dark)', fontSize: 17 }}>
                         执行 {item.id?.slice(0, 8)} · {item.status}
                       </span>
                     }
@@ -308,7 +307,7 @@ export default function Dashboard() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div>
           <Title level={3} style={{ margin: 0 }}>仪表盘</Title>
-          <p style={{ color: '#888', marginTop: 4 }}>AITestLab - AI 驱动的硬件测试平台</p>
+          <p style={{ color: 'var(--app-fg-muted)', marginTop: 4 }}>AITestLab - AI 驱动的硬件测试平台</p>
         </div>
         <Tooltip title="投屏到产线/实验室大屏：超大字号、自动刷新（无权限控制）">
           <Button type="primary" icon={<FullscreenOutlined />} onClick={enterBigScreen}>
@@ -325,7 +324,7 @@ export default function Dashboard() {
               value={stats.devices}
               prefix={<ApiOutlined />}
               suffix={
-                <span style={{ fontSize: 14, color: '#52c41a' }}>
+                <span style={{ fontSize: 14, color: 'var(--app-pass)' }}>
                   {stats.connectedDevices} 已连接
                 </span>
               }
@@ -348,7 +347,7 @@ export default function Dashboard() {
               value={stats.executions}
               prefix={<PlayCircleOutlined />}
               suffix={
-                <span style={{ fontSize: 14, color: '#52c41a' }}>
+                <span style={{ fontSize: 14, color: 'var(--app-pass)' }}>
                   {stats.passedExecutions} 通过
                 </span>
               }

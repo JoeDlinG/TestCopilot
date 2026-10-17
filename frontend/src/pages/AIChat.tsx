@@ -483,13 +483,13 @@ export default function AIChat() {
                         key={i}
                         style={{
                           display: 'flex', gap: 12,
-                          padding: '12px 0', borderBottom: '1px solid #f0f0f0',
+                          padding: '12px 0', borderBottom: '1px solid var(--app-border)',
                         }}
                       >
                         <div>
                           {msg.role === 'assistant'
-                            ? <RobotOutlined style={{ color: '#1677ff', fontSize: 20 }} />
-                            : <UserOutlined style={{ color: '#52c41a', fontSize: 20 }} />}
+                            ? <RobotOutlined style={{ color: 'var(--app-accent)', fontSize: 20 }} />
+                            : <UserOutlined style={{ color: 'var(--app-pass)', fontSize: 20 }} />}
                         </div>
                         <div style={{ flex: 1 }}>
                           <Text strong>{msg.role === 'assistant' ? 'AI' : '用户'}</Text>
@@ -529,7 +529,7 @@ export default function AIChat() {
                       </div>
 
                       {caseCount > 0 && (
-                        <Card size="small" style={{ marginBottom: 12, background: '#fafcff' }}>
+                        <Card size="small" style={{ marginBottom: 12, background: 'var(--app-accent-subtle)' }}>
                           <Text strong style={{ display: 'block', marginBottom: 8 }}>
                             <EditOutlined /> 继续修改
                           </Text>
@@ -565,10 +565,10 @@ export default function AIChat() {
                       {testCaseResult?.raw_response && (
                         <Collapse ghost style={{ marginBottom: 12 }} items={[{
                           key: 'raw',
-                          label: <Text strong style={{ color: '#1677ff' }}>查看 AI 完整对话内容（原始响应）</Text>,
+                          label: <Text strong style={{ color: 'var(--app-accent)' }}>查看 AI 完整对话内容（原始响应）</Text>,
                           children: (
                             <div style={{
-                              maxHeight: 400, overflow: 'auto', background: '#fafafa',
+                              maxHeight: 400, overflow: 'auto', background: 'var(--app-surface-muted)',
                               padding: 16, borderRadius: 8, whiteSpace: 'pre-wrap',
                               fontSize: 13, lineHeight: 1.7,
                             }}>
@@ -679,7 +679,7 @@ export default function AIChat() {
                       <>
                         <Divider orientation="left" style={{ margin: '8px 0' }}>{memView.name} 的内容</Divider>
                         <pre style={{
-                          background: '#fafafa', padding: 16, borderRadius: 8,
+                          background: 'var(--app-surface-muted)', padding: 16, borderRadius: 8,
                           maxHeight: 360, overflow: 'auto', fontSize: 12,
                         }}>
                           {memView.content}
@@ -703,7 +703,7 @@ export default function AIChat() {
                       <Text type="secondary">SQL: {queryResult.sql_generated}</Text>
                       <p>共找到 {queryResult.result_count} 条记录</p>
                       {queryResult.results?.length > 0 && (
-                        <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 8, overflow: 'auto' }}>
+                        <pre style={{ background: 'var(--app-surface-sunken)', padding: 16, borderRadius: 8, overflow: 'auto' }}>
                           {JSON.stringify(queryResult.results, null, 2)}
                         </pre>
                       )}
@@ -720,7 +720,7 @@ export default function AIChat() {
 
       {/* ---------- 输入区（下方） ---------- */}
       <Card
-        style={{ marginTop: 16, borderColor: dragging ? '#1677ff' : undefined }}
+        style={{ marginTop: 16, borderColor: dragging ? 'var(--app-accent)' : undefined }}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => {
@@ -737,8 +737,8 @@ export default function AIChat() {
                   key={a.uid}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '4px 8px', border: '1px solid #d9d9d9',
-                    borderRadius: 6, background: '#fafafa', fontSize: 12,
+                    padding: '4px 8px', border: '1px solid var(--app-border)',
+                    borderRadius: 6, background: 'var(--app-surface-muted)', fontSize: 12,
                   }}
                 >
                   {a.kind === 'image' ? (
@@ -749,7 +749,7 @@ export default function AIChat() {
                       style={{ objectFit: 'cover', borderRadius: 4 }}
                     />
                   ) : (
-                    <FileOutlined style={{ color: '#8c8c8c' }} />
+                    <FileOutlined style={{ color: 'var(--app-fg-subtle)' }} />
                   )}
                   <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {a.name}

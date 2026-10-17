@@ -167,6 +167,127 @@ function flowVars(v: Surfaces): string {
   ].join('\n')
 }
 
+// --------------------------------------------------------------------------- //
+// Application surfaces (issue #23)
+//
+// Pages and shared components carried ~170 hard-coded hex values straight from
+// the AntD palette. These cover every role those values were playing, mode
+// aware, so a page can reference intent ("muted border") instead of a literal.
+// --------------------------------------------------------------------------- //
+
+interface AppSurfaces {
+  bg: string
+  surface: string
+  surfaceMuted: string
+  surfaceSunken: string
+  hover: string
+  border: string
+  borderStrong: string
+  fg: string
+  fgMuted: string
+  fgSubtle: string
+  accentSubtle: string
+  codeBg: string
+  codeFg: string
+  dangerBg: string
+  series: string[]
+}
+
+const APP_LIGHT: AppSurfaces = {
+  bg: graphite[0],
+  surface: graphite[0],
+  surfaceMuted: graphite[50],
+  surfaceSunken: graphite[50],
+  hover: graphite[50],
+  border: graphite[100],
+  borderStrong: graphite[200],
+  fg: graphite[950],
+  fgMuted: graphite[600],
+  fgSubtle: graphite[500],
+  accentSubtle: blue[100],
+  codeBg: graphite[50],
+  codeFg: graphite[900],
+  dangerBg: mix(red[500], graphite[0], 0.06),
+  series: [blue[600], blue[500], blue[400], amber[700], amber[500], red[600], graphite[600], graphite[500]],
+}
+
+const APP_DARK: AppSurfaces = {
+  bg: graphite[950],
+  surface: graphite[900],
+  surfaceMuted: graphite[900],
+  surfaceSunken: graphite[850],
+  hover: graphite[850],
+  border: graphite[800],
+  borderStrong: graphite[700],
+  fg: graphite[50],
+  fgMuted: graphite[300],
+  fgSubtle: graphite[400],
+  accentSubtle: mix(blue[500], graphite[950], 0.18),
+  codeBg: graphite[950],
+  codeFg: graphite[100],
+  dangerBg: mix(red[500], graphite[950], 0.14),
+  series: [blue[400], blue[300], blue[500], amber[400], amber[500], red[500], graphite[300], graphite[400]],
+}
+
+function appVars(v: AppSurfaces): string {
+  return [
+    `    --app-bg: ${v.bg};`,
+    `    --app-surface: ${v.surface};`,
+    `    --app-surface-muted: ${v.surfaceMuted};`,
+    `    --app-surface-sunken: ${v.surfaceSunken};`,
+    `    --app-hover: ${v.hover};`,
+    `    --app-border: ${v.border};`,
+    `    --app-border-strong: ${v.borderStrong};`,
+    `    --app-fg: ${v.fg};`,
+    `    --app-fg-muted: ${v.fgMuted};`,
+    `    --app-fg-subtle: ${v.fgSubtle};`,
+    `    --app-accent: ${blue[500]};`,
+    `    --app-accent-hover: ${blue[400]};`,
+    `    --app-accent-subtle: ${v.accentSubtle};`,
+    // PASS is the interactive blue; only FAIL/ERROR get red (#20).
+    `    --app-pass: ${blue[500]};`,
+    `    --app-fail: ${red[500]};`,
+    `    --app-warn: ${amber[500]};`,
+    `    --app-running: ${amber[500]};`,
+    `    --app-code-bg: ${v.codeBg};`,
+    `    --app-code-fg: ${v.codeFg};`,
+    `    --app-danger-bg: ${v.dangerBg};`,
+    // Big-screen / presentation backdrop — deep instrument navy.
+    `    --app-bigscreen-bg: ${mix(blue[700], graphite[950], 0.30)};`,
+    // Text that always sits on a dark backdrop (big-screen mode). Mode
+    // independent on purpose: the backdrop is dark in both themes.
+    `    --app-on-dark: ${graphite[50]};`,
+    // Chart series: derived from the palette instead of AntD's rainbow.
+    ...v.series.map((c, i) => `    --app-series-${i + 1}: ${c};`),
+  ].join('\n')
+}
+
+/**
+ * Terminal surfaces.
+ *
+ * The debug terminal is deliberately always dark — that is what engineers
+ * expect from a serial console — so these are NOT mode dependent.
+ */
+function termVars(): string {
+  return [
+    `    --term-bg: ${graphite[950]};`,
+    `    --term-chrome: ${graphite[900]};`,
+    `    --term-chrome-alt: ${graphite[850]};`,
+    `    --term-input-bg: ${graphite[800]};`,
+    `    --term-input-border: ${graphite[700]};`,
+    `    --term-border: ${graphite[800]};`,
+    `    --term-fg: ${graphite[100]};`,
+    `    --term-fg-muted: ${graphite[400]};`,
+    `    --term-fg-subtle: ${graphite[500]};`,
+    // Sent = instrument blue (an action we took); received = neutral (data).
+    `    --term-sent: ${blue[400]};`,
+    `    --term-recv: ${graphite[200]};`,
+    `    --term-data: ${amber[400]};`,
+    `    --term-error: ${red[500]};`,
+    `    --term-system: ${graphite[500]};`,
+  ].join('\n')
+}
+
 export const cssVars: string = `  :root {
 ${scale('g', graphite)}
 ${scale('b', blue)}
@@ -175,10 +296,17 @@ ${scale('r', red)}
 
     /* ---- Flow editor surfaces (light) ---- */
 ${flowVars(LIGHT)}
+
+    /* ---- Application surfaces (light) ---- */
+${appVars(APP_LIGHT)}
+${termVars()}
   }
 
   :root[data-theme='dark'] {
     /* ---- Flow editor surfaces (dark) ---- */
 ${flowVars(DARK)}
+
+    /* ---- Application surfaces (dark) ---- */
+${appVars(APP_DARK)}
   }
 `

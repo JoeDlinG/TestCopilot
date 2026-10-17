@@ -206,7 +206,7 @@ export default function SkillEditor() {
                   onClick={() => openSkill(item.protocol)}
                   style={{
                     cursor: 'pointer',
-                    background: current === item.protocol ? '#e6f4ff' : undefined,
+                    background: current === item.protocol ? 'var(--app-accent-subtle)' : undefined,
                     paddingLeft: 8, paddingRight: 8,
                   }}
                   actions={[

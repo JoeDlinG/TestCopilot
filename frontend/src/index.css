@@ -22,23 +22,23 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--app-border);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--app-fg-subtle);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: var(--app-fg-muted);
 }
 
 .logo-text {
   font-size: 18px;
   font-weight: 700;
-  color: #1677ff;
+  color: var(--app-accent);
   letter-spacing: -0.5px;
 }
 
@@ -65,7 +65,7 @@ body {
   color: rgba(255, 255, 255, 0.7);
 }
 .big-dash .ant-statistic .ant-statistic-content {
-  color: #fff;
+  color: var(--app-on-dark);
 }
 .big-dash .ant-progress .ant-progress-text {
   color: rgba(255, 255, 255, 0.85);
@@ -80,7 +80,7 @@ body {
 /* ============ 无障碍（issue #20 / #21 验收项） ============ */
 /* 可交互元素必须有可见焦点环，且仅在键盘聚焦时出现（不干扰鼠标操作） */
 :focus-visible {
-  outline: 2px solid #2296C4;
+  outline: 2px solid var(--app-accent);
   outline-offset: 2px;
   border-radius: 4px;
 }

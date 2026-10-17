@@ -42,6 +42,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from app.core.blocking import run_blocking
 from app.services.plugin_service import BaseProtocolPlugin
 
 
@@ -118,7 +119,9 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
             self._writer.write(data)
             await self._writer.drain()
         else:
-            self._serial.write(data)
+            # pyserial is synchronous — see app.core.blocking for why this must
+            # never run on the event loop.
+            await run_blocking(self._serial.write, data)
 
     async def _flush_input(self) -> None:
         """Drop stale inbound bytes before a request/response exchange."""
@@ -133,7 +136,7 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                 if not extra:
                     break
         elif self._serial is not None:
-            self._serial.reset_input_buffer()
+            await run_blocking(self._serial.reset_input_buffer)
 
     async def _read_frame(self, timeout: float) -> bytes:
         """Read one response frame terminated by ``;``.
@@ -163,7 +166,18 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                     return bytes(buf[:end])
             return bytes(buf)
 
-        # Serial: pyserial has its own read timeout, so a plain loop suffices.
+        # Serial: pyserial has its own read timeout, but ``read()`` still blocks
+        # the calling thread for up to that timeout. Running the whole frame
+        # read in the thread pool keeps the event loop free — otherwise a single
+        # unanswered command stalls every other request (see app.core.blocking).
+        return await run_blocking(self._serial_read_frame_sync, timeout)
+
+    def _serial_read_frame_sync(self, timeout: float) -> bytes:
+        """Blocking counterpart of the serial branch of :meth:`_read_frame`.
+
+        Runs in the blocking-I/O thread pool; only ever reached while the
+        caller holds the per-device lock, so the port is not touched concurrently.
+        """
         old_timeout = self._serial.timeout
         self._serial.timeout = max(0.01, timeout)
         try:
@@ -226,13 +240,16 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         if not port:
             raise ValueError("Missing 'port' in plugin config (serial device path)")
 
-        self._serial = serial.Serial(
-            port=port,
-            baudrate=int(config.get("baudrate", 115200)),
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=float(config.get("timeout", 2.0)),
+        # Opening the port can take hundreds of ms — keep it off the event loop.
+        self._serial = await run_blocking(
+            lambda: serial.Serial(
+                port=port,
+                baudrate=int(config.get("baudrate", 115200)),
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=float(config.get("timeout", 2.0)),
+            )
         )
 
     async def _connect_ethernet(self, config: Dict[str, Any]) -> None:
@@ -267,7 +284,7 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         if self._serial is not None:
             try:
                 if self._serial.is_open:
-                    self._serial.close()
+                    await run_blocking(self._serial.close)
             except Exception as e:
                 logger.warning(f"Error closing Mini Gateway 100 serial port: {e}")
         self._serial = None

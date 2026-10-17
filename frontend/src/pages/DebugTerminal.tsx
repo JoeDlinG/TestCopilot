@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Button, Input, Tag, Space, Tooltip, Card, Typography, Empty, Spin
 } from 'antd'
@@ -287,12 +288,12 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
 
   const getMessageColor = (type: string) => {
     switch (type) {
-      case 'sent': return '#569cd6'
-      case 'received': return '#6a9955'
-      case 'data': return '#ce9178'
-      case 'error': return '#f44747'
-      case 'system': return '#808080'
-      default: return '#d4d4d4'
+      case 'sent': return 'var(--term-sent)'
+      case 'received': return 'var(--term-recv)'
+      case 'data': return 'var(--term-data)'
+      case 'error': return 'var(--term-error)'
+      case 'system': return 'var(--term-system)'
+      default: return 'var(--term-fg)'
     }
   }
 
@@ -317,11 +318,11 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: '8px 12px',
-        borderBottom: '1px solid #333',
-        background: '#252526',
+        borderBottom: '1px solid var(--term-border)',
+        background: 'var(--term-chrome)',
       }}>
         <Space>
-          <Text style={{ color: '#ccc', fontSize: 13 }}>
+          <Text style={{ color: 'var(--term-fg)', fontSize: 13 }}>
             {tab.deviceName}
           </Text>
           <Tag color={isOpen ? 'green' : 'red'}>
@@ -357,7 +358,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         style={{
           flex: 1,
           overflow: 'auto',
-          background: '#1e1e1e',
+          background: 'var(--term-bg)',
           padding: '12px',
           fontFamily: 'Consolas, Monaco, "Courier New", monospace',
           fontSize: 13,
@@ -367,7 +368,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
       >
         {tab.messages.length === 0 ? (
           <div style={{
-            color: '#666',
+            color: 'var(--term-fg-subtle)',
             textAlign: 'center',
             paddingTop: 40,
           }}>
@@ -376,7 +377,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         ) : (
           tab.messages.map(msg => (
             <div key={msg.id} style={{ marginBottom: 2 }}>
-              <span style={{ color: '#666', fontSize: 11, marginRight: 8 }}>
+              <span style={{ color: 'var(--term-fg-subtle)', fontSize: 11, marginRight: 8 }}>
                 {msg.timestamp}
               </span>
               <span style={{ color: getMessageColor(msg.type) }}>
@@ -392,8 +393,8 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         display: 'flex',
         gap: 8,
         padding: '8px 12px',
-        borderTop: '1px solid #333',
-        background: '#252526',
+        borderTop: '1px solid var(--term-border)',
+        background: 'var(--term-chrome)',
       }}>
         <Input
           value={commandInput}
@@ -401,9 +402,9 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
           onKeyDown={handleKeyDown}
           placeholder="输入命令，Enter 发送，Shift+Enter 换行，↑↓ 历史命令..."
           style={{
-            background: '#3c3c3c',
-            border: '1px solid #555',
-            color: '#d4d4d4',
+            background: 'var(--term-input-bg)',
+            border: '1px solid var(--term-input-border)',
+            color: 'var(--term-fg)',
             fontFamily: 'Consolas, Monaco, monospace',
           }}
         />
@@ -451,11 +452,8 @@ export default function DebugTerminal() {
     }
   }, [])
 
-  useEffect(() => {
-    loadDevices()
-    const interval = setInterval(loadDevices, 5000)
-    return () => clearInterval(interval)
-  }, [loadDevices])
+  useEffect(() => { loadDevices() }, [loadDevices])
+  usePolling(loadDevices, 5000)
 
   // Load recent communication history from the DB once per opened device tab,
   // so the terminal shows past traffic even before new frames arrive.
@@ -542,8 +540,8 @@ export default function DebugTerminal() {
     return (
       <div style={{
         display: 'flex',
-        background: '#2d2d2d',
-        borderBottom: '1px solid #333',
+        background: 'var(--term-chrome-alt)',
+        borderBottom: '1px solid var(--term-border)',
         overflow: 'auto',
       }}>
         {tabEntries.map(([deviceId, tab]) => (
@@ -555,9 +553,9 @@ export default function DebugTerminal() {
               alignItems: 'center',
               padding: '8px 12px',
               cursor: 'pointer',
-              borderRight: '1px solid #333',
-              background: activeTabId === deviceId ? '#1e1e1e' : '#2d2d2d',
-              color: activeTabId === deviceId ? '#fff' : '#999',
+              borderRight: '1px solid var(--term-border)',
+              background: activeTabId === deviceId ? 'var(--term-bg)' : 'var(--term-chrome-alt)',
+              color: activeTabId === deviceId ? 'var(--term-fg)' : 'var(--term-fg-muted)',
               whiteSpace: 'nowrap',
               fontSize: 13,
               minWidth: 0,
@@ -586,15 +584,15 @@ export default function DebugTerminal() {
       <div style={{
         width: 250,
         minWidth: 250,
-        borderRight: '1px solid #e8e8e8',
-        background: '#fafafa',
+        borderRight: '1px solid var(--app-border)',
+        background: 'var(--app-surface-muted)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
         <div style={{
           padding: '12px 16px',
-          borderBottom: '1px solid #e8e8e8',
+          borderBottom: '1px solid var(--app-border)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
@@ -631,14 +629,14 @@ export default function DebugTerminal() {
                     margin: '4px 0',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    background: isActive ? '#e6f4ff' : '#fff',
-                    border: isActive ? '1px solid #1677ff' : '1px solid #e8e8e8',
+                    background: isActive ? 'var(--app-accent-subtle)' : 'var(--app-surface)',
+                    border: isActive ? '1px solid var(--app-accent)' : '1px solid var(--app-border)',
                     transition: 'all 0.2s',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <Space>
-                      <ApiOutlined style={{ color: isActive ? '#1677ff' : '#999' }} />
+                      <ApiOutlined style={{ color: isActive ? 'var(--app-accent)' : 'var(--term-fg-muted)' }} />
                       <Text
                         strong={isActive}
                         style={{
@@ -676,12 +674,12 @@ export default function DebugTerminal() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#f5f5f5',
+            background: 'var(--app-surface-sunken)',
           }}>
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
-                <span style={{ color: '#999' }}>
+                <span style={{ color: 'var(--term-fg-muted)' }}>
                   选择一个已连接的设备打开调试终端<br />
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     支持同时打开多个设备的终端窗口
@@ -702,8 +700,8 @@ export default function DebugTerminal() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: '#1e1e1e',
-                  color: '#666',
+                  background: 'var(--term-bg)',
+                  color: 'var(--term-fg-subtle)',
                 }}>
                   选择一个终端窗口
                 </div>
@@ -720,15 +718,15 @@ export default function DebugTerminal() {
       <div style={{
         width: 260,
         minWidth: 260,
-        borderLeft: '1px solid #e8e8e8',
-        background: '#fafafa',
+        borderLeft: '1px solid var(--app-border)',
+        background: 'var(--app-surface-muted)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
         <div style={{
           padding: '12px 16px',
-          borderBottom: '1px solid #e8e8e8',
+          borderBottom: '1px solid var(--app-border)',
         }}>
           <Title level={5} style={{ margin: 0 }}>指令 / 历史</Title>
         </div>

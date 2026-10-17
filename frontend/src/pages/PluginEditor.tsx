@@ -213,7 +213,7 @@ export default function PluginEditor() {
                   onClick={() => openFile(item.module_name)}
                   style={{
                     cursor: 'pointer',
-                    background: current === item.module_name ? '#e6f4ff' : undefined,
+                    background: current === item.module_name ? 'var(--app-accent-subtle)' : undefined,
                     paddingLeft: 8, paddingRight: 8,
                   }}
                   actions={[

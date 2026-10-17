@@ -4,6 +4,96 @@
 
 ---
 
+## 2026-10-17: v2.0.0 —— 执行卡死修复 + 响应性能优化 + Issue #23 硬编码色 token 化
+
+### 一、修复：正在执行的测试突然卡住（P0）
+
+**根因不是业务逻辑，是插件在 async 函数里做了阻塞 I/O。**
+
+`MiniGateway100Plugin` 的 `send()` 是 `async def`，但内部直接调用 pyserial：
+`self._serial.write(...)` 与 `self._serial.read(1)`（循环读到 `;`）。pyserial 是**同步** API，
+`read()` 会阻塞调用线程直到超时——而它跑在 asyncio 的**事件循环线程**上。
+
+后果是整个进程被拖死，不只是这一条命令：
+
+- 执行计划的进度无法通过 WebSocket 推出去 → 界面上「执行卡住不动」
+- 期间**所有** API 请求排队等待 → 任何按钮点击都像卡死
+
+**实证测量**（发一条 MG100 命令，同时轮询 `/api/health`）：
+
+| 阶段 | 平均 | 最大 | 6 秒内完成请求数 |
+|---|---|---|---|
+| 修复前（空闲） | 15.2 ms | 114 ms | 198 |
+| 修复前（命令中） | 24.7 ms | **2024 ms** | 243 |
+| **修复后（命令中）** | 6.6 ms | **16 ms** | **915** |
+
+2024 ms 恰好等于插件的 `timeout = 2.0`——铁证。
+
+**修复**：新增 `backend/app/core/blocking.py`，提供共享线程池与 `run_blocking()`，
+把同步设备调用移出事件循环。落地位置：
+
+| 文件 | 改动 |
+|---|---|
+| `app/core/blocking.py` | 新增：16 线程的 `BLOCKING_POOL` + `run_blocking()` |
+| `app/communication/__init__.py` | `_run_in_thread()` 改为委托给它，不再另建线程池 |
+| `plugins/mini_gateway100_plugin.py` | `write` / `read` / `reset_input_buffer` / `Serial()` 构造 / `close()` 全部线程化；整帧读取抽成 `_serial_read_frame_sync()` |
+| `plugins/peakcan_plugin.py` | `Bus()` 构造 / `bus.send()` / `bus.shutdown()` 线程化 |
+
+吞吐提升约 **3.8×**，命令期间 P99 延迟从 2 s 降到 16 ms。
+
+### 二、优化：按键卡顿与加载等待
+
+新增 `frontend/src/hooks/usePolling.ts`，替换散落在各页的裸 `setInterval`。解决两个问题：
+
+1. **隐藏页签仍在轮询** —— 切走后各页仍以 2–5 s 频率打后端，白白占用正在跑测试的机器资源
+2. **慢响应会叠加** —— 请求耗时超过间隔时下一个 tick 照常触发，越慢越堵
+
+行为：`document.hidden` 时跳过；上一次请求未结束不发起新的；回到页签立即补一次。
+
+接入 6 处：`Executions`(2s) / `ExecutionPlanner`(2s) / `Logs`(5s) / `DebugTerminal`(5s) /
+`Dashboard` / `CustomDashboard`。
+
+### 三、Issue #23：172 处硬编码色 token 化
+
+静态扫描 `frontend/src`：硬编码十六进制 **207** 处，扣除调色板定义本身
+（`tokens.ts` 29 + `cssVars.ts` 注释），实际需治理 **170** 处，集中在
+`DebugTerminal`(40)、`dashboard/widgets.tsx`(33)、`Dashboard`(16)、`Executions`(13)、
+`CustomDashboard`(11)、`AIChat`(12)、`registry`(8)、`ParsedTrendChart`(8)、`StatusTag`(7)。
+
+**新增应用级语义变量**（`cssVars.ts`，模式相关）：
+
+- 表面：`--app-bg / --app-surface / --app-surface-muted / --app-surface-sunken / --app-hover`
+- 描边：`--app-border / --app-border-strong`
+- 文字：`--app-fg / --app-fg-muted / --app-fg-subtle`
+- 交互：`--app-accent / --app-accent-hover / --app-accent-subtle`
+- 状态：`--app-pass`（仪器蓝）/ `--app-fail`（信号红）/ `--app-warn` / `--app-running`
+- 场景：`--app-code-bg/fg`、`--app-danger-bg`、`--app-bigscreen-bg`、`--app-on-dark`
+- 图表色序：`--app-series-1…8`（由调色板派生，替换 AntD 彩虹盘）
+- 终端：`--term-*`（调试终端**恒为深色**，不随主题翻转，符合串口终端习惯）
+
+语义收敛：
+
+- 绿色 `#52c41a`（PASS / 已连接）→ `--app-pass`（仪器蓝，与 #20 约定一致），**绿色彻底退出**
+- `#ff4d4f` → `--app-fail`；`#faad14`/`#fa8c16` → `--app-warn`；`#1677ff` → `--app-accent`
+- 终端 sent=`--term-sent`(蓝) / received=`--term-recv`(中性) / data=`--term-data`(琥珀)
+- `main.tsx` 的 `colorPrimary` 改为引用 `blue[500]`；`theme/index.tsx` 的 Layout 背景改用 `graphite`
+
+**结果**：`frontend/src` 中除 `theme/tokens.ts`（调色板定义，29 处，应保留）外，
+**硬编码色归零**。
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/` 7 个脚本 | 全 PASS |
+| 端点回归（16 个） | 全通过 |
+| 设备命令期间 `/health` 最大延迟 | **16 ms**（修复前 2024 ms） |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| dev server 新模块 | `DebugTerminal` / `widgets` / `Dashboard` / `cssVars` / `usePolling` 均 200 |
+| 数据完整性 | 用例 89 条、设备 DEV-001~004 完整 |
+
+---
+
 ## 2026-10-17: 工程配置可视化 —— 仪表盘画 layout 图、执行计划展开用例（v0.17.1）
 
 v0.17.0 把工程配置展示出来了，但两段内容与用户心智不匹配，继续优化。

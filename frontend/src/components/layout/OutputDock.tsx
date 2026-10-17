@@ -71,8 +71,8 @@ export default function OutputDock() {
         <Badge
           count={runningCount}
           size="small"
-          color={runningCount > 0 ? '#E8A33D' : 'transparent'}
-          styles={{ indicator: { boxShadow: runningCount > 0 ? '0 0 0 1px #E8A33D' : undefined } }}
+          color={runningCount > 0 ? 'var(--app-running)' : 'transparent'}
+          styles={{ indicator: { boxShadow: runningCount > 0 ? '0 0 0 1px var(--app-running)' : undefined } }}
         >
           <PlayCircleOutlined style={{ fontSize: 16, opacity: 0.85 }} />
         </Badge>

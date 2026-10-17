@@ -12,13 +12,13 @@ import type { ReactNode } from 'react'
 export type StatusKind = 'pass' | 'fail' | 'error' | 'running' | 'warn' | 'idle' | 'skip'
 
 const STATUS_MAP: Record<StatusKind, { color: string; icon: ReactNode; label: string }> = {
-  pass: { color: '#2296C4', icon: <CheckCircleFilled />, label: 'PASS' },
-  fail: { color: '#FF7B72', icon: <CloseCircleFilled />, label: 'FAIL' },
-  error: { color: '#FF7B72', icon: <ExclamationCircleFilled />, label: 'ERROR' },
-  running: { color: '#E8A33D', icon: <LoadingOutlined />, label: 'RUNNING' },
-  warn: { color: '#E8A33D', icon: <ExclamationCircleFilled />, label: 'WARN' },
-  idle: { color: '#7C8894', icon: <ClockCircleFilled />, label: 'IDLE' },
-  skip: { color: '#7C8894', icon: <QuestionCircleFilled />, label: 'SKIP' },
+  pass: { color: 'var(--app-pass)', icon: <CheckCircleFilled />, label: 'PASS' },
+  fail: { color: 'var(--app-fail)', icon: <CloseCircleFilled />, label: 'FAIL' },
+  error: { color: 'var(--app-fail)', icon: <ExclamationCircleFilled />, label: 'ERROR' },
+  running: { color: 'var(--app-warn)', icon: <LoadingOutlined />, label: 'RUNNING' },
+  warn: { color: 'var(--app-warn)', icon: <ExclamationCircleFilled />, label: 'WARN' },
+  idle: { color: 'var(--app-fg-subtle)', icon: <ClockCircleFilled />, label: 'IDLE' },
+  skip: { color: 'var(--app-fg-subtle)', icon: <QuestionCircleFilled />, label: 'SKIP' },
 }
 
 interface Props {

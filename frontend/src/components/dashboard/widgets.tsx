@@ -13,8 +13,8 @@ import { STATUS_COLOR, STATUS_LABEL } from './registry'
 const { Text, Paragraph } = Typography
 
 const TREND_COLORS = [
-  '#1677ff', '#52c41a', '#fa8c16', '#eb2f96',
-  '#722ed1', '#13c2c2', '#f5222d', '#a0d911',
+  'var(--app-series-1)', 'var(--app-series-2)', 'var(--app-series-3)', 'var(--app-series-4)',
+  'var(--app-series-5)', 'var(--app-series-6)', 'var(--app-series-7)', 'var(--app-series-8)',
 ]
 
 export interface WidgetProps {
@@ -31,7 +31,7 @@ export interface WidgetProps {
 
 function StatusTag({ status, big }: { status?: string | null; big?: boolean }) {
   if (!status) return <Tag>无数据</Tag>
-  const color = STATUS_COLOR[status] || '#8c8c8c'
+  const color = STATUS_COLOR[status] || 'var(--app-fg-subtle)'
   return (
     <Tag
       color={color}
@@ -93,7 +93,7 @@ export function ParsedValueWidget({ widget, snapshot, big }: WidgetProps) {
     )
   }
 
-  const color = STATUS_COLOR[latest.status] || '#8c8c8c'
+  const color = STATUS_COLOR[latest.status] || 'var(--app-fg-subtle)'
   const display = latest.num !== null && latest.num !== undefined
     ? fmtNum(latest.num)
     : fmtNum(latest.value)
@@ -119,31 +119,31 @@ export function ParsedValueWidget({ widget, snapshot, big }: WidgetProps) {
       </div>
 
       {latest.detail && (
-        <div style={{ color: '#ff7875', fontSize: big ? 16 : 12 }}>
+        <div style={{ color: 'var(--app-fail)', fontSize: big ? 16 : 12 }}>
           {latest.detail}
         </div>
       )}
 
       <div style={{ marginTop: 'auto', display: 'flex', flexWrap: 'wrap', gap: big ? 20 : 12 }}>
-        <span style={{ fontSize: big ? 16 : 12, color: '#8c8c8c' }}>
+        <span style={{ fontSize: big ? 16 : 12, color: 'var(--app-fg-subtle)' }}>
           最小 {fmtNum(latest.min)}
         </span>
-        <span style={{ fontSize: big ? 16 : 12, color: '#8c8c8c' }}>
+        <span style={{ fontSize: big ? 16 : 12, color: 'var(--app-fg-subtle)' }}>
           最大 {fmtNum(latest.max)}
         </span>
-        <span style={{ fontSize: big ? 16 : 12, color: '#8c8c8c' }}>
+        <span style={{ fontSize: big ? 16 : 12, color: 'var(--app-fg-subtle)' }}>
           均值 {fmtNum(latest.avg)}
         </span>
-        <span style={{ fontSize: big ? 16 : 12, color: '#8c8c8c' }}>
+        <span style={{ fontSize: big ? 16 : 12, color: 'var(--app-fg-subtle)' }}>
           采样 {latest.points}
         </span>
         {latest.fail_count > 0 && (
-          <span style={{ fontSize: big ? 16 : 12, color: '#ff4d4f' }}>
+          <span style={{ fontSize: big ? 16 : 12, color: 'var(--app-fail)' }}>
             FAIL {latest.fail_count} 次
           </span>
         )}
       </div>
-      <div style={{ fontSize: big ? 14 : 11, color: '#bfbfbf' }}>
+      <div style={{ fontSize: big ? 14 : 11, color: 'var(--app-fg-subtle)' }}>
         更新于 {fmtTime(latest.updated_at)}
       </div>
     </div>
@@ -237,7 +237,7 @@ export function TrendChartWidget({ widget, snapshot, big }: WidgetProps) {
     if (cx === undefined || cy === undefined) return null
     const st = payload?.[`__st_${field}`]
     if (showFailDots && st === 'fail') {
-      return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={big ? 5 : 3.5} fill="#ff4d4f" stroke="#fff" strokeWidth={1} />
+      return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={big ? 5 : 3.5} fill="var(--app-fail)" stroke="var(--app-surface)" strokeWidth={1} />
     }
     if (showFailDots && st === 'unknown') return null
     return <circle key={`dot-${cx}-${cy}`} cx={cx} cy={cy} r={big ? 3 : 2} fill={TREND_COLORS[fields.indexOf(field) % TREND_COLORS.length]} />
@@ -260,10 +260,10 @@ export function TrendChartWidget({ widget, snapshot, big }: WidgetProps) {
             />
             <Legend wrapperStyle={{ fontSize: fs }} />
             {minV !== undefined && minV !== null && minV !== '' && (
-              <ReferenceLine y={Number(minV)} stroke="#faad14" strokeDasharray="4 4" />
+              <ReferenceLine y={Number(minV)} stroke="var(--app-warn)" strokeDasharray="4 4" />
             )}
             {maxV !== undefined && maxV !== null && maxV !== '' && (
-              <ReferenceLine y={Number(maxV)} stroke="#faad14" strokeDasharray="4 4" />
+              <ReferenceLine y={Number(maxV)} stroke="var(--app-warn)" strokeDasharray="4 4" />
             )}
             {fields.map((f, i) => (
               <Line
@@ -281,7 +281,7 @@ export function TrendChartWidget({ widget, snapshot, big }: WidgetProps) {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div style={{ fontSize: big ? 14 : 11, color: '#bfbfbf', textAlign: 'right' }}>
+      <div style={{ fontSize: big ? 14 : 11, color: 'var(--app-fg-subtle)', textAlign: 'right' }}>
         共 {rows.length} 个采样点{showFailDots ? ' · 红点 = FAIL 判定' : ''}
       </div>
     </div>
@@ -329,10 +329,10 @@ export function JudgeSummaryWidget({ widget, snapshot, big }: WidgetProps) {
   const columns = [
     { title: '解析字段', dataIndex: 'field', key: 'field', width: big ? 160 : 120 },
     { title: '采样', dataIndex: 'total', key: 'total', width: 70 },
-    { title: 'PASS', dataIndex: 'ok', key: 'ok', width: 70, render: (v: number) => <span style={{ color: '#52c41a' }}>{v}</span> },
+    { title: 'PASS', dataIndex: 'ok', key: 'ok', width: 70, render: (v: number) => <span style={{ color: 'var(--app-pass)' }}>{v}</span> },
     {
       title: 'FAIL', dataIndex: 'fail', key: 'fail', width: 70,
-      render: (v: number) => <span style={{ color: v > 0 ? '#ff4d4f' : undefined }}>{v}</span>,
+      render: (v: number) => <span style={{ color: v > 0 ? 'var(--app-fail)' : undefined }}>{v}</span>,
     },
     { title: '空帧', dataIndex: 'unknown', key: 'unknown', width: 70 },
     {
@@ -353,9 +353,9 @@ export function JudgeSummaryWidget({ widget, snapshot, big }: WidgetProps) {
     <div style={{ height: '100%', overflow: 'auto' }}>
       <div style={{ display: 'flex', gap: big ? 32 : 16, flexWrap: 'wrap', marginBottom: 12 }}>
         <Statistic title="判定总数" value={j.total} valueStyle={{ fontSize: big ? 34 : 24 }} />
-        <Statistic title="PASS" value={j.ok} valueStyle={{ color: '#52c41a', fontSize: big ? 34 : 24 }} />
-        <Statistic title="FAIL" value={j.fail} valueStyle={{ color: '#ff4d4f', fontSize: big ? 34 : 24 }} />
-        <Statistic title="空帧(未判定)" value={j.unknown} valueStyle={{ color: '#8c8c8c', fontSize: big ? 34 : 24 }} />
+        <Statistic title="PASS" value={j.ok} valueStyle={{ color: 'var(--app-pass)', fontSize: big ? 34 : 24 }} />
+        <Statistic title="FAIL" value={j.fail} valueStyle={{ color: 'var(--app-fail)', fontSize: big ? 34 : 24 }} />
+        <Statistic title="空帧(未判定)" value={j.unknown} valueStyle={{ color: 'var(--app-fg-subtle)', fontSize: big ? 34 : 24 }} />
         <div style={{ flex: 1, minWidth: 160, display: 'flex', alignItems: 'center' }}>
           <Progress
             percent={j.pass_rate ?? 0}
@@ -380,7 +380,7 @@ export function JudgeSummaryWidget({ widget, snapshot, big }: WidgetProps) {
           最近 FAIL 判定（{j.failures.length}）
         </Text>
         {j.failures.length === 0 ? (
-          <div style={{ color: '#52c41a', fontSize: big ? 16 : 13, marginTop: 6 }}>
+          <div style={{ color: 'var(--app-pass)', fontSize: big ? 16 : 13, marginTop: 6 }}>
             全部通过，无 FAIL 判定
           </div>
         ) : (
@@ -426,7 +426,7 @@ export function DeviceStatusWidget({ widget, snapshot, big }: WidgetProps) {
   }
   return (
     <div style={{ height: '100%', overflow: 'auto' }}>
-      <div style={{ marginBottom: 8, fontSize: big ? 18 : 13, color: '#8c8c8c' }}>
+      <div style={{ marginBottom: 8, fontSize: big ? 18 : 13, color: 'var(--app-fg-subtle)' }}>
         共 {snapshot?.devices?.total ?? 0} 台，{snapshot?.devices?.connected ?? 0} 台已连接
       </div>
       <List
@@ -460,9 +460,9 @@ export function ExecutionStatsWidget({ widget, snapshot, big }: WidgetProps) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 12 }}>
       <div style={{ display: 'flex', gap: big ? 40 : 24, flexWrap: 'wrap' }}>
         <Statistic title="执行总数" value={e.total} valueStyle={{ fontSize: big ? 36 : 26 }} />
-        <Statistic title="通过" value={e.passed} valueStyle={{ color: '#52c41a', fontSize: big ? 36 : 26 }} />
-        <Statistic title="失败" value={e.failed} valueStyle={{ color: '#ff4d4f', fontSize: big ? 36 : 26 }} />
-        <Statistic title="运行中" value={e.running} valueStyle={{ color: '#1677ff', fontSize: big ? 36 : 26 }} />
+        <Statistic title="通过" value={e.passed} valueStyle={{ color: 'var(--app-pass)', fontSize: big ? 36 : 26 }} />
+        <Statistic title="失败" value={e.failed} valueStyle={{ color: 'var(--app-fail)', fontSize: big ? 36 : 26 }} />
+        <Statistic title="运行中" value={e.running} valueStyle={{ color: 'var(--app-accent)', fontSize: big ? 36 : 26 }} />
       </div>
       <Progress
         percent={e.pass_rate ?? 0}
@@ -471,7 +471,7 @@ export function ExecutionStatsWidget({ widget, snapshot, big }: WidgetProps) {
         format={(p) => `通过率 ${p ?? 0}%`}
       />
       {e.recent?.length > 0 && (
-        <div style={{ fontSize: big ? 15 : 12, color: '#8c8c8c' }}>
+        <div style={{ fontSize: big ? 15 : 12, color: 'var(--app-fg-subtle)' }}>
           最近：{e.recent[0].id?.slice(0, 12)} · {STATUS_LABEL[e.recent[0].status] || e.recent[0].status}
           {' · '}{fmtTime(e.recent[0].created_at)}
         </div>

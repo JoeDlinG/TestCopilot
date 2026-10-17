@@ -126,6 +126,38 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.0.0 — 执行卡死修复 + 响应性能优化 + Issue #23 硬编码色 token 化（2026-10-17，分支 `feature/flow-enhancements`）
+
+**1）修复：执行中的测试突然卡住（P0）**
+- [x] 根因：`MiniGateway100Plugin.send()` 是 `async def` 却在事件循环里直接调 pyserial
+      `write/read`——同步 `read()` 阻塞整个 asyncio 事件循环，进度推不出去、所有 API 排队
+- [x] 实证：发命令时轮询 `/health`，最大延迟 **2024 ms**（= 插件 timeout 2.0s），空闲时仅 114 ms
+- [x] 新增 `app/core/blocking.py`：16 线程 `BLOCKING_POOL` + `run_blocking()`
+- [x] `communication/__init__.py` 的 `_run_in_thread()` 改为委托，不再另建线程池
+- [x] MG100：write / read / reset_input_buffer / Serial() 构造 / close() 全线程化
+- [x] PeakCAN：Bus() 构造 / bus.send() / bus.shutdown() 线程化
+- [x] 效果：命令期间 `/health` 最大延迟 **2024 → 16 ms**，6s 内请求数 243 → **915**（吞吐 ~3.8×）
+
+**2）优化：按键卡顿 / 加载等待**
+- [x] 新增 `frontend/src/hooks/usePolling.ts`：`document.hidden` 时跳过轮询、
+      上一次未结束不发起新的、回到页签立即补一次
+- [x] 接入 6 处：Executions(2s) / ExecutionPlanner(2s) / Logs(5s) / DebugTerminal(5s) /
+      Dashboard / CustomDashboard
+
+**3）Issue #23：172 处硬编码色 token 化**
+- [x] 扫描 207 处，扣除调色板定义 29 处，实际治理 **170 处**
+- [x] 新增应用级语义变量：表面/描边/文字/交互/状态/场景 + 图表色序 `--app-series-1…8`
+      + 终端常量 `--term-*`（调试终端恒深色，不随主题翻转）
+- [x] 绿色 `#52c41a` → `--app-pass`（仪器蓝），**绿色彻底退出**；红/琥珀/蓝各自归位
+- [x] `main.tsx` 的 `colorPrimary` 引用 `blue[500]`；`theme/index.tsx` Layout 背景用 `graphite`
+- [x] **结果：除 `theme/tokens.ts` 外硬编码色归零**
+
+**4）验证**
+- [x] `Test/` 7 个脚本全 PASS；16 个端点全通过
+- [x] `tsc --noEmit` + `npm run build` 通过；dev 可编译 5 个新/改模块
+- [x] 数据完整：用例 89 条、设备 DEV-001~004
+- [x] **Issue #23 已关闭**（24 个弹窗规范部分未做，已在 Issue 中说明）
+
 ### v0.17.1 — 工程配置可视化：仪表盘画 layout 图、执行计划展开用例（2026-10-17，分支 `feature/flow-enhancements`）
 
 - [x] **仪表盘改为 layout 缩略图**：12 列栅格按 `x/y/w/h` 绝对定位，行高 26px，

@@ -391,10 +391,10 @@ export default function ModelConfig() {
                   display: 'flex',
                   gap: 8,
                   padding: '10px 0',
-                  borderBottom: '1px solid #f0f0f0',
+                  borderBottom: '1px solid var(--app-border)',
                 }}
               >
-                <div style={{ fontWeight: 600, color: msg.role === 'assistant' ? '#1677ff' : '#52c41a' }}>
+                <div style={{ fontWeight: 600, color: msg.role === 'assistant' ? 'var(--app-accent)' : 'var(--app-pass)' }}>
                   {msg.role === 'assistant' ? 'AI' : '我'}
                 </div>
                 <div style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{msg.content}</div>

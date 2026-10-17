@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ConfigProvider, theme } from 'antd'
-import { antdTokens, type ThemeMode } from './tokens'
+import { antdTokens, graphite, type ThemeMode } from './tokens'
 import { cssVars } from './cssVars'
 
 export { primitives, semantic, componentTokens, graphite, blue, amber, red } from './tokens'
@@ -63,8 +63,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             // The redesign targets a dense, instrument-like UI.
             Table: { cellPaddingBlock: 8, cellPaddingInline: 12 },
             Layout: {
-              siderBg: mode === 'dark' ? '#151A1F' : '#FFFFFF',
-              headerBg: mode === 'dark' ? '#151A1F' : '#FFFFFF',
+              siderBg: mode === 'dark' ? graphite[900] : graphite[0],
+              headerBg: mode === 'dark' ? graphite[900] : graphite[0],
             },
           },
         }}

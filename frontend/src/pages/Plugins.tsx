@@ -224,7 +224,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
 
       <Card style={{ marginBottom: 16 }}>
         <Text strong>如何创建自定义协议插件？</Text>
-        <div style={{ marginTop: 8, color: '#666' }}>
+        <div style={{ marginTop: 8, color: 'var(--app-fg-subtle)' }}>
           <p>
             1. 创建一个 Python 文件，继承 <code>BaseProtocolPlugin</code>
           </p>

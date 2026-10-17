@@ -417,7 +417,7 @@ export default function Devices() {
           </Form.Item>
           {commandResponse && (
             <Form.Item label="响应">
-              <Card size="small" style={{ background: '#f5f5f5' }}>
+              <Card size="small" style={{ background: 'var(--app-surface-sunken)' }}>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{commandResponse}</pre>
               </Card>
             </Form.Item>
@@ -434,7 +434,7 @@ export default function Devices() {
         width={700}
       >
         {discoveredDevices.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
+          <div style={{ textAlign: 'center', padding: 24, color: 'var(--app-fg-subtle)' }}>
             未发现已连接的硬件设备。请确保设备已通过 USB/串口连接。
             <br />
             <small>如果设备已连接但未显示，可能需要安装或加载内核驱动（如 cdc_acm）。</small>

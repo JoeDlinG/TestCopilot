@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Select,
   DatePicker, Input, Row, Col, Empty
@@ -55,10 +56,8 @@ export default function Logs() {
   useEffect(() => { loadLogs() }, [filters])
 
   // Auto-refresh every 5s so the terminal shows live traffic during tests
-  useEffect(() => {
-    const timer = setInterval(() => loadLogs(true), 5000)
-    return () => clearInterval(timer)
-  }, [filters])
+  // (pauses while the tab is hidden, and never stacks requests).
+  usePolling(() => loadLogs(true), 5000)
 
   const handleExportCSV = async () => {
     try {

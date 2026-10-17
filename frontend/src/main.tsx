@@ -4,7 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { ConfigProvider, theme } from 'antd'
 import App from './App'
 import { LanguageProvider } from './i18n'
-import { ThemeProvider } from './theme'
+import { ThemeProvider, blue } from './theme'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -17,7 +17,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         theme={{
           algorithm: theme.defaultAlgorithm,
           token: {
-            colorPrimary: '#1677ff',
+            colorPrimary: blue[500],
             borderRadius: 6,
           },
         }}

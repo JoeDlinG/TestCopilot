@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Button, Space, Select, Drawer, Card, Typography, message, Spin, Empty,
   InputNumber, Popconfirm, Upload, Tag, Divider,
@@ -126,14 +127,10 @@ export default function CustomDashboard() {
 
   // auto refresh
   const refreshSec = Number(current?.data_source?.refresh_sec) || 10
-  useEffect(() => {
-    if (!current) return
-    const timer = window.setInterval(() => {
-      loadSnapshot()
-      loadLogs()
-    }, Math.max(2, refreshSec) * 1000)
-    return () => window.clearInterval(timer)
-  }, [current?.id, refreshSec, loadSnapshot, loadLogs])
+  usePolling(() => {
+    loadSnapshot()
+    loadLogs()
+  }, Math.max(2, refreshSec) * 1000, !!current)
 
   // ---- real-time: subscribe to running executions via WebSocket ----
   const liveRefresh = useCallback(() => {
@@ -325,8 +322,8 @@ export default function CustomDashboard() {
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
-          background: bigMode ? 'rgba(255,255,255,0.06)' : '#fff',
-          border: `1px solid ${bigMode ? 'rgba(255,255,255,0.12)' : (borderColor || '#f0f0f0')}`,
+          background: bigMode ? 'rgba(255,255,255,0.06)' : 'var(--app-surface)',
+          border: `1px solid ${bigMode ? 'rgba(255,255,255,0.12)' : (borderColor || 'var(--app-border)')}`,
           borderLeft: borderColor ? `4px solid ${borderColor}` : undefined,
           borderRadius: 8,
           overflow: 'hidden',
@@ -336,9 +333,9 @@ export default function CustomDashboard() {
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: bigMode ? '10px 16px' : '6px 10px',
-            borderBottom: `1px solid ${bigMode ? 'rgba(255,255,255,0.10)' : '#f0f0f0'}`,
+            borderBottom: `1px solid ${bigMode ? 'rgba(255,255,255,0.10)' : 'var(--app-border)'}`,
             cursor: editMode && !bigMode ? 'move' : 'default',
-            background: bigMode ? 'rgba(255,255,255,0.04)' : '#fafafa',
+            background: bigMode ? 'rgba(255,255,255,0.04)' : 'var(--app-surface-muted)',
             flexShrink: 0,
           }}
         >
@@ -349,11 +346,11 @@ export default function CustomDashboard() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               fontWeight: 600, fontSize: bigMode ? 20 : 14,
-              color: bigMode ? '#fff' : undefined,
+              color: bigMode ? 'var(--app-surface)' : undefined,
               flex: 1, minWidth: 0,
             }}
           >
-            {editMode && !bigMode && <DragOutlined style={{ color: '#bfbfbf', flexShrink: 0 }} />}
+            {editMode && !bigMode && <DragOutlined style={{ color: 'var(--app-fg-subtle)', flexShrink: 0 }} />}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {w.title}
             </span>
@@ -370,7 +367,7 @@ export default function CustomDashboard() {
             </Space>
           )}
         </div>
-        <div style={{ flex: 1, minHeight: 0, padding: bigMode ? 16 : 10, overflow: 'auto', color: bigMode ? '#fff' : undefined }}>
+        <div style={{ flex: 1, minHeight: 0, padding: bigMode ? 16 : 10, overflow: 'auto', color: bigMode ? 'var(--app-surface)' : undefined }}>
           <WidgetBody
             widget={w}
             snapshot={snapshot}
@@ -390,7 +387,7 @@ export default function CustomDashboard() {
         className="big-dash"
         style={{
           position: 'fixed', inset: 0, zIndex: 1200,
-          background: '#0b1a2b', color: '#fff', padding: 24,
+          background: 'var(--app-bigscreen-bg)', color: 'var(--app-on-dark)', padding: 24,
           display: 'flex', flexDirection: 'column', overflow: 'auto',
         }}
       >
@@ -414,7 +411,7 @@ export default function CustomDashboard() {
           </Space>
         </div>
         {widgetsOf.length === 0 ? (
-          <Empty description="该仪表盘还没有组件" style={{ marginTop: 80, color: '#fff' }} />
+          <Empty description="该仪表盘还没有组件" style={{ marginTop: 80, color: 'var(--app-on-dark)' }} />
         ) : (
           <div style={{
             display: 'grid', gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
@@ -441,7 +438,7 @@ export default function CustomDashboard() {
     <div className="page-container">
       <style>{`
         .react-grid-item.react-grid-placeholder {
-          background: #1677ff; opacity: .18; border-radius: 8px;
+          background: var(--app-accent); opacity: .18; border-radius: 8px;
         }
         .widget-drag-handle { user-select: none; }
       `}</style>
@@ -685,7 +682,7 @@ export default function CustomDashboard() {
                     {m.label}
                     {m.needsTestCase && <Tag color="orange" style={{ marginLeft: 6 }}>需用例</Tag>}
                   </div>
-                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>{m.desc}</div>
+                  <div style={{ color: 'var(--app-fg-subtle)', fontSize: 12 }}>{m.desc}</div>
                 </div>
               </Space>
             </Card>

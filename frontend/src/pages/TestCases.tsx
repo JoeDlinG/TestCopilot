@@ -303,7 +303,7 @@ export default function TestCases() {
                 {(n?.config?.parsers || []).length > 0 && (
                   <Badge
                     count={(n.config.parsers || []).length}
-                    style={{ marginLeft: 4, backgroundColor: '#722ed1' }}
+                    style={{ marginLeft: 4, backgroundColor: 'var(--app-series-5)' }}
                   />
                 )}
               </Button>
@@ -662,7 +662,7 @@ export default function TestCases() {
           </Form.Item>
         </Form>
         {renaming && (
-          <div style={{ color: '#888', fontSize: 12 }}>
+          <div style={{ color: 'var(--app-fg-muted)', fontSize: 12 }}>
             当前名称：{renaming.name}（ID {renaming.id}）
           </div>
         )}

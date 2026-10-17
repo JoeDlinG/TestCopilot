@@ -44,6 +44,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.blocking import run_blocking
 from app.services.plugin_service import BaseProtocolPlugin
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,9 @@ class PeakCANPlugin(BaseProtocolPlugin):
                     bus_kwargs["f_clock_mhz"] = int(f_clock)
 
             try:
-                self._bus = can.interface.Bus(**bus_kwargs)
+                # python-can is synchronous; opening the channel must not block
+                # the event loop (see app.core.blocking).
+                self._bus = await run_blocking(can.interface.Bus, **bus_kwargs)
             except Exception as e:  # noqa: BLE001 — never leak a raw OS error
                 self._bus = None
                 reason = self._explain(e, iface)
@@ -533,7 +536,7 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 self._notifier.stop()
                 self._notifier = None
             if self._bus:
-                self._bus.shutdown()
+                await run_blocking(self._bus.shutdown)
                 self._bus = None
         except Exception as e:
             logger.warning(f"Error during PeakCAN disconnect: {e}")
@@ -598,7 +601,7 @@ class PeakCANPlugin(BaseProtocolPlugin):
         msg = self._build_message(data)
 
         try:
-            self._bus.send(msg)
+            await run_blocking(self._bus.send, msg)
             logger.debug(f"PeakCAN TX: id=0x{msg.arbitration_id:X}, data={msg.data.hex()}")
             return {
                 "status": "sent",
