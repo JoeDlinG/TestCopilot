@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Card, Button, Space, Modal, Form, Input, Checkbox, Radio,
   Tag, Typography, message, Popconfirm, Alert, Upload, Divider, Empty,
-  Steps, Tooltip, Tree,
+  Steps, Tooltip, Tree, Collapse,
 } from 'antd'
 import { DataTable } from '../components/ui'
 import {
@@ -101,6 +101,210 @@ function parseTreeKey(key: string): { name: string; section: string | null } {
   if (key.startsWith('p:')) return { name: key.slice(2), section: null }
   const [, name, section] = key.split(':')
   return { name, section: section ?? null }
+}
+
+// --------------------------------------------------------------------------- //
+// 仪表盘：渲染 layout 缩略图，而不是摊开一堆参数
+// --------------------------------------------------------------------------- //
+
+const WIDGET_TYPE_LABEL: Record<string, string> = {
+  parsed_value: '解析值',
+  trend_chart: '趋势图',
+  judge_summary: '判定汇总',
+  execution_stats: '执行统计',
+  device_status: '设备状态',
+  comm_log: '通信日志',
+}
+
+/** Grid row height in px for the miniature — small enough to scan, big enough to read. */
+const LAYOUT_UNIT = 26
+const LAYOUT_COLS = 12
+
+/**
+ * Draw a dashboard's ``layout`` as a scaled-down diagram.
+ *
+ * The raw layout is a 12-column react-grid-layout array — readable only to
+ * whoever wrote it. Rendering the actual arrangement answers "what does this
+ * dashboard look like?" at a glance; the JSON stays available under a collapse
+ * for anyone who does need the numbers.
+ */
+function DashboardPreview({ dashboard }: { dashboard: any }) {
+  const layout: any[] = dashboard?.layout || []
+  const widgets: any[] = dashboard?.widgets || []
+  const byId = new Map(widgets.map((w) => [w.id, w]))
+
+  if (layout.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="该仪表盘没有布局数据"
+        style={{ padding: '12px 0', margin: 0 }}
+      />
+    )
+  }
+
+  const totalRows = layout.reduce((n, l) => Math.max(n, (l.y || 0) + (l.h || 1)), 0)
+
+  return (
+    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+      <div
+        style={{
+          position: 'relative',
+          height: totalRows * LAYOUT_UNIT + 8,
+          background: 'var(--flow-canvas-bg)',
+          border: '1px solid var(--flow-border)',
+          borderRadius: 6,
+          padding: 4,
+        }}
+      >
+        {layout.map((l) => {
+          const w = byId.get(l.i)
+          return (
+            <div
+              key={l.i}
+              title={w?.title || l.i}
+              style={{
+                position: 'absolute',
+                left: `calc(${((l.x || 0) / LAYOUT_COLS) * 100}% + 3px)`,
+                width: `calc(${((l.w || 1) / LAYOUT_COLS) * 100}% - 6px)`,
+                top: (l.y || 0) * LAYOUT_UNIT + 4,
+                height: (l.h || 1) * LAYOUT_UNIT - 6,
+                boxSizing: 'border-box',
+                background: 'var(--flow-badge-bg)',
+                border: '1px solid var(--flow-badge-border)',
+                borderRadius: 4,
+                color: 'var(--flow-badge-fg)',
+                padding: '2px 6px',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
+              <Text strong style={{ fontSize: 11, lineHeight: 1.2 }} ellipsis>
+                {w?.title || l.i}
+              </Text>
+              <Text style={{ fontSize: 10, opacity: 0.75, lineHeight: 1.2 }} ellipsis>
+                {WIDGET_TYPE_LABEL[w?.type] || w?.type || '挂件'}
+              </Text>
+            </div>
+          )
+        })}
+      </div>
+      <Collapse
+        ghost
+        size="small"
+        items={[{
+          key: 'raw',
+          label: <Text type="secondary" style={{ fontSize: 12 }}>查看原始参数</Text>,
+          children: (
+            <pre style={{
+              margin: 0, fontSize: 11, maxHeight: 220, overflow: 'auto',
+              background: 'var(--flow-code-bg)', color: 'var(--flow-code-fg)',
+              padding: 10, borderRadius: 6,
+            }}>
+              {JSON.stringify({ layout, widgets }, null, 2)}
+            </pre>
+          ),
+        }]}
+      />
+    </Space>
+  )
+}
+
+// --------------------------------------------------------------------------- //
+// 执行管理器：展开计划项并显示其测试用例
+// --------------------------------------------------------------------------- //
+
+const ON_ERROR_LABEL: Record<string, string> = {
+  abort_all: '中止全部',
+  continue: '继续',
+  skip_group: '跳过本组',
+}
+
+/**
+ * A plan row on its own only says "循环 1 次、最大并行 4" — the useful part is
+ * *which test cases run in which group*, so items are listed inline with their
+ * case name resolved from the bundle's own test-case section.
+ */
+function PlanPreview({
+  plan,
+  caseNames,
+  deviceNames,
+}: {
+  plan: any
+  caseNames: Record<string, string>
+  deviceNames: Record<string, string>
+}) {
+  const items: any[] = plan?.items || []
+
+  const columns = [
+    {
+      title: '组', dataIndex: 'group_no', key: 'group_no', width: 70,
+      render: (g: number) => <Tag>{g ?? '-'}</Tag>,
+    },
+    {
+      title: '序', dataIndex: 'seq', key: 'seq', width: 56,
+    },
+    {
+      title: '测试用例', dataIndex: 'testcase_id', key: 'testcase_id', width: 240,
+      render: (id: string) => (
+        <span title={id}>{caseNames[id] || <Text type="secondary">{id || '-'}</Text>}</span>
+      ),
+    },
+    {
+      title: '循环', dataIndex: 'loop_count', key: 'loop_count', width: 70,
+    },
+    {
+      title: '前置延时', dataIndex: 'delay_before_ms', key: 'delay_before_ms', width: 90,
+      render: (v: number) => (v ? `${v} ms` : '-'),
+    },
+    {
+      title: '后置延时', dataIndex: 'delay_after_ms', key: 'delay_after_ms', width: 90,
+      render: (v: number) => (v ? `${v} ms` : '-'),
+    },
+    {
+      title: '设备', dataIndex: 'resolved_device_ids', key: 'resolved_device_ids', width: 180,
+      render: (ids: string[]) => {
+        if (!ids || ids.length === 0) return <Text type="secondary">自动推断</Text>
+        return (
+          <span title={ids.join(', ')}>
+            {ids.map((d) => deviceNames[d] || d).join('、')}
+          </span>
+        )
+      },
+    },
+    {
+      title: '节点数', dataIndex: 'node_count', key: 'node_count', width: 80,
+    },
+  ]
+
+  return (
+    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+      <Space size={[6, 4]} wrap>
+        <Tag color="processing">整体循环 {plan?.plan_loop_count ?? 1} 次</Tag>
+        <Tag>最大并行 {plan?.max_parallel ?? '-'}</Tag>
+        <Tag>出错时：{ON_ERROR_LABEL[plan?.on_error] || plan?.on_error || '-'}</Tag>
+        <Tag>计划项 {items.length}</Tag>
+      </Space>
+      {items.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="该计划还没有计划项"
+          style={{ padding: '12px 0', margin: 0 }}
+        />
+      ) : (
+        <DataTable
+          rowKey="id"
+          size="small"
+          dataSource={items}
+          columns={columns}
+          pagination={false}
+          scroll={{ x: 880 }}
+        />
+      )}
+    </Space>
+  )
 }
 
 export default function ProjectManager() {
@@ -371,6 +575,19 @@ export default function ProjectManager() {
   const visibleSections = PROJECT_SECTIONS.filter(
     (s) => !activeSection || s.key === activeSection,
   )
+
+  // 计划项只存 testcase_id / device_id，展示前先从同一份 bundle 里把名字解析出来。
+  const caseNames = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const tc of detail?.data?.test_cases || []) m[tc.id] = tc.name
+    return m
+  }, [detail])
+
+  const deviceNames = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const d of detail?.data?.devices || []) m[d.id] = d.name || d.device_key || d.id
+    return m
+  }, [detail])
 
   // Open on the most recent project so the page is useful straight away
   // instead of showing an empty pane until the user clicks.
@@ -660,7 +877,54 @@ export default function ProjectManager() {
                       title={`${s.label}（${rows.length}）`}
                       style={{ marginBottom: 12 }}
                     >
-                      <SectionTable rows={rows} />
+                      {/* 仪表盘摊开参数没人看得懂，直接画 layout 缩略图 */}
+                      {s.key === 'dashboards' ? (
+                        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                          {rows.map((d: any) => (
+                            <div key={d.id}>
+                              <Text strong style={{ fontSize: 13 }}>{d.name}</Text>
+                              {d.is_default && <Tag color="processing" style={{ marginLeft: 6 }}>默认</Tag>}
+                              {d.description && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>{d.description}</Text>
+                                </div>
+                              )}
+                              <div style={{ marginTop: 8 }}>
+                                <DashboardPreview dashboard={d} />
+                              </div>
+                            </div>
+                          ))}
+                          {rows.length === 0 && (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该配置段无数据" />
+                          )}
+                        </Space>
+                      ) : s.key === 'execution_plans' ? (
+                        /* 计划本身信息太少，展开计划项并解析出测试用例名称 */
+                        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                          {rows.map((p: any) => (
+                            <div key={p.id}>
+                              <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
+                              {p.description && (
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>{p.description}</Text>
+                                </div>
+                              )}
+                              <div style={{ marginTop: 8 }}>
+                                <PlanPreview
+                                  plan={p}
+                                  caseNames={caseNames}
+                                  deviceNames={deviceNames}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                          {rows.length === 0 && (
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该配置段无数据" />
+                          )}
+                        </Space>
+                      ) : (
+                        <SectionTable rows={rows} />
+                      )}
                     </Card>
                   )
                 })
