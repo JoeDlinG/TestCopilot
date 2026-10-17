@@ -22,7 +22,7 @@ def _bundled_dir(name: str) -> str:
 
 class Settings(BaseSettings):
     APP_NAME: str = "AITestLab"
-    APP_VERSION: str = "0.16.1"
+    APP_VERSION: str = "0.17.0"
     DEBUG: bool = True
 
     # Database

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Card, Table, Button, Space, Modal, Form, Input, Checkbox, Radio,
+  Card, Button, Space, Modal, Form, Input, Checkbox, Radio,
   Tag, Typography, message, Popconfirm, Alert, Upload, Divider, Empty,
-  Steps, Tooltip,
+  Steps, Tooltip, Tree,
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   DownloadOutlined, UploadOutlined,   SaveOutlined, EditOutlined,
   DeleteOutlined, SyncOutlined, ImportOutlined, FileTextOutlined,
@@ -28,6 +29,80 @@ interface ProjectRow {
   error?: string | null
 }
 
+// --------------------------------------------------------------------------- //
+// 工程配置预览
+// --------------------------------------------------------------------------- //
+
+/** Never surface credentials, even though the bundle already strips them. */
+const HIDDEN_KEYS = new Set([
+  'api_key_encrypted', 'api_key', 'password', 'secret', 'token',
+])
+
+function Cell({ value }: { value: any }) {
+  if (value === null || value === undefined || value === '') {
+    return <Text type="secondary">-</Text>
+  }
+  if (typeof value === 'boolean') return <span>{value ? '是' : '否'}</span>
+  const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  const shown = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
+  return <span title={raw} style={{ fontSize: 12 }}>{shown}</span>
+}
+
+/**
+ * Render one configuration section without knowing its schema up front.
+ *
+ * Bundles are heterogeneous — a device row and a test-case row share almost no
+ * fields — so columns are derived from the first rows and long values are
+ * truncated with the full text kept in the tooltip.
+ */
+function SectionTable({ rows }: { rows: any[] }) {
+  const list = (rows || []).filter((r) => r && typeof r === 'object')
+  if (list.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="该配置段无数据"
+        style={{ padding: '16px 0', margin: 0 }}
+      />
+    )
+  }
+
+  const keys: string[] = []
+  for (const row of list.slice(0, 30)) {
+    for (const k of Object.keys(row)) {
+      if (HIDDEN_KEYS.has(k) || keys.includes(k) || keys.length >= 8) continue
+      keys.push(k)
+    }
+  }
+
+  const columns = keys.map((k, i) => ({
+    title: k,
+    dataIndex: k,
+    key: k,
+    width: i === 0 ? 200 : 170,
+    ellipsis: true,
+    render: (v: any) => <Cell value={v} />,
+  }))
+
+  return (
+    <DataTable
+      rowKey="_idx"
+      size="small"
+      dataSource={list.slice(0, 200).map((r, i) => ({ ...r, _idx: i }))}
+      columns={columns}
+      scroll={{ x: keys.length * 180, y: 340 }}
+      pagination={list.length > 20 ? { pageSize: 20, simple: true } : false}
+    />
+  )
+}
+
+/** Split a tree key: ``p:<name>`` for a project, ``s:<name>:<section>`` for a section. */
+function parseTreeKey(key: string): { name: string; section: string | null } {
+  if (key.startsWith('p:')) return { name: key.slice(2), section: null }
+  const [, name, section] = key.split(':')
+  return { name, section: section ?? null }
+}
+
 export default function ProjectManager() {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -48,6 +123,12 @@ export default function ProjectManager() {
   )
   const [importResult, setImportResult] = useState<any>(null)
   const [busy, setBusy] = useState<string>('')
+  // ---- 工程树 + 配置预览 ----
+  const [selected, setSelected] = useState('')
+  const [expanded, setExpanded] = useState<string[]>([])
+  const [detail, setDetail] = useState<any>(null)
+  const [detailName, setDetailName] = useState('')
+  const [detailLoading, setDetailLoading] = useState(false)
 
   const [saveForm] = Form.useForm()
   const [renameForm] = Form.useForm()
@@ -258,99 +339,78 @@ export default function ProjectManager() {
     try {
       await projectAPI.remove(row.name)
       message.success('已删除')
+      if (detailName === row.name) {
+        setDetail(null)
+        setDetailName('')
+        setSelected('')
+      }
       load()
     } catch (err) {
       handleApiError(err, '删除失败')
     }
   }
 
-  const columns = [
-    {
-      title: '工程名称',
-      dataIndex: 'name',
-      key: 'name',
-      render: (name: string, row: ProjectRow) => (
-        <Space direction="vertical" size={0}>
-          <Space>
-            <FileTextOutlined />
-            <Text strong>{name}</Text>
-            {row.app_version && <Tag color="blue">v{row.app_version}</Tag>}
-            {row.error && <Tag color="red">损坏</Tag>}
-          </Space>
-          <Text type="secondary" style={{ fontSize: 12 }}>{row.file_name}</Text>
+  // ---- 工程树：选中后主页面展示该工程的全部配置 ----
+
+  const loadDetail = async (name: string) => {
+    setDetailLoading(true)
+    setDetailName(name)
+    try {
+      const res = await projectAPI.get(name)
+      setDetail(extractData(res, null))
+    } catch (err) {
+      handleApiError(err, '读取工程失败')
+      setDetail(null)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const activeRow = projects.find((p) => p.name === detailName) || null
+  const activeSection = selected ? parseTreeKey(selected).section : null
+  const visibleSections = PROJECT_SECTIONS.filter(
+    (s) => !activeSection || s.key === activeSection,
+  )
+
+  // Open on the most recent project so the page is useful straight away
+  // instead of showing an empty pane until the user clicks.
+  useEffect(() => {
+    if (projects.length === 0 || detailName) return
+    const first = projects[0].name
+    setSelected(`p:${first}`)
+    setExpanded([`p:${first}`])
+    loadDetail(first)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, detailName])
+
+  const treeData = projects.map((p) => {
+    const total = PROJECT_SECTIONS.reduce((n, s) => n + (p.counts?.[s.key] ?? 0), 0)
+    return {
+      key: `p:${p.name}`,
+      title: (
+        <Space size={4}>
+          <FileTextOutlined />
+          <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
+          {p.app_version && <Tag color="processing" style={{ fontSize: 10 }}>v{p.app_version}</Tag>}
+          {p.error && <Tag color="red">损坏</Tag>}
+          <Text type="secondary" style={{ fontSize: 11 }}>{total} 项</Text>
         </Space>
       ),
-    },
-    {
-      title: '包含配置',
-      key: 'counts',
-      render: (_: any, row: ProjectRow) => (
-        <Space size={[4, 4]} wrap>
-          {PROJECT_SECTIONS.filter((s) => (row.counts?.[s.key] ?? 0) > 0).map((s) => (
-            <Tag key={s.key}>{s.label} {row.counts[s.key]}</Tag>
-          ))}
-          {Object.keys(row.counts || {}).length === 0 && <Text type="secondary">—</Text>}
-        </Space>
-      ),
-    },
-    {
-      title: '大小 / 更新时间',
-      key: 'meta',
-      width: 180,
-      render: (_: any, row: ProjectRow) => (
-        <Space direction="vertical" size={0}>
-          <Text style={{ fontSize: 12 }}>{(row.size / 1024).toFixed(1)} KB</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {row.exported_at ? new Date(row.exported_at).toLocaleString('zh-CN') : '-'}
-          </Text>
-        </Space>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 300,
-      render: (_: any, row: ProjectRow) => (
-        <Space size="small" wrap>
-          <Button
-            size="small" icon={<ImportOutlined />}
-            loading={busy === 'import'}
-            disabled={!!row.error}
-            onClick={() => handleImportSaved(row)}
-          >
-            {t('common.import')}
-          </Button>
-          <Button
-            size="small" icon={<DownloadOutlined />}
-            disabled={!!row.error}
-            onClick={() => handleDownloadSaved(row)}
-          >
-            {t('common.download')}
-          </Button>
-          <Button
-            size="small" icon={<SyncOutlined />}
-            loading={busy === 'sync:' + row.name}
-            onClick={() => handleSync(row)}
-          >
-            {t('common.overwrite')}
-          </Button>
-          <Button
-            size="small" icon={<EditOutlined />}
-            onClick={() => {
-              renamingRef.current = row.name
-              renameForm.setFieldsValue({ new_name: row.name })
-              setRenameOpen(true)
-            }}
-          >
-            {t('common.rename')}
-          </Button>
-          <Popconfirm title={`删除工程「${row.name}」？`} onConfirm={() => handleDelete(row)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ]
+      children: PROJECT_SECTIONS.map((s) => {
+        const n = p.counts?.[s.key] ?? 0
+        return {
+          key: `s:${p.name}:${s.key}`,
+          title: (
+            <Space size={4}>
+              <Text style={{ fontSize: 12, opacity: n ? 1 : 0.45 }}>{s.label}</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>{n}</Text>
+            </Space>
+          ),
+        }
+      }),
+    }
+  })
+
 
   return (
     <div className="page-container">
@@ -464,22 +524,165 @@ export default function ProjectManager() {
         </Card>
       )}
 
-      <Card title={t('project.saved')}>
-        <Table
-          rowKey="name"
-          loading={loading}
-          dataSource={projects}
-          columns={columns}
-          pagination={false}
-          locale={{
-            emptyText: (
-              <Empty description="还没有保存的工程文件，点击「另存为工程」创建">
-                <Button type="primary" onClick={() => setSaveOpen(true)}>另存为工程</Button>
-              </Empty>
-            ),
-          }}
-        />
-      </Card>
+      {/* ---- 工程树（左） + 工程配置（右） ----
+           点工程名 → 主页面展示该工程全部配置；展开后可点单个配置段只看该段。 */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Card
+          title={t('project.saved')}
+          size="small"
+          style={{ width: 300, flex: '0 0 300px' }}
+          styles={{ body: { padding: '8px 12px', maxHeight: 'calc(100vh - 220px)', overflow: 'auto' } }}
+        >
+          {projects.length === 0 ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="还没有保存的工程文件"
+              style={{ padding: '16px 0' }}
+            >
+              <Button type="primary" onClick={() => setSaveOpen(true)}>另存为工程</Button>
+            </Empty>
+          ) : (
+            <Tree
+              blockNode
+              treeData={treeData}
+              expandedKeys={expanded}
+              onExpand={(keys) => setExpanded(keys as string[])}
+              selectedKeys={selected ? [selected] : []}
+              onSelect={(keys) => {
+                const key = String(keys[0] || '')
+                if (!key) {
+                  setSelected('')
+                  return
+                }
+                setSelected(key)
+                const { name } = parseTreeKey(key)
+                if (name !== detailName) loadDetail(name)
+              }}
+            />
+          )}
+        </Card>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {activeRow ? (
+            <Card
+              size="small"
+              loading={detailLoading}
+              title={(
+                <Space size={6} wrap>
+                  <FileTextOutlined />
+                  <Text strong>{activeRow.name}</Text>
+                  {activeRow.app_version && <Tag color="processing">v{activeRow.app_version}</Tag>}
+                  {activeSection && (
+                    <Tag>
+                      {PROJECT_SECTIONS.find((s) => s.key === activeSection)?.label || activeSection}
+                    </Tag>
+                  )}
+                </Space>
+              )}
+              extra={(
+                <Space wrap size={4}>
+                  <Button
+                    size="small" icon={<ImportOutlined />}
+                    disabled={!!activeRow.error}
+                    onClick={() => handleImportSaved(activeRow)}
+                  >
+                    {t('common.import')}
+                  </Button>
+                  <Button
+                    size="small" icon={<DownloadOutlined />}
+                    onClick={() => handleDownloadSaved(activeRow)}
+                  >
+                    {t('common.download')}
+                  </Button>
+                  <Button
+                    size="small" icon={<SyncOutlined />}
+                    loading={busy === 'sync:' + activeRow.name}
+                    onClick={() => handleSync(activeRow)}
+                  >
+                    覆盖同步
+                  </Button>
+                  <Button
+                    size="small" icon={<EditOutlined />}
+                    onClick={() => {
+                      renamingRef.current = activeRow.name
+                      setRenameOpen(true)
+                    }}
+                  >
+                    {t('common.rename')}
+                  </Button>
+                  <Popconfirm
+                    title={`删除工程「${activeRow.name}」？`}
+                    onConfirm={() => handleDelete(activeRow)}
+                  >
+                    <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
+                  </Popconfirm>
+                </Space>
+              )}
+            >
+              <Space direction="vertical" size={2} style={{ marginBottom: 12 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {activeRow.file_name} · {(activeRow.size / 1024).toFixed(1)} KB
+                  {activeRow.exported_at
+                    && ` · 导出于 ${new Date(activeRow.exported_at).toLocaleString('zh-CN')}`}
+                </Text>
+                {activeRow.error && <Alert type="error" showIcon message={activeRow.error} />}
+              </Space>
+
+              {detail && (
+                <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
+                  {PROJECT_SECTIONS.map((s) => {
+                    const n = detail?.data?.[s.key]?.length ?? activeRow.counts?.[s.key] ?? 0
+                    return (
+                      <Tag
+                        key={s.key}
+                        color={n > 0 ? 'processing' : 'default'}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          setSelected(`s:${activeRow.name}:${s.key}`)
+                          setExpanded((ks) => Array.from(new Set([...ks, `p:${activeRow.name}`])))
+                        }}
+                      >
+                        {s.label} {n}
+                      </Tag>
+                    )
+                  })}
+                </Space>
+              )}
+
+              {detail ? (
+                visibleSections.map((s) => {
+                  const rows = detail?.data?.[s.key] || []
+                  return (
+                    <Card
+                      key={s.key}
+                      type="inner"
+                      size="small"
+                      title={`${s.label}（${rows.length}）`}
+                      style={{ marginBottom: 12 }}
+                    >
+                      <SectionTable rows={rows} />
+                    </Card>
+                  )
+                })
+              ) : (
+                !detailLoading && (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="无法读取该工程的配置"
+                  />
+                )
+              )}
+            </Card>
+          ) : (
+            <Card size="small">
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="从左侧选择一个工程，查看它的全部配置"
+              />
+            </Card>
+          )}
+        </div>
+      </div>
 
       <Modal
         title={t('project.saveAs')}
