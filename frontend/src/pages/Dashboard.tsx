@@ -6,7 +6,7 @@ import {
   Tooltip, Select, Progress,
 } from 'antd'
 import {
-  ApiOutlined, ExperimentOutlined, PlayCircleOutlined,
+  ApiOutlined, DiffOutlined, PlayCircleOutlined,
   CheckCircleOutlined, CloseCircleOutlined, SyncOutlined,
   PlusOutlined, RobotOutlined, FullscreenOutlined, FullscreenExitOutlined,
   ReloadOutlined,
@@ -234,7 +234,7 @@ export default function Dashboard() {
               '测试用例',
               stats.testCases,
               '已创建的用例数',
-              <ExperimentOutlined />, '#52c41a',
+              <DiffOutlined />, '#52c41a',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
@@ -337,7 +337,7 @@ export default function Dashboard() {
             <Statistic
               title="测试用例"
               value={stats.testCases}
-              prefix={<ExperimentOutlined />}
+              prefix={<DiffOutlined />}
             />
           </Card>
         </Col>
@@ -397,7 +397,7 @@ export default function Dashboard() {
                 AI 生成测试用例
               </Button>
               <Button
-                icon={<ExperimentOutlined />}
+                icon={<DiffOutlined />}
                 block
                 onClick={() => navigate('/testcases')}
               >

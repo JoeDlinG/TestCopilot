@@ -4,13 +4,15 @@ import { BrowserRouter } from 'react-router-dom'
 import { ConfigProvider, theme } from 'antd'
 import App from './App'
 import { LanguageProvider } from './i18n'
+import { ThemeProvider } from './theme'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      {/* Outer provider owns the visual theme; LanguageProvider owns the
-          language and injects antd's matching locale pack. */}
+      {/* ThemeProvider owns colours (algorithm + tokens); LanguageProvider owns
+          the locale pack. Both wrap themselves in antd's ConfigProvider, and
+          antd merges nested providers, so the innermost wins per concern. */}
       <ConfigProvider
         theme={{
           algorithm: theme.defaultAlgorithm,
@@ -20,9 +22,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           },
         }}
       >
-        <LanguageProvider>
-          <App />
-        </LanguageProvider>
+        <ThemeProvider>
+          <LanguageProvider>
+            <App />
+          </LanguageProvider>
+        </ThemeProvider>
       </ConfigProvider>
     </BrowserRouter>
   </React.StrictMode>,

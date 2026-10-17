@@ -4,6 +4,78 @@
 
 ---
 
+## 2026-10-17: GUI 三区布局重构（Issue #20，P0–P2）（v0.14.0）
+
+> Issue #20 的方案文档 `docs/UI_REDESIGN_PLAN.md` 与预览页 `docs/ui-preview-*.html`
+> **未提交到仓库**（仅存在于本地），因此按 Issue 正文的规格实现。
+
+### P0 主题与 Token
+
+新建 `src/theme/tokens.ts`，三层结构（primitives → semantic → component）：
+
+| 色系 | 主值 | 分工 |
+|---|---|---|
+| Graphite 石墨灰 | `#0E1114` ~ `#EDF1F5` | 中性 ~90% |
+| Instrument Blue 仪器蓝 | `#2296C4` | 唯一交互色：主按钮 / 选中 / 链接 / **PASS** |
+| Amber 琥珀 | `#E8A33D` | 运行中 / 需注意 |
+| Signal Red 信号红 | `#FF7B72` | **FAIL / ERROR**（状态功能色） |
+
+`src/theme/index.tsx` 的 `ThemeProvider` 接入 `theme.darkAlgorithm`，
+主题模式写入 `localStorage` 并同步 `document.documentElement.dataset.theme`，顶栏可一键切换。
+
+### P1 布局与导航（左侧 3 组 8 项）
+
+`AppLayout.tsx` 重写：
+
+- **左侧**：208 / 56 折叠，3 组 8 项
+  - 配置与接入(1)：设备管理
+  - 设计与编写(4)：测试用例、AI 助手、执行管理器、调试终端
+  - 系统(3)：插件中心、模型配置、项目工程
+- **顶栏**(56)：看板▾（仪表盘 / 自定义仪表盘）、工具▾（通信日志）+ 语言 / 主题 / 重启
+- **状态条**(32)：后端在线、已连接设备数、运行中任务数（任意页面常驻）
+
+补齐 i18n 词条（分组名、顶栏、状态条、输出区），中英 100% 覆盖。
+
+### P1·B 输出 / 交付区（右侧抽屉）
+
+新建 `OutputDock.tsx` 与全局 store `stores/outputDockStore.ts`（Zustand —— 展开/pin/Tab 属跨页状态，
+放组件里会在切页时丢失）：
+
+| 状态 | 宽度 | 进入 / 退出 |
+|---|---|---|
+| ① 收起（默认） | 34px 竖条 | 配置页默认态 / 点竖条展开 |
+| ② 展开 | 420px | 点箭头 或 **点「启动」自动展开** / 未 pin 时切页自动收起 |
+| ③ 全屏 | 铺满工作区 | 展开态点全屏 / `Esc` 退出 |
+
+- 双 Tab：测试执行（`PlayCircleOutlined`）、输出报告（`FileDoneOutlined`）
+- pin 持久化到 `localStorage`；未 pin 时切左侧菜单自动收起
+- 收起态竖条显示运行中任务数（>0 时琥珀色徽标）
+- 任意页面点「启动」→ `openDock('executions')` 自动展开并切到测试执行 Tab
+- 当路由本身是 `/executions` 或 `/reports` 时抽屉让位，避免与路由页重复渲染导致重复 WebSocket
+
+### P2 组件规范（闭环 #17 / #19）
+
+新建 `src/components/ui/`：`DataTable`（强制列宽 + `scroll.x`，dev 下对缺 width 的列告警）、
+`StatusTag`（图标 + 文字 + 颜色三重编码）、`PageContainer`、`EmptyState`、`MonoText`。
+已在设备管理页落地示范（含 `device_key` 列宽、状态用 `StatusTag`）。
+
+### 其它验收项
+
+- **`.big-dash` 的 4 处 `!important` 已全部删除** —— 改为提高选择器特异性
+  （`.big-dash .ant-statistic .ant-statistic-title` 等），不再阻断主题切换
+- **全站无残留 `ExperimentOutlined` 烧杯** —— 已统一改为 `DiffOutlined`（预期 vs 实际）
+
+### 验证
+
+`tsc --noEmit` 与 `npm run build` 通过；dev server 可正常编译全部新模块；
+`Test/` 7 个脚本全 PASS；15 个端点失败数 0。
+
+> **未完成（Issue #20 的 P3 页面级优化）**：总览重构、执行计划三栏、调试终端三栏、
+> 流程图沉浸模式、插件三页路由合并、⌘K 搜索、项目向导，以及 P2 剩余表格页改造。
+> 该阶段约 2 人日，Issue 保持开启。
+
+---
+
 ## 2026-10-17: 设备ID号（稳定标识）+ 切换设备重生成代码 + 加载性能优化（v0.13.0）
 
 ### 1. 设备ID号：用稳定标识替代易变主键

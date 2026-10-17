@@ -26,6 +26,26 @@ export const messages: Record<Locale, Record<string, string>> = {
     'nav.skillEditor': 'Skill 编辑器',
     'nav.modelConfig': '模型配置',
     'nav.projects': '项目工程',
+    'nav.pluginCenter': '插件中心',
+
+    // ---- navigation groups (issue #20: 3 groups) ----
+    'nav.group.config': '配置与接入',
+    'nav.group.design': '设计与编写',
+    'nav.group.system': '系统',
+
+    // ---- top bar ----
+    'top.dashboards': '看板',
+    'top.tools': '工具',
+
+    // ---- global status bar ----
+    'status.backend': '后端在线',
+    'status.devices': '已连接设备',
+    'status.running': '运行中',
+
+    // ---- output dock ----
+    'dock.title': '输出 / 交付',
+    'dock.executions': '测试执行',
+    'dock.reports': '输出报告',
 
     // ---- common actions ----
     'common.refresh': '刷新',
@@ -147,6 +167,26 @@ export const messages: Record<Locale, Record<string, string>> = {
     'nav.skillEditor': 'Skill Editor',
     'nav.modelConfig': 'Model Config',
     'nav.projects': 'Project Files',
+    'nav.pluginCenter': 'Plugins',
+
+    // ---- navigation groups (issue #20: 3 groups) ----
+    'nav.group.config': 'Configure',
+    'nav.group.design': 'Design',
+    'nav.group.system': 'System',
+
+    // ---- top bar ----
+    'top.dashboards': 'Dashboards',
+    'top.tools': 'Tools',
+
+    // ---- global status bar ----
+    'status.backend': 'Backend online',
+    'status.devices': 'Devices',
+    'status.running': 'Running',
+
+    // ---- output dock ----
+    'dock.title': 'Output',
+    'dock.executions': 'Executions',
+    'dock.reports': 'Reports',
 
     // ---- common actions ----
     'common.refresh': 'Refresh',

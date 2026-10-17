@@ -4,7 +4,7 @@ import {
   Card, Row, Col, Empty, Alert, Typography, Tooltip, Divider, message
 } from 'antd'
 import {
-  PlusOutlined, DeleteOutlined, ExperimentOutlined, CopyOutlined
+  PlusOutlined, DeleteOutlined, DiffOutlined, CopyOutlined
 } from '@ant-design/icons'
 import { testCaseAPI } from '../services/api'
 import { handleApiError } from '../services/apiHelper'
@@ -191,7 +191,7 @@ export default function ResultParserConfig({
 
   return (
     <Modal
-      title={<Space><ExperimentOutlined /><span>结果解析配置</span></Space>}
+      title={<Space><DiffOutlined /><span>结果解析配置</span></Space>}
       width={900}
       open={open}
       onCancel={onCancel}
@@ -331,7 +331,7 @@ export default function ResultParserConfig({
           value={sample}
           onChange={e => setSample(e.target.value)}
         />
-        <Button icon={<ExperimentOutlined />} onClick={runPreview} loading={previewing}>
+        <Button icon={<DiffOutlined />} onClick={runPreview} loading={previewing}>
           预览解析
         </Button>
       </Space.Compact>

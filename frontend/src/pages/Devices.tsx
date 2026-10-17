@@ -13,6 +13,7 @@ import { extractData, extractItems, handleApiError } from '../services/apiHelper
 import InterfaceConfigModal from '../components/devices/InterfaceConfigModal'
 import { DEVICE_TYPES, INTERFACE_TYPES } from '../types'
 import { useI18n } from '../i18n'
+import { DataTable, StatusTag } from '../components/ui'
 import type { Device } from '../types'
 
 const { Title } = Typography
@@ -213,6 +214,8 @@ export default function Devices() {
       title: '设备名称',
       dataIndex: 'name',
       key: 'name',
+      width: 200,
+      ellipsis: true,
       render: (text: string) => <a><ApiOutlined /> {text}</a>,
     },
     {
@@ -232,6 +235,7 @@ export default function Devices() {
     {
       title: t('common.address'),
       key: 'address',
+      width: 220,
       ellipsis: true,
       render: (_: any, record: any) => (
         record.visa_address || record.serial_port || record.can_channel ||
@@ -244,9 +248,12 @@ export default function Devices() {
       key: 'status',
       width: 90,
       render: (status: string) => (
-        <Tag color={status === 'connected' ? 'green' : 'default'}>
-          {status === 'connected' ? t('common.connected') : t('common.disconnected')}
-        </Tag>
+        // Icon + text + colour — never colour alone (issue #20).
+        <StatusTag
+          kind={status === 'connected' ? 'pass' : 'idle'}
+          text={status === 'connected' ? t('common.connected') : t('common.disconnected')}
+          size="small"
+        />
       ),
     },
     {
@@ -339,11 +346,12 @@ export default function Devices() {
       </div>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={devices}
           rowKey="id"
           loading={loading}
+          scrollX={1100}
           pagination={{ pageSize: 10 }}
         />
       </Card>

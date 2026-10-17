@@ -55,21 +55,23 @@ body {
 }
 
 /* ============ 自定义仪表盘 ============ */
-/* 大屏模式：antd 组件默认深色文字在深色投屏背景上不可读，整体提亮 */
+/* 大屏模式：antd 组件默认深色文字在深色投屏背景上不可读，整体提亮。
+   通过**提高选择器特异性**覆盖 antd 默认色，而不是 !important —— 后者会阻断
+   主题切换并让后续覆盖只能继续堆 !important（issue #20 验收项）。 */
 .big-dash .ant-typography {
   color: rgba(255, 255, 255, 0.9);
 }
-.big-dash .ant-statistic-title {
-  color: rgba(255, 255, 255, 0.7) !important;
+.big-dash .ant-statistic .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.7);
 }
-.big-dash .ant-statistic-content {
-  color: #fff !important;
+.big-dash .ant-statistic .ant-statistic-content {
+  color: #fff;
 }
-.big-dash .ant-progress-text {
-  color: rgba(255, 255, 255, 0.85) !important;
+.big-dash .ant-progress .ant-progress-text {
+  color: rgba(255, 255, 255, 0.85);
 }
-.big-dash .ant-empty-description {
-  color: rgba(255, 255, 255, 0.6) !important;
+.big-dash .ant-empty .ant-empty-description {
+  color: rgba(255, 255, 255, 0.6);
 }
 .big-dash .ant-progress-inner:not(.ant-progress-circle) {
   background: rgba(255, 255, 255, 0.14);

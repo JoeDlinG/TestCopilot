@@ -109,6 +109,10 @@
   - **v0.13.0**（新功能 + 性能优化，同分支）：**设备ID号**（用户可指定的稳定唯一标识 `DEV-00x`，
   用例按它关联设备，换硬件时复用同一个号即可）+ **切换设备接口**（按ID号重绑定并原子地重新生成代码）+
   **加载性能优化**（dev 依赖预打包 deps 0→32；执行页 WS 消息批量合并渲染）
+  - **v0.14.0**（GUI 重构，同分支）：**Issue #20 三区布局 P0–P2** —— 主题 Token（3 主色 + 1 状态色）、
+    左侧 3 组 8 项 + 顶栏下拉 + 状态条、右侧「输出/交付」抽屉（三态 / 双 Tab / pin / 启动自动展开 / 运行徽标）、
+    组件规范 `DataTable`/`StatusTag`/`PageContainer`/`EmptyState`/`MonoText`（闭环 #17 / #19）；
+    `.big-dash` 的 !important 清零、烧杯图标全站清除。**P3 页面级优化未做，Issue 保持开启**
   - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -118,6 +122,24 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.14.0 — GUI 三区布局重构（Issue #20，P0–P2）（2026-10-17，分支 `feature/flow-enhancements`）
+
+- [x] **P0 主题 Token**：`src/theme/tokens.ts`（primitives → semantic → component）+ `ThemeProvider`
+      （darkAlgorithm、localStorage 持久化、顶栏切换）。配色 3 主色 + 1 状态色
+      （石墨灰 / 仪器蓝 `#2296C4` / 琥珀 `#E8A33D` / 信号红 `#FF7B72`）
+- [x] **P1 布局导航**：`AppLayout` 重写。左侧 208/56，3 组 8 项（配置与接入 1 / 设计与编写 4 / 系统 3）；
+      顶栏看板▾ + 工具▾ + 语言/主题/重启；状态条 32px（后端/已连设备/运行中）常驻
+- [x] **P1·B 输出/交付抽屉**：`OutputDock.tsx` + Zustand 全局 store。三态（收起 34 / 展开 420 / 全屏），
+      双 Tab（测试执行 / 输出报告），pin 持久化，未 pin 切页自动收起，**点「启动」自动展开**，
+      收起态琥珀色运行数徽标，`Esc` 退全屏；路由为 /executions 或 /reports 时让位避免重复渲染
+- [x] **P2 组件规范**：`DataTable`（强制列宽 + scroll.x + dev 告警）、`StatusTag`（图标+文字+颜色）、
+      `PageContainer`、`EmptyState`、`MonoText`；已在设备管理页落地示范（闭环 #17 / #19）
+- [x] **其它验收项**：`.big-dash` 的 4 处 `!important` 全部删除（改提高选择器特异性）；
+      全站无残留 `ExperimentOutlined` 烧杯（统一 `DiffOutlined`）
+- [x] 验证：`tsc` + `npm run build` 通过；dev 可编译全部新模块；`Test/` 7 个全 PASS；15 端点失败数 0
+- [ ] **未完成（P3 页面级优化，约 2 人日）**：总览重构、执行计划三栏、调试终端三栏、流程图沉浸模式、
+      插件三页路由合并、⌘K 搜索、项目向导，以及 P2 剩余表格页改造 —— **Issue #20 保持开启**
 
 ### v0.13.0 — 设备ID号 + 切换设备重生成代码 + 加载性能优化（2026-10-17，分支 `feature/flow-enhancements`）
 

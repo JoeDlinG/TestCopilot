@@ -8,12 +8,13 @@ import {
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
   DeleteOutlined, ApartmentOutlined, ReloadOutlined,
-  ExperimentOutlined, SettingOutlined, ClearOutlined, SwapOutlined
+  DiffOutlined, SettingOutlined, ClearOutlined, SwapOutlined
 } from '@ant-design/icons'
 import { testCaseAPI, executionAPI, deviceAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import ResultParserConfig, { DATA_TYPES } from '../components/ResultParserConfig'
 import type { ParserSpec } from '../components/ResultParserConfig'
+import { openDock } from '../stores/outputDockStore'
 import type { TestCase } from '../types'
 
 const { Title, Text } = Typography
@@ -404,6 +405,9 @@ export default function TestCases() {
       setRunningId(tc.id)
       await executionAPI.run(tc.id)
       message.success(`开始执行: ${tc.name}`)
+      // Issue #20: results must be visible immediately — open the output dock
+      // on the 测试执行 tab instead of navigating away from the authoring page.
+      openDock('executions')
       navigate('/executions')
     } catch (err) {
       handleApiError(err, '执行失败')
@@ -434,7 +438,7 @@ export default function TestCases() {
       render: (text: string, record: TestCase) => (
         <Tooltip title={text}>
           <a onClick={() => navigate(`/testcases/${record.id}/flow`)}>
-            <ExperimentOutlined /> {text}
+            <DiffOutlined /> {text}
           </a>
         </Tooltip>
       ),

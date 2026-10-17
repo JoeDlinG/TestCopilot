@@ -10,11 +10,12 @@ import {
   EyeOutlined, ClearOutlined, ApiOutlined, OrderedListOutlined,
   ArrowDownOutlined, ArrowUpOutlined, MinusCircleOutlined, AimOutlined,
   LineChartOutlined, FullscreenOutlined, FullscreenExitOutlined,
-  ExperimentOutlined
+  DiffOutlined
 } from '@ant-design/icons'
 import { executionAPI, deviceAPI, testCaseAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import ParsedTrendChart, { toNumber } from '../components/ParsedTrendChart'
+import { useOutputDock } from '../stores/outputDockStore'
 import type { TestExecution } from '../types'
 
 const { Title, Text } = Typography
@@ -463,7 +464,12 @@ export default function Executions() {
     setLoading(true)
     try {
       const res = await executionAPI.list()
-      setExecutions(extractItems(res))
+      const items = extractItems(res)
+      setExecutions(items)
+      // Drives the collapsed output-dock badge (issue #20).
+      useOutputDock.getState().setRunningCount(
+        items.filter((e: any) => e.status === 'running').length,
+      )
     } catch (err) {
       handleApiError(err, '加载执行记录失败')
     } finally {
@@ -1000,7 +1006,7 @@ export default function Executions() {
           {/* 当前执行（或正在跟踪）的用例名称 —— 一眼看出在跑什么 */}
           {currentCaseName && (
             <Tag color="blue" style={{ marginInlineEnd: 0, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              <ExperimentOutlined /> {currentCaseName}
+              <DiffOutlined /> {currentCaseName}
             </Tag>
           )}
         </div>

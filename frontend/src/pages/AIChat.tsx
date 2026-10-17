@@ -7,7 +7,7 @@ import {
 } from 'antd'
 import {
   SendOutlined, AudioOutlined, RobotOutlined, UserOutlined,
-  ExperimentOutlined, SearchOutlined, SettingOutlined,
+  DiffOutlined, SearchOutlined, SettingOutlined,
   ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined,
   EyeOutlined, BulbOutlined, SaveOutlined, DeleteOutlined,
   FileMarkdownOutlined, EditOutlined, PaperClipOutlined, FileOutlined,
@@ -813,7 +813,7 @@ export default function AIChat() {
               disabled={!activeModel || !input.trim()} loading={queryLoading}>
               查询数据库
             </Button>
-            <Button icon={<ExperimentOutlined />} onClick={handleGenerateTestCases}
+            <Button icon={<DiffOutlined />} onClick={handleGenerateTestCases}
               disabled={!activeModel || !input.trim()} loading={genLoading}>
               生成测试用例
             </Button>
