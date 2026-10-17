@@ -123,3 +123,21 @@ body {
 .flow-palette-chip:active {
   cursor: grabbing;
 }
+
+/* 连接点（Handle）：统一仪器蓝，hover / 选中时高亮。
+   用 .react-flow 前缀提高选择器权重以覆盖 reactflow 自带样式，无需 !important。 */
+.react-flow .react-flow__handle.flow-handle {
+  width: 9px;
+  height: 9px;
+  background: var(--flow-handle);
+  border: 1px solid var(--flow-handle);
+}
+.react-flow .react-flow__handle.flow-handle:hover,
+.react-flow .react-flow__node.selected .react-flow__handle.flow-handle {
+  background: var(--flow-handle-active);
+  border-color: var(--flow-handle-active);
+  box-shadow: 0 0 0 3px var(--flow-handle-halo);
+}
+.react-flow .react-flow__handle.flow-handle-muted {
+  opacity: 0.75;
+}

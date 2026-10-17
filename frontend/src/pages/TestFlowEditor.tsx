@@ -77,54 +77,53 @@ const NODE_BASE: React.CSSProperties = {
 
 function nodeSurface(kind: NodeKind): React.CSSProperties {
   switch (kind) {
-    case 'outline': // 开始 — hollow, blue outline
+    case 'outline': // 开始 — graphite + instrument-blue outline
       return {
         background: 'var(--flow-node-outline-bg)',
-        color: 'var(--flow-node-outline-fg)',
-        border: '1px solid var(--flow-node-outline-border)',
+        color: 'var(--flow-node-fg)',
+        border: '2px solid var(--flow-node-outline-border)',
       }
-    case 'tint': // 初始化 — low-saturation blue wash
+    case 'tint': // 初始化 — one step lighter graphite + blue outline
       return {
-        background: 'var(--flow-node-tint-bg)',
-        color: 'var(--flow-node-tint-fg)',
+        background: 'var(--flow-node-bg-alt)',
+        color: 'var(--flow-node-fg)',
         border: '1px solid var(--flow-node-outline-border)',
       }
     case 'solid': // 操作 — standard graphite
       return {
-        background: 'var(--flow-node-solid-bg)',
-        color: 'var(--flow-node-solid-fg)',
-        border: '1px solid var(--flow-border)',
+        background: 'var(--flow-node-bg)',
+        color: 'var(--flow-node-fg)',
+        border: '1px solid var(--flow-node-border)',
       }
     case 'loop': // 循环 — the only amber type: 1px ring + 3px left bar
       return {
-        background: 'var(--flow-node-solid-bg)',
-        color: 'var(--flow-loop-fg)',
+        background: 'var(--flow-node-bg)',
+        color: 'var(--flow-node-fg)',
         border: '1px solid var(--flow-loop-bar)',
         borderLeft: '3px solid var(--flow-loop-bar)',
       }
     case 'dashed': // 延时 — dashed, de-emphasised
       return {
-        background: 'var(--flow-node-outline-bg)',
-        color: 'var(--flow-node-dashed-fg)',
+        background: 'var(--flow-node-dashed-bg)',
+        color: 'var(--flow-node-fg-dim)',
         border: '1px dashed var(--flow-node-dashed-border)',
       }
-    case 'dim': // 结束 — dark, de-emphasised (never red: red = FAIL/ERROR)
+    case 'dim': // 结束 — deeper graphite, de-emphasised (never red)
       return {
-        background: 'var(--flow-node-dim-bg)',
-        color: 'var(--flow-node-dim-fg)',
-        border: '1px solid var(--flow-border)',
+        background: 'var(--flow-node-bg-dim)',
+        color: 'var(--flow-node-fg-dim)',
+        border: '1px solid var(--flow-node-border)',
       }
     default:
-      return { background: 'var(--flow-node-solid-bg)', color: 'var(--flow-node-solid-fg)' }
+      return { background: 'var(--flow-node-bg)', color: 'var(--flow-node-fg)' }
   }
 }
 
-const handleColor = (kind: NodeKind) =>
-  kind === 'loop'
-    ? 'var(--flow-loop-bar)'
-    : kind === 'outline' || kind === 'tint'
-      ? 'var(--flow-node-outline-border)'
-      : 'var(--flow-node-solid-fg)'
+/**
+ * Connection points are styled in CSS (`.flow-handle`) rather than inline so
+ * hover / selection can brighten them — see `index.css`. Uniform instrument
+ * blue for every node type, as requested.
+ */
 
 /**
  * Runtime state is a *separate layer* from node type (issue #22).
@@ -154,7 +153,7 @@ function NodeRuntimeRing({ data, children }: { data: any; children: React.ReactN
           spin
           style={{
             position: 'absolute', top: -9, right: -9, fontSize: 13, color,
-            background: 'var(--flow-node-solid-bg)', borderRadius: '50%', padding: 2,
+            background: 'var(--flow-node-bg)', borderRadius: '50%', padding: 2,
           }}
         />
       )}
@@ -168,7 +167,7 @@ function StartNode({ data }: NodeProps) {
       <div style={{ ...NODE_BASE, ...nodeSurface('outline'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
         <PlayCircleOutlined style={{ fontSize: 14 }} />
         {data.label}
-        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('outline') }} />
+        <Handle type="source" position={Position.Bottom} className="flow-handle" />
       </div>
     </NodeRuntimeRing>
   )
@@ -178,7 +177,7 @@ function EndNode({ data }: NodeProps) {
   return (
     <NodeRuntimeRing data={data}>
       <div style={{ ...NODE_BASE, ...nodeSurface('dim'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
-        <Handle type="target" position={Position.Top} style={{ background: handleColor('dim') }} />
+        <Handle type="target" position={Position.Top} className="flow-handle" />
         <StopOutlined style={{ fontSize: 14 }} />
         {data.label}
       </div>
@@ -190,13 +189,13 @@ function ActionNode({ data }: NodeProps) {
   return (
     <NodeRuntimeRing data={data}>
       <div style={{ ...NODE_BASE, ...nodeSurface('solid') }}>
-        <Handle type="target" position={Position.Top} style={{ background: handleColor('solid') }} />
+        <Handle type="target" position={Position.Top} className="flow-handle" />
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
           <ThunderboltOutlined style={{ fontSize: 14 }} />
           {data.label}
         </div>
         <NodeIoBadges data={data} />
-        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('solid') }} />
+        <Handle type="source" position={Position.Bottom} className="flow-handle" />
       </div>
     </NodeRuntimeRing>
   )
@@ -211,26 +210,29 @@ function ConditionNode({ data, selected }: NodeProps) {
         <svg width="140" height="70" style={{ position: 'absolute', top: 0, left: 0 }}>
           <polygon
             points="70,2 138,35 70,68 2,35"
-            fill={selected ? 'var(--flow-node-solid-bg)' : 'var(--flow-node-weak-bg)'}
-            stroke="var(--flow-node-solid-fg)"
-            strokeWidth={selected ? 2 : 1}
+            // 判断 is now instrument blue (was graphite) — it is the only
+            // blue-filled type, and the diamond shape still carries it alone
+            // in a greyscale screenshot.
+            fill="var(--flow-condition-bg)"
+            stroke="var(--flow-condition-border)"
+            strokeWidth={selected ? 3 : 1}
           />
         </svg>
         <div style={{
           position: 'relative', zIndex: 2, width: 140, height: 70,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 11, fontWeight: 600, color: 'var(--flow-node-solid-fg)',
+          fontSize: 11, fontWeight: 600, color: 'var(--flow-node-fg)',
           textAlign: 'center', padding: '0 30px', lineHeight: 1.3,
         }}>
           {data.label}
         </div>
         <Handle type="target" position={Position.Top}
-          style={{ background: 'var(--flow-node-solid-fg)', top: 0, left: '50%' }} />
+          className="flow-handle" style={{ top: 0, left: '50%' }} />
         {/* True / false exits differ by lightness only — never green/red. */}
         <Handle type="source" position={Position.Bottom} id="s-true"
-          style={{ background: 'var(--flow-node-solid-fg)', bottom: -2, left: '30%' }} />
+          className="flow-handle" style={{ bottom: -2, left: '30%' }} />
         <Handle type="source" position={Position.Bottom} id="s-false"
-          style={{ background: 'var(--flow-node-dim-fg)', bottom: -2, left: '70%' }} />
+          className="flow-handle flow-handle-muted" style={{ bottom: -2, left: '70%' }} />
       </div>
     </NodeRuntimeRing>
   )
@@ -244,12 +246,12 @@ function LoopNode({ data }: NodeProps) {
         display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
       }}>
         <SyncOutlined style={{ fontSize: 14 }} />
-        <Handle type="target" position={Position.Top} style={{ background: handleColor('loop') }} />
+        <Handle type="target" position={Position.Top} className="flow-handle" />
         <div>
           {data.label}
           <NodeIoBadges data={data} />
         </div>
-        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('loop') }} />
+        <Handle type="source" position={Position.Bottom} className="flow-handle" />
       </div>
     </NodeRuntimeRing>
   )
@@ -265,7 +267,7 @@ function InitNode({ data, selected }: NodeProps) {
         display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
       }}>
         <DatabaseOutlined style={{ fontSize: 14 }} />
-        <Handle type="target" position={Position.Top} style={{ background: handleColor('tint') }} />
+        <Handle type="target" position={Position.Top} className="flow-handle" />
         <div>
           <div>{data.label}</div>
         {vars.length > 0 && (
@@ -278,7 +280,7 @@ function InitNode({ data, selected }: NodeProps) {
         )}
           <NodeIoBadges data={data} />
         </div>
-        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('tint') }} />
+        <Handle type="source" position={Position.Bottom} className="flow-handle" />
       </div>
     </NodeRuntimeRing>
   )
@@ -294,7 +296,7 @@ function DelayNode({ data, selected }: NodeProps) {
         display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
       }}>
         <ClockCircleOutlined style={{ fontSize: 14 }} />
-        <Handle type="target" position={Position.Top} style={{ background: handleColor('dashed') }} />
+        <Handle type="target" position={Position.Top} className="flow-handle" />
         <div>
           <div>{data.label}</div>
           <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
@@ -302,7 +304,7 @@ function DelayNode({ data, selected }: NodeProps) {
           </div>
           <NodeIoBadges data={data} />
         </div>
-        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('dashed') }} />
+        <Handle type="source" position={Position.Bottom} className="flow-handle" />
       </div>
     </NodeRuntimeRing>
   )
@@ -394,13 +396,17 @@ const PALETTE: PaletteItem[] = [
   { type: 'end', label: '结束', kind: 'dim', icon: <StopOutlined /> },
 ]
 
-/** Diamond palette chips read as a lozenge glyph rather than a filled block. */
+/**
+ * Palette chips mirror the canvas node exactly — the diamond chip used to be
+ * transparent and therefore invisible next to the filled ones.
+ */
 function paletteChipStyle(kind: NodeKind): React.CSSProperties {
   if (kind === 'diamond') {
     return {
-      background: 'var(--flow-node-outline-bg)',
-      color: 'var(--flow-node-solid-fg)',
-      border: '1px solid var(--flow-node-solid-fg)',
+      // Same blue fill as the canvas 判断 node, clipped to a lozenge.
+      background: 'var(--flow-condition-bg)',
+      color: 'var(--flow-node-fg)',
+      border: '1px solid var(--flow-condition-border)',
       clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
       borderRadius: 0,
     }

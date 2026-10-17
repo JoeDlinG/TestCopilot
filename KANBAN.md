@@ -126,6 +126,21 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v0.16.1 — 流程图编辑器配色修订（Issue #22 反馈）（2026-10-17，分支 `feature/flow-enhancements`）
+
+- [x] **面板菱形块补底色**：判断块改用 `--flow-condition-bg`（仪器蓝）填充，与画布节点一致
+- [x] **底色改石墨灰**：节点填充 `graphite[850]`（`#1C2228` 近黑）→ **`graphite[700]`（`#2E363F`）**；
+      初始化浅一档 `graphite[600]`，结束深一档 `graphite[800]`
+- [x] **判断改仪器蓝**：菱形填充 `--flow-condition-bg`（浅 `#1A7FA8` / 深 `#156B8C`）
+- [x] **连接点统一仪器蓝 + 选中高亮**：去掉所有 `Handle` 内联底色（原先按类型分色），
+      改由 `.flow-handle` 统一为 `#2296C4`；hover / `.selected` 下切 `#8FCBEA` 并加 3px 光晕
+- [x] **文字改白色**：`--flow-node-fg` = `#FFFFFF`；延时/结束用 `rgba(255,255,255,.72)` 弱化
+- [x] **连带修正**：开始 / 延时由透明底改为石墨灰填充（白字前提），改靠边框样式区分
+      （2px 仪器蓝 / 1px 虚线），不再靠"空心"
+- [x] 连接点 CSS 用三级选择器覆盖 reactflow 默认样式，**无需 `!important`**
+- [x] 验证：5 条反馈脚本核对全 PASS；回归仍只有 `loop` 用琥珀、无硬编码色、无 `scaleX`；
+      `tsc` + `build` 通过；`Test/` 7 个全 PASS
+
 ### v0.16.0 — 流程图编辑器 UI 统一：方案 A + 循环改用琥珀（Issue #22）（2026-10-17，分支 `feature/flow-enhancements`）
 
 - [x] **新增 `src/theme/cssVars.ts`**：把 `tokens.ts` 色阶派生为 CSS 变量（`--g-*/--b-*/--a-*/--r-*` +

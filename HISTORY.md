@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-10-17: 流程图编辑器配色修订（Issue #22 反馈）（v0.16.1）
+
+v0.16.0 交付后按实测观感做了 5 处调整。
+
+| # | 反馈 | 调整 |
+|---|---|---|
+| 1 | 节点面板的菱形块没有底色，看不出 | 面板块必须与画布节点**完全一致**：判断块改用 `--flow-condition-bg`（仪器蓝）填充，不再是透明 + `clipPath` |
+| 2 | 黑色底色太深 | 节点填充由 `graphite[850]`（`#1C2228`，屏上近纯黑）改为 **`graphite[700]`（`#2E363F`，石墨灰）**；初始化浅一档 `graphite[600]`，结束深一档 `graphite[800]` |
+| 3 | 判断改用仪器蓝 | 菱形填充改为 `--flow-condition-bg`（浅 `#1A7FA8` / 深 `#156B8C`），描边 `--flow-condition-border` |
+| 4 | 连接点统一仪器蓝，选中高亮 | 所有 `Handle` 去掉**内联底色**（原先按节点类型分色，循环甚至是琥珀），改由 `.flow-handle` CSS 类统一为 `--flow-handle`（`#2296C4`）；hover 与 `.react-flow__node.selected` 下切换为 `--flow-handle-active`（`#8FCBEA`）并加 `3px` 光晕 |
+| 5 | 文字改用白色 | 全部节点文字改为 `--flow-node-fg`（`#FFFFFF`）；弱化类型（延时 / 结束）用 `rgba(255,255,255,.72)` |
+
+**连带修正**：白字要能看见，前提是**每个类型都有真实填充**。原先「开始 / 延时」是透明底
+（`--flow-node-outline-bg: transparent`），浅色主题下会变成白底白字，因此二者也改为石墨灰填充，
+改靠**边框样式**（2px 仪器蓝 / 1px 虚线）区分，不再靠"空心"。
+
+连接点样式用 `.react-flow .react-flow__handle.flow-handle` 三级选择器覆盖 reactflow 自带样式，
+**不需要 `!important`**。
+
+### 验证
+
+- 脚本核对 5 条反馈全部 PASS：面板菱形有底色、底色为 `graphite[700]`、判断为仪器蓝、
+  连接点无内联底色且 CSS 统一为 `--flow-handle` 并在选中态高亮、`nodeSurface()` 内 5 处白字且无透明底
+- 回归：`nodeSurface()` 7 分支中仍**只有 `loop` 引用琥珀**；无硬编码 `#xxxxxx`；无 `scaleX` 残留
+- 变量取值复核：底色 浅/深均为 `#2E363F`，判断 `#1A7FA8` / `#156B8C`，连接点 `#2296C4`，高亮 `#8FCBEA`
+- `tsc --noEmit` + `npm run build` 通过；`Test/` 7 个脚本全 PASS
+
+---
+
 ## 2026-10-17: 流程图编辑器 UI 统一：方案 A（单色系）+ 循环节点改用琥珀（Issue #22）（v0.16.0）
 
 ### 背景

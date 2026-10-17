@@ -59,6 +59,8 @@ interface Surfaces {
   tintFg: string
   badgeFg: string
   amberFg: string
+  conditionBg: string
+  conditionBorder: string
 }
 
 const LIGHT: Surfaces = {
@@ -74,6 +76,9 @@ const LIGHT: Surfaces = {
   tintFg: blue[700],
   badgeFg: graphite[800],
   amberFg: amber[700],
+  // White text needs a slightly deeper blue in light mode.
+  conditionBg: blue[600],
+  conditionBorder: blue[700],
 }
 
 const DARK: Surfaces = {
@@ -89,6 +94,8 @@ const DARK: Surfaces = {
   tintFg: blue[300],
   badgeFg: graphite[100],
   amberFg: amber[500],
+  conditionBg: blue[700],
+  conditionBorder: blue[600],
 }
 
 function flowVars(v: Surfaces): string {
@@ -101,27 +108,35 @@ function flowVars(v: Surfaces): string {
     `    --flow-border: ${v.border};`,
     `    --flow-code-bg: ${v.codeBg};`,
     `    --flow-code-fg: ${v.codeFg};`,
-    // Node surfaces — encoding is by fill / outline / dash, not by hue.
-    `    --flow-node-solid-bg: ${graphite[850]};`,
-    `    --flow-node-solid-fg: ${graphite[200]};`,
-    `    --flow-node-weak-bg: ${graphite[800]};`,
-    `    --flow-node-weak-fg: ${graphite[400]};`,
-    `    --flow-node-outline-bg: transparent;`,
-    `    --flow-node-outline-fg: ${v.accentFg};`,
-    `    --flow-node-outline-border: ${v.accentFg};`,
-    // 12% blue wash — derived, so it stays correct in both themes.
-    `    --flow-node-tint-bg: ${mix(blue[500], v.canvasBg, 0.12)};`,
-    `    --flow-node-tint-fg: ${v.tintFg};`,
-    `    --flow-node-dashed-fg: ${graphite[400]};`,
-    `    --flow-node-dashed-border: ${graphite[500]};`,
-    `    --flow-node-dim-bg: ${graphite[800]};`,
-    `    --flow-node-dim-fg: ${graphite[400]};`,
+    // ---- Node surfaces (issue #22 follow-up) ---------------------------- //
+    // Fill is graphite, NOT near-black: #1C2228 read as pure black on screen.
+    // Text is white on every surface, which is only safe because *every* type
+    // now has a real fill (开始 / 延时 used to be transparent).
+    `    --flow-node-bg: ${graphite[700]};`,      // 标准
+    `    --flow-node-bg-alt: ${graphite[600]};`,  // 初始化 — 浅一档
+    `    --flow-node-bg-dim: ${graphite[800]};`,  // 结束 — 深一档
+    `    --flow-node-fg: #FFFFFF;`,
+    `    --flow-node-fg-dim: rgba(255, 255, 255, 0.72);`,
+    `    --flow-node-border: ${graphite[500]};`,
+    // 开始 / 初始化 — instrument-blue outline on the graphite fill.
+    `    --flow-node-outline-bg: ${graphite[700]};`,
+    `    --flow-node-outline-border: ${blue[500]};`,
+    // 判断 — instrument blue (was graphite); the diamond is the only blue type.
+    `    --flow-condition-bg: ${v.conditionBg};`,
+    `    --flow-condition-border: ${v.conditionBorder};`,
+    // 延时 — dashed border, de-emphasised.
+    `    --flow-node-dashed-bg: ${graphite[700]};`,
+    `    --flow-node-dashed-border: ${graphite[300]};`,
     // Selection ring (blue) is a *state* layer, independent of node type.
     `    --flow-selected: ${rgba(blue[500], 0.45)};`,
-    `    --flow-selected-solid: ${graphite[850]};`,
-    // Loop is the only node type allowed to use amber (issue #22).
+    // 循环 — the only amber type (1px ring + 3px left bar).
     `    --flow-loop-bar: ${amber[500]};`,
     `    --flow-loop-fg: ${amber[500]};`,
+    // Connection points are uniformly instrument blue and brighten on
+    // hover / selection, so they read as "grab me" on every node type.
+    `    --flow-handle: ${blue[500]};`,
+    `    --flow-handle-active: ${blue[300]};`,
+    `    --flow-handle-halo: ${rgba(blue[500], 0.35)};`,
     // IO badges sit on every node surface, so they need a neutral that reads
     // on both the graphite fill and the light blue tint.
     `    --flow-badge-bg: ${mix(graphite[200], v.canvasBg, 0.25)};`,
