@@ -4,6 +4,7 @@ import {
   Alert, Modal, Drawer, Progress, Tooltip, Typography, Divider, message,
   List, Checkbox, Empty, Spin,
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
   PlayCircleOutlined, SaveOutlined, StopOutlined, WarningOutlined,
@@ -316,7 +317,7 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: '用例', ellipsis: true,
+      title: '用例', width: 220, ellipsis: true,
       render: (_: any, r: PlanItem) => r.testcase_name || r.testcase_id,
     },
     {
@@ -468,7 +469,7 @@ export default function ExecutionPlanner() {
               </Space>
             </Space>
 
-            <Table size="small" rowKey="id" pagination={false}
+            <DataTable size="small" rowKey="id" pagination={false}
               dataSource={items} columns={itemColumns}
               rowClassName={(r) => (errorItemIds.has(r.id) ? 'plan-row-error' : '')}
               locale={{ emptyText: <Empty description="从左侧勾选用例加入" /> }} />

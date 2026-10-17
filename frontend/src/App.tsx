@@ -18,8 +18,9 @@ const ExecutionPlanner = lazy(() => import('./pages/ExecutionPlanner'))
 const Logs = lazy(() => import('./pages/Logs'))
 const Reports = lazy(() => import('./pages/Reports'))
 const Plugins = lazy(() => import('./pages/Plugins'))
-const PluginEditor = lazy(() => import('./pages/PluginEditor'))
-const SkillEditor = lazy(() => import('./pages/SkillEditor'))
+// NOTE: PluginEditor / SkillEditor are no longer routed directly — they are
+// tabs inside 插件中心 (./pages/Plugins).
+
 const ModelConfig = lazy(() => import('./pages/ModelConfig'))
 const ProjectManager = lazy(() => import('./pages/ProjectManager'))
 
@@ -78,13 +79,15 @@ function App() {
           path="plugins"
           element={<Suspense fallback={<PageLoading />}><Plugins /></Suspense>}
         />
+        {/* Issue #21: the three plugin pages merged into one 插件中心 route.
+            These legacy paths are kept so old links still open the right tab. */}
         <Route
           path="plugin-editor"
-          element={<Suspense fallback={<PageLoading />}><PluginEditor /></Suspense>}
+          element={<Suspense fallback={<PageLoading />}><Plugins tab="editor" /></Suspense>}
         />
         <Route
           path="skill-editor"
-          element={<Suspense fallback={<PageLoading />}><SkillEditor /></Suspense>}
+          element={<Suspense fallback={<PageLoading />}><Plugins tab="skill" /></Suspense>}
         />
         <Route
           path="model-config"

@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Card, Table, Button, Space, Modal, Form, Input, Checkbox, Radio,
   Tag, Typography, message, Popconfirm, Alert, Upload, Divider, Empty,
+  Steps, Tooltip,
 } from 'antd'
 import {
   DownloadOutlined, UploadOutlined,   SaveOutlined, EditOutlined,
   DeleteOutlined, SyncOutlined, ImportOutlined, FileTextOutlined,
-  ReloadOutlined, FileAddOutlined,
+  ReloadOutlined, FileAddOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import { projectAPI, PROJECT_SECTIONS } from '../services/api'
 import { extractData, handleApiError, _errorMessage } from '../services/apiHelper'
@@ -38,6 +39,13 @@ export default function ProjectManager() {
   const [newOpen, setNewOpen] = useState(false)
   const [keepModels, setKeepModels] = useState(true)
   const [newResult, setNewResult] = useState<any>(null)
+  // ---- 项目向导 ----
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [wizardStep, setWizardStep] = useState(0)
+  const [wizardName, setWizardName] = useState('')
+  const [wizardSections, setWizardSections] = useState<string[]>(
+    PROJECT_SECTIONS.map((s) => s.key),
+  )
   const [importResult, setImportResult] = useState<any>(null)
   const [busy, setBusy] = useState<string>('')
 
@@ -185,6 +193,33 @@ export default function ProjectManager() {
       load()
     } catch (err) {
       handleApiError(err, '重命名失败')
+    }
+  }
+
+  // ---- 项目向导：选段 → 命名 → 生成 ----
+  const openWizard = () => {
+    setWizardStep(0)
+    setWizardName('')
+    setWizardSections(PROJECT_SECTIONS.map((s) => s.key))
+    setWizardOpen(true)
+  }
+
+  const handleWizardFinish = async () => {
+    const name = wizardName.trim()
+    if (!name) {
+      message.warning('请输入工程名称')
+      return
+    }
+    setBusy('wizard')
+    try {
+      await projectAPI.save(name, wizardSections)
+      message.success(`工程「${name}」已创建（${wizardSections.length} 个配置段）`)
+      setWizardOpen(false)
+      load()
+    } catch (err) {
+      handleApiError(err, '创建工程失败')
+    } finally {
+      setBusy('')
     }
   }
 
@@ -359,6 +394,11 @@ export default function ProjectManager() {
             <Button danger icon={<FileAddOutlined />} onClick={() => setNewOpen(true)}>
               {t('project.new')}
             </Button>
+            <Tooltip title="分步引导：选配置段 → 命名 → 生成工程">
+              <Button icon={<ThunderboltOutlined />} onClick={openWizard}>
+                项目向导
+              </Button>
+            </Tooltip>
             <Upload
               beforeUpload={handleUpload}
               showUploadList={false}
@@ -460,6 +500,85 @@ export default function ProjectManager() {
             <Input placeholder="例如：CAN 联调测试" autoFocus />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 项目向导：选段 → 命名 → 生成 */}
+      <Modal
+        title="项目向导"
+        open={wizardOpen}
+        onCancel={() => setWizardOpen(false)}
+        width={620}
+        footer={[
+          <Button key="back" disabled={wizardStep === 0}
+            onClick={() => setWizardStep((s) => s - 1)}>
+            上一步
+          </Button>,
+          wizardStep < 2 ? (
+            <Button key="next" type="primary" onClick={() => setWizardStep((s) => s + 1)}>
+              下一步
+            </Button>
+          ) : (
+            <Button key="done" type="primary" loading={busy === 'wizard'}
+              onClick={handleWizardFinish}>
+              生成工程
+            </Button>
+          ),
+        ]}
+      >
+        <Steps
+          size="small" current={wizardStep} style={{ marginBottom: 20 }}
+          items={[{ title: '选择配置段' }, { title: '命名工程' }, { title: '确认生成' }]}
+        />
+
+        {wizardStep === 0 && (
+          <div>
+            <Text type="secondary">勾选要打包进工程的配置段：</Text>
+            <div style={{ marginTop: 10 }}>
+              <Checkbox.Group
+                options={PROJECT_SECTIONS.map((s) => ({ label: s.label, value: s.key }))}
+                value={wizardSections}
+                onChange={(v) => setWizardSections(v as string[])}
+              />
+            </div>
+          </div>
+        )}
+
+        {wizardStep === 1 && (
+          <div>
+            <Text type="secondary">给工程起一个名字（将保存为 Project_&lt;名称&gt;.json）：</Text>
+            <Input
+              style={{ marginTop: 10 }}
+              value={wizardName}
+              onChange={(e) => setWizardName(e.target.value)}
+              placeholder="例如：CAN联调基线"
+              onPressEnter={() => setWizardStep(2)}
+            />
+          </div>
+        )}
+
+        {wizardStep === 2 && (
+          <div>
+            <Text strong>即将创建：</Text>
+            <div style={{ marginTop: 8 }}>
+              <div>工程文件：<Text code>Project_{wizardName.trim() || '（未命名）'}.json</Text></div>
+              <div style={{ marginTop: 6 }}>
+                包含配置段：
+                {wizardSections.length === 0
+                  ? <Text type="danger"> 未选择任何配置段</Text>
+                  : wizardSections.map((k) => (
+                      <Tag key={k} color="blue">
+                        {PROJECT_SECTIONS.find((s) => s.key === k)?.label || k}
+                      </Tag>
+                    ))}
+              </div>
+            </div>
+            <Alert
+              type="info" showIcon style={{ marginTop: 12 }}
+              message="创建工程不会影响当前系统配置"
+              description="向导只是把当前配置保存成一份工程文件；如需清空工作区重新开始，请使用「新建项目工程」。"
+            />
+          </div>
+        )}
       </Modal>
 
       <Modal

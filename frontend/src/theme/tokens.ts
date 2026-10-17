@@ -105,7 +105,12 @@ export const componentTokens = {
   siderWidth: 208,
   siderCollapsedWidth: 56,
   outputDockCollapsed: 34,
-  outputDockWidth: 420,
+  // 420 px was too narrow to read execution results inside the dock, so the
+  // expanded width grew; it is capped by a viewport share so a small screen
+  // still leaves room for the page itself (issue #20 acceptance: no horizontal
+  // scrollbar at 1280x720 with the dock open).
+  outputDockWidth: 720,
+  outputDockMaxVw: 58,
   headerHeight: 56,
   statusBarHeight: 32,
 

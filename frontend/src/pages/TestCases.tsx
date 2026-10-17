@@ -5,6 +5,7 @@ import {
   Popconfirm, Typography, Tooltip, Form, Input, Select,
   Row, Col, Empty, Divider, Badge, Alert
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, PlayCircleOutlined, EditOutlined,
   DeleteOutlined, ApartmentOutlined, ReloadOutlined,
@@ -248,7 +249,7 @@ export default function TestCases() {
     }
 
     return (
-      <Table
+      <DataTable
         size="small"
         rowKey="id"
         pagination={false}
@@ -595,7 +596,7 @@ export default function TestCases() {
       </div>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={testCases}
           rowKey="id"

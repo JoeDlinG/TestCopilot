@@ -76,3 +76,27 @@ body {
 .big-dash .ant-progress-inner:not(.ant-progress-circle) {
   background: rgba(255, 255, 255, 0.14);
 }
+
+/* ============ 无障碍（issue #20 / #21 验收项） ============ */
+/* 可交互元素必须有可见焦点环，且仅在键盘聚焦时出现（不干扰鼠标操作） */
+:focus-visible {
+  outline: 2px solid #2296C4;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* 移除鼠标点击时浏览器默认的焦点框，保留键盘的 :focus-visible */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* 尊重系统的"减弱动效"设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

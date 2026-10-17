@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, message, Typography, Modal, Form,
   Input, Select, Row, Col, Empty, Popconfirm, List
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, FileTextOutlined, DownloadOutlined,
   ReloadOutlined, EyeOutlined, FilePdfOutlined, FileExcelOutlined
@@ -96,6 +97,7 @@ export default function Reports() {
       title: '报告名称',
       dataIndex: 'title',
       key: 'title',
+      width: 240,
       render: (name: string, record: TestReport) => (
         <Space>
           {formatIcon(record.format)}
@@ -107,23 +109,27 @@ export default function Reports() {
       title: '格式',
       dataIndex: 'format',
       key: 'format',
+      width: 90,
       render: (f: string) => <Tag>{f.toUpperCase()}</Tag>,
     },
     {
       title: '执行数量',
       dataIndex: 'execution_ids',
       key: 'execution_ids',
+      width: 110,
       render: (ids: string[]) => ids?.length || 0,
     },
     {
       title: '生成时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
       title: '操作',
       key: 'actions',
+      width: 160,
       render: (_: any, record: TestReport) => (
         <Button
           size="small"
@@ -144,12 +150,14 @@ export default function Reports() {
       title: '字段数',
       dataIndex: 'fields',
       key: 'fields',
+      width: 140,
       render: (fields: any[]) => fields?.length || 0,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
   ]
@@ -184,7 +192,7 @@ export default function Reports() {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
           <Card title="报告列表">
-            <Table
+            <DataTable
               columns={reportColumns}
               dataSource={reports}
               rowKey="id"
@@ -196,7 +204,7 @@ export default function Reports() {
         </Col>
         <Col xs={24} lg={10}>
           <Card title="报告模板">
-            <Table
+            <DataTable
               columns={templateColumns}
               dataSource={templates}
               rowKey="id"

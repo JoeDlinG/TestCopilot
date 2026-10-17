@@ -3,7 +3,7 @@
 
 ; ---- Basic metadata ----
 !define APP_NAME "AITestLab"
-!define APP_VERSION "0.14.0"
+!define APP_VERSION "0.15.0"
 !define APP_PUBLISHER "AITestLab"
 !define APP_EXE "AITestLab.exe"
 

@@ -4,6 +4,7 @@ import {
   Row, Col, Drawer, Descriptions, Select, List, Alert, Tooltip,
   Checkbox, Modal, Spin
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlayCircleOutlined, PauseCircleOutlined, CheckCircleOutlined,
   CloseCircleOutlined, SyncOutlined, ReloadOutlined, ExclamationCircleOutlined,
@@ -906,12 +907,14 @@ export default function Executions() {
       title: '执行 ID',
       dataIndex: 'id',
       key: 'id',
+      width: 150,
       render: (id: string) => id.slice(0, 8) + '...',
     },
     {
       title: '测试用例',
       dataIndex: 'testcase_id',
       key: 'testcase_id',
+      width: 150,
       render: (id: string, record: any) => (
         <Space size={4}>
           <span>{record?.testcase_name || '（用例已删除）'}</span>
@@ -925,6 +928,7 @@ export default function Executions() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 100,
       render: (status: string) => {
         const config = statusConfig[status] || statusConfig.pending
         return (
@@ -938,24 +942,28 @@ export default function Executions() {
       title: '开始时间',
       dataIndex: 'started_at',
       key: 'started_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
       title: '结束时间',
       dataIndex: 'completed_at',
       key: 'completed_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
       title: '耗时 (ms)',
       dataIndex: 'duration_ms',
       key: 'duration_ms',
+      width: 110,
       render: (v: number) => v ?? '-',
     },
     {
       title: '结果详情',
       dataIndex: 'results',
       key: 'results',
+      width: 120,
       render: (results: any[]) => {
         if (!results?.length) return '-'
         return `${results.filter((r: any) => r.status === 'passed').length}/${results.length} 通过`
@@ -964,6 +972,7 @@ export default function Executions() {
     {
       title: '操作',
       key: 'actions',
+      width: 160,
       render: (_: any, record: TestExecution) => (
         <Space>
           <Button
@@ -1253,7 +1262,7 @@ export default function Executions() {
       </Row>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={executions}
           rowKey="id"
@@ -1372,7 +1381,7 @@ export default function Executions() {
               </Descriptions.Item>
             </Descriptions>
 
-            <Table
+            <DataTable
               size="small"
               rowKey="id"
               pagination={false}

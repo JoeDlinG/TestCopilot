@@ -429,6 +429,10 @@ export default function DebugTerminal() {
   const openTerminalAction = useTerminalStore((s) => s.openTerminal)
   const closeTerminalAction = useTerminalStore((s) => s.closeTerminal)
   const setActiveTab = useTerminalStore((s) => s.setActiveTab)
+  // Needed by the third column (指令 / 历史) rendered by this component.
+  const commandHistories = useTerminalStore((s) => s.commandHistories)
+  const setCommandInput = useTerminalStore((s) => s.setCommandInput)
+  const activeHistory: string[] = activeTabId ? (commandHistories[activeTabId] || []) : []
 
   const connectedDevices = devices.filter(
     (d: any) => d.status === 'connected'
@@ -707,6 +711,49 @@ export default function DebugTerminal() {
             </div>
           </>
         )}
+      </div>
+
+      {/* Third column — command history (issue #21).
+          Previously the terminal was only 设备列表 | 收发窗口; recalling an
+          earlier command meant retyping it, so the per-device history now has
+          its own column and inserts straight into the input box. */}
+      <div style={{
+        width: 260,
+        minWidth: 260,
+        borderLeft: '1px solid #e8e8e8',
+        background: '#fafafa',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #e8e8e8',
+        }}>
+          <Title level={5} style={{ margin: 0 }}>指令 / 历史</Title>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
+          {activeHistory.length === 0 ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              暂无历史指令（发送过的命令会按设备记录在此）
+            </Text>
+          ) : (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>点击填入输入框：</Text>
+              {[...activeHistory].reverse().slice(0, 40).map((cmd, i) => (
+                <Button
+                  key={i}
+                  size="small"
+                  block
+                  style={{ textAlign: 'left', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11 }}
+                  onClick={() => activeTabId && setCommandInput(activeTabId, cmd)}
+                >
+                  {cmd}
+                </Button>
+              ))}
+            </Space>
+          )}
+        </div>
       </div>
     </div>
   )

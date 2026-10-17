@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Modal,
-  Form, Input, Switch, Empty, Upload
+  Form, Input, Switch, Empty, Upload, Tabs, Spin
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, ReloadOutlined, PoweroffOutlined,
   PlayCircleOutlined, AppstoreAddOutlined, InboxOutlined, ApiOutlined,
@@ -16,7 +17,12 @@ import type { Plugin } from '../types'
 const { Title, Text } = Typography
 const { Dragger } = Upload
 
-export default function Plugins() {
+// The editor panels are heavy; keep them out of the initial bundle.
+const PluginEditorPanel = lazy(() => import('./PluginEditor'))
+const SkillEditorPanel = lazy(() => import('./SkillEditor'))
+
+/** The plugin list / upload / enable-disable screen (was the whole page). */
+function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) {
   const navigate = useNavigate()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(false)
@@ -114,6 +120,7 @@ export default function Plugins() {
       title: '插件名称',
       dataIndex: 'name',
       key: 'name',
+      width: 200,
       render: (name: string) => (
         <Space>
           <AppstoreAddOutlined />
@@ -125,24 +132,28 @@ export default function Plugins() {
       title: '版本',
       dataIndex: 'version',
       key: 'version',
+      width: 90,
       render: (v: string) => <Tag color="blue">v{v}</Tag>,
     },
     {
       title: '协议',
       dataIndex: 'protocol_type',
       key: 'protocol_type',
+      width: 130,
       render: (p: string) => <Tag>{p}</Tag>,
     },
     {
       title: '描述',
       dataIndex: 'description',
       key: 'description',
+      width: 240,
       ellipsis: true,
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 100,
       render: (status: string) => (
         <Tag color={status === 'enabled' ? 'green' : 'default'}>
           {status === 'enabled' ? '已启用' : '已禁用'}
@@ -152,6 +163,7 @@ export default function Plugins() {
     {
       title: '操作',
       key: 'actions',
+      width: 200,
       render: (_: any, record: Plugin) => (
         <Space>
           <Button
@@ -185,10 +197,16 @@ export default function Plugins() {
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadPlugins}>刷新</Button>
-          <Button icon={<CodeOutlined />} onClick={() => navigate('/plugin-editor')}>
+          <Button
+            icon={<CodeOutlined />}
+            onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}
+          >
             插件编辑器
           </Button>
-          <Button icon={<FileMarkdownOutlined />} onClick={() => navigate('/skill-editor')}>
+          <Button
+            icon={<FileMarkdownOutlined />}
+            onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}
+          >
             Skill 编辑器
           </Button>
           <Button
@@ -216,9 +234,9 @@ export default function Plugins() {
           </p>
           <p>参考示例：<code>plugins/example_plugin.py</code> (Modbus RTU 协议)</p>
           <p>
-            更推荐：打开「<a onClick={() => navigate('/plugin-editor')}>插件编辑器</a>」
+            更推荐：打开「<a onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}>插件编辑器</a>」
             选择模板（协议 / 设备驱动 / 数据解析 / 报告模板）一键生成带示例的插件骨架；
-            Skill（AI 用例生成指南）可在「<a onClick={() => navigate('/skill-editor')}>Skill 编辑器</a>」中导入与修改。
+            Skill（AI 用例生成指南）可在「<a onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}>Skill 编辑器</a>」中导入与修改。
           </p>
         </div>
       </Card>
@@ -233,7 +251,7 @@ export default function Plugins() {
         {discovered.length === 0 ? (
           <Empty description="未在 plugins/ 目录发现可安装插件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
-          <Table
+          <DataTable
             dataSource={discovered}
             rowKey={(r: any) => r.module_name}
             pagination={false}
@@ -264,7 +282,7 @@ export default function Plugins() {
       </Card>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={plugins}
           rowKey="id"
@@ -299,6 +317,59 @@ export default function Plugins() {
           </Form.Item>
         </Form>
       </Modal>
+    </div>
+  )
+}
+
+/**
+ * 插件中心 (issue #21): one route, three tabs.
+ *
+ * Plugin management, the plugin editor and the skill editor used to be three
+ * peer menu entries, which scattered a single concept across the navigation.
+ * They now share `/plugins`. The old routes are kept working (App.tsx maps them
+ * here with an explicit tab) so existing links and bookmarks still land
+ * somewhere sensible.
+ */
+export default function Plugins({ tab }: { tab?: string }) {
+  const [active, setActive] = useState(
+    tab === 'editor' ? 'editor' : tab === 'skill' ? 'skill' : 'manage',
+  )
+
+  useEffect(() => {
+    if (tab === 'editor' || tab === 'skill') setActive(tab)
+  }, [tab])
+
+  return (
+    <div className="page-container">
+      <Tabs
+        activeKey={active}
+        onChange={setActive}
+        items={[
+          {
+            key: 'manage',
+            label: <span><AppstoreAddOutlined /> 插件管理</span>,
+            children: <PluginManagement onOpenTab={setActive} />,
+          },
+          {
+            key: 'editor',
+            label: <span><CodeOutlined /> 插件编辑器</span>,
+            children: (
+              <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
+                <PluginEditorPanel />
+              </Suspense>
+            ),
+          },
+          {
+            key: 'skill',
+            label: <span><FileMarkdownOutlined /> Skill 编辑器</span>,
+            children: (
+              <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
+                <SkillEditorPanel />
+              </Suspense>
+            ),
+          },
+        ]}
+      />
     </div>
   )
 }

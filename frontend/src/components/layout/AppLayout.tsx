@@ -18,6 +18,8 @@ import {
   OrderedListOutlined,
   FolderOpenOutlined,
   DownOutlined,
+  SearchOutlined,
+  FullscreenExitOutlined,
   BulbOutlined,
   BulbFilled,
   // Issue #20: a beaker reads as "chemistry lab"; test cases are about
@@ -30,7 +32,9 @@ import { useI18n, LOCALES } from '../../i18n'
 import { useTheme } from '../../theme'
 import { useOutputDock } from '../../stores/outputDockStore'
 import { componentTokens } from '../../theme/tokens'
+import { NAV_GROUPS, TOP_MENUS } from '../../config/navigation'
 import OutputDock from './OutputDock'
+import CommandPalette from './CommandPalette'
 
 const { Header, Sider, Content } = Layout
 
@@ -40,39 +44,10 @@ const { Header, Sider, Content } = Layout
  * The previous 15-item flat list mixed configuration with delivery, so authors
  * kept bouncing between "write" and "watch". Execution and reports now live in
  * the right-hand dock; the three plugin pages collapse into one entry.
+ *
+ * The definition itself lives in ``src/config/navigation.ts`` so the sidebar,
+ * the top-bar dropdowns and the ⌘K palette stay in sync.
  */
-const NAV_GROUPS: {
-  key: string
-  labelKey: string
-  items: { key: string; icon: React.ReactNode; labelKey: string }[]
-}[] = [
-  {
-    key: 'g-config',
-    labelKey: 'nav.group.config',
-    items: [
-      { key: '/devices', icon: <ApiOutlined />, labelKey: 'nav.devices' },
-    ],
-  },
-  {
-    key: 'g-design',
-    labelKey: 'nav.group.design',
-    items: [
-      { key: '/testcases', icon: <DiffOutlined />, labelKey: 'nav.testcases' },
-      { key: '/ai', icon: <RobotOutlined />, labelKey: 'nav.ai' },
-      { key: '/execution-plans', icon: <OrderedListOutlined />, labelKey: 'nav.plans' },
-      { key: '/debug-terminal', icon: <CodeOutlined />, labelKey: 'nav.debugTerminal' },
-    ],
-  },
-  {
-    key: 'g-system',
-    labelKey: 'nav.group.system',
-    items: [
-      { key: '/plugins', icon: <AppstoreAddOutlined />, labelKey: 'nav.pluginCenter' },
-      { key: '/model-config', icon: <SettingOutlined />, labelKey: 'nav.modelConfig' },
-      { key: '/projects', icon: <FolderOpenOutlined />, labelKey: 'nav.projects' },
-    ],
-  },
-]
 
 export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false)
@@ -80,12 +55,26 @@ export default function AppLayout() {
   const location = useLocation()
   const { token } = theme.useToken()
   const [restarting, setRestarting] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const { t, locale, setLocale } = useI18n()
   const { mode, toggle: toggleTheme } = useTheme()
   const dockState = useOutputDock((s) => s.state)
   const dockPinned = useOutputDock((s) => s.pinned)
   const collapseDock = useOutputDock((s) => s.collapse)
   const runningCount = useOutputDock((s) => s.runningCount)
+
+  // ⌘K / Ctrl+K — the sidebar only has 8 entries, so a searchable palette is
+  // the fast path to deep pages (issue #21).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Global status bar data (cheap: one small request, refreshed slowly).
   const [connectedDevices, setConnectedDevices] = useState(0)
@@ -127,6 +116,19 @@ export default function AppLayout() {
   // aside while one of those pages is the actual route.
   const dockIsRoute =
     location.pathname.startsWith('/executions') || location.pathname.startsWith('/reports')
+
+  // Immersive mode (issue #21): the flow editor needs every pixel, so the
+  // sidebar folds and the dock steps aside while editing. The header keeps an
+  // explicit exit so the user is never trapped without chrome.
+  const isFlowRoute = location.pathname.includes('/flow')
+  const [immersiveOff, setImmersiveOff] = useState(false)
+  const immersive = isFlowRoute && !immersiveOff
+
+  useEffect(() => {
+    if (!isFlowRoute) setImmersiveOff(false)
+  }, [isFlowRoute])
+
+  const siderCollapsed = collapsed || immersive
   const selectedKey = '/' + location.pathname.split('/')[1]
 
   const menuItems = NAV_GROUPS.map((group) => ({
@@ -145,7 +147,7 @@ export default function AppLayout() {
       <Sider
         trigger={null}
         collapsible
-        collapsed={collapsed}
+        collapsed={siderCollapsed}
         theme="light"
         width={componentTokens.siderWidth}
         collapsedWidth={componentTokens.siderCollapsedWidth}
@@ -191,40 +193,48 @@ export default function AppLayout() {
           <Space size={4}>
             <Button
               type="text"
+              disabled={immersive}
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               onClick={() => setCollapsed(!collapsed)}
             />
-            <Dropdown
-              menu={{
-                items: [
-                  { key: '/', icon: <DashboardOutlined />, label: t('nav.dashboard') },
-                  { key: '/dashboards', icon: <AppstoreAddOutlined />, label: t('nav.customDashboard') },
-                ],
-                onClick: ({ key }) => navigate(key),
-              }}
-            >
-              <Button type="text">
-                <Space size={4}>
-                  {t('top.dashboards')}
-                  <DownOutlined style={{ fontSize: 10 }} />
-                </Space>
-              </Button>
-            </Dropdown>
-            <Dropdown
-              menu={{
-                items: [
-                  { key: '/logs', icon: <FileTextOutlined />, label: t('nav.logs') },
-                ],
-                onClick: ({ key }) => navigate(key),
-              }}
-            >
-              <Button type="text">
-                <Space size={4}>
-                  {t('top.tools')}
-                  <DownOutlined style={{ fontSize: 10 }} />
-                </Space>
-              </Button>
-            </Dropdown>
+            {immersive && (
+              <Tooltip title="退出沉浸模式">
+                <Button
+                  size="small"
+                  icon={<FullscreenExitOutlined />}
+                  onClick={() => setImmersiveOff(true)}
+                >
+                  退出沉浸
+                </Button>
+              </Tooltip>
+            )}
+            {TOP_MENUS.map((menu) => (
+              <Dropdown
+                key={menu.key}
+                menu={{
+                  items: menu.items.map((item) => ({
+                    key: item.key,
+                    icon: item.icon,
+                    label: t(item.labelKey),
+                  })),
+                  onClick: ({ key }) => navigate(key),
+                }}
+              >
+                <Button type="text">
+                  <Space size={4}>
+                    {t(menu.labelKey)}
+                    <DownOutlined style={{ fontSize: 10 }} />
+                  </Space>
+                </Button>
+              </Dropdown>
+            ))}
+            <Tooltip title="全局搜索 / 跳转（⌘K / Ctrl+K）">
+              <Button
+                type="text"
+                icon={<SearchOutlined />}
+                onClick={() => setPaletteOpen(true)}
+              />
+            </Tooltip>
           </Space>
 
           <Space size={8}>
@@ -282,7 +292,8 @@ export default function AppLayout() {
           <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}>
             <Outlet />
           </div>
-          {!dockIsRoute && <OutputDock />}
+          {!dockIsRoute && !immersive && <OutputDock />}
+          <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
         </Content>
       </Layout>
     </Layout>

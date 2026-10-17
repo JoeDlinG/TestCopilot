@@ -60,7 +60,12 @@ export default function OutputDock() {
           cursor: 'pointer',
         }}
         onClick={() => expand()}
-        title="展开 输出 / 交付"
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          expand()
+          setFullscreen(true)
+        }}
+        title="单击展开（420→720px），双击直接全屏"
       >
         <ArrowLeftOutlined style={{ fontSize: 12, opacity: 0.7 }} />
         <Badge
@@ -91,8 +96,12 @@ export default function OutputDock() {
   return (
     <div
       style={{
-        width: isFull ? '100%' : componentTokens.outputDockWidth,
-        flex: isFull ? '1 1 100%' : `0 0 ${componentTokens.outputDockWidth}px`,
+        width: isFull
+          ? '100%'
+          : `min(${componentTokens.outputDockWidth}px, ${componentTokens.outputDockMaxVw}vw)`,
+        flex: isFull
+          ? '1 1 100%'
+          : `0 0 min(${componentTokens.outputDockWidth}px, ${componentTokens.outputDockMaxVw}vw)`,
         display: 'flex',
         flexDirection: 'column',
         minWidth: 0,

@@ -112,7 +112,10 @@
   - **v0.14.0**（GUI 重构，同分支）：**Issue #20 三区布局 P0–P2** —— 主题 Token（3 主色 + 1 状态色）、
     左侧 3 组 8 项 + 顶栏下拉 + 状态条、右侧「输出/交付」抽屉（三态 / 双 Tab / pin / 启动自动展开 / 运行徽标）、
     组件规范 `DataTable`/`StatusTag`/`PageContainer`/`EmptyState`/`MonoText`（闭环 #17 / #19）；
-    `.big-dash` 的 !important 清零、烧杯图标全站清除。**P3 页面级优化未做，Issue 保持开启**
+    `.big-dash` 的 !important 清零、烧杯图标全站清除
+- **v0.15.0**（GUI 收尾，同分支）：**Issue #21（P3 页面级优化）已实现并关闭** —— 抽屉宽度 420→720px
+  且单击展开/双击全屏、插件三路由合并为单一 `/plugins`（Tab）、⌘K 命令面板、调试终端补第三栏
+  「指令/历史」、流程图沉浸模式、项目向导、剩余表格页 `DataTable` 收尾、焦点环与减弱动效
   - 增强功能（#1 → #5 → #4 → Skill/插件编辑器 → 延时/并行执行）在新分支 `feature/flow-enhancements` 上逐个版本推进
 
 ## 🔧 进行中 (In Progress)
@@ -122,6 +125,24 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v0.15.0 — 抽屉展开面积 + P3 页面级优化（Issue #21，从 #20 拆分）（2026-10-17，分支 `feature/flow-enhancements`）
+
+- [x] **抽屉宽度与交互**：展开宽度 420px → `min(720px, 58vw)`（按视口收敛）；
+      收起态**单击展开、双击直接全屏**；**全屏按钮保留**（`Esc` 退出）
+- [x] **插件中心三路由合并**：`/plugins` + `/plugin-editor` + `/skill-editor` → 单一 `/plugins` 路由内三个 Tab；
+      编辑器面板 `lazy()` 懒加载；**旧路由保留并自动落到对应 Tab**
+- [x] **⌘K / Ctrl+K 命令面板**：搜索导航 12 项 + 设备（按设备ID号/名称）+ 用例（直达流程图）；
+      `↑↓`/`Enter`/`Esc` 全键盘可达；导航定义抽到 `src/config/navigation.tsx` 供侧栏/顶栏/面板共用
+- [x] **三栏布局**：执行计划复核为**原本已是三栏**（6/13/5），补齐缺 width 的「用例」列；
+      调试终端由两栏扩为三栏，新增「指令 / 历史」列（按设备记录，点击填入输入框）
+- [x] **流程图沉浸模式**：进入 `/testcases/:id/flow` 自动收起侧栏并让输出区让位，顶栏提供「退出沉浸」
+- [x] **项目向导**：三步「选配置段 → 命名 → 生成」，复用另存为能力；不改动当前系统配置
+- [x] **P2 收尾**：Logs / Reports / Plugins / ExecutionPlanner / Executions / TestCases 全部改用
+      `DataTable` 并补齐列宽，消除列宽告警
+- [x] **无障碍**：新增 `:focus-visible` 焦点环（仪器蓝）、`prefers-reduced-motion` 关闭动画
+- [x] 验证：`tsc` + `npm run build` 通过；dev 可编译全部新模块；`Test/` 7 个全 PASS；
+      15 端点失败数 0；用例 89 条、设备 DEV-001~004 完整；**Issue #21 已关闭**
 
 ### v0.14.0 — GUI 三区布局重构（Issue #20，P0–P2）（2026-10-17，分支 `feature/flow-enhancements`）
 

@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, message, Typography, Select,
   DatePicker, Input, Row, Col, Empty
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   ReloadOutlined, DownloadOutlined, SearchOutlined,
   ArrowUpOutlined, ArrowDownOutlined
@@ -118,6 +119,7 @@ export default function Logs() {
       title: '数据内容',
       dataIndex: 'raw_data',
       key: 'raw_data',
+      width: 320,
       render: (data: string) => (
         <div style={{ maxWidth: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           <code style={{ fontSize: 12 }}>{data || '-'}</code>
@@ -128,7 +130,7 @@ export default function Logs() {
       title: 'Hex',
       dataIndex: 'raw_data_hex',
       key: 'raw_data_hex',
-      width: 150,
+      width: 180,
       render: (hex: string) => (
         <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{hex || '-'}</code>
       ),
@@ -171,7 +173,7 @@ export default function Logs() {
       </Card>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={logs}
           rowKey="id"
