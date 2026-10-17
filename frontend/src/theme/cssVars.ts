@@ -59,8 +59,6 @@ interface Surfaces {
   tintFg: string
   badgeFg: string
   amberFg: string
-  conditionBg: string
-  conditionBorder: string
 }
 
 const LIGHT: Surfaces = {
@@ -76,9 +74,6 @@ const LIGHT: Surfaces = {
   tintFg: blue[700],
   badgeFg: graphite[800],
   amberFg: amber[700],
-  // White text needs a slightly deeper blue in light mode.
-  conditionBg: blue[600],
-  conditionBorder: blue[700],
 }
 
 const DARK: Surfaces = {
@@ -94,8 +89,6 @@ const DARK: Surfaces = {
   tintFg: blue[300],
   badgeFg: graphite[100],
   amberFg: amber[500],
-  conditionBg: blue[700],
-  conditionBorder: blue[600],
 }
 
 function flowVars(v: Surfaces): string {
@@ -108,35 +101,58 @@ function flowVars(v: Surfaces): string {
     `    --flow-border: ${v.border};`,
     `    --flow-code-bg: ${v.codeBg};`,
     `    --flow-code-fg: ${v.codeFg};`,
-    // ---- Node surfaces (issue #22 follow-up) ---------------------------- //
-    // Fill is graphite, NOT near-black: #1C2228 read as pure black on screen.
-    // Text is white on every surface, which is only safe because *every* type
-    // now has a real fill (开始 / 延时 used to be transparent).
-    `    --flow-node-bg: ${graphite[700]};`,      // 标准
-    `    --flow-node-bg-alt: ${graphite[600]};`,  // 初始化 — 浅一档
-    `    --flow-node-bg-dim: ${graphite[800]};`,  // 结束 — 深一档
-    `    --flow-node-fg: #FFFFFF;`,
-    `    --flow-node-fg-dim: rgba(255, 255, 255, 0.72);`,
-    `    --flow-node-border: ${graphite[500]};`,
-    // 开始 / 初始化 — instrument-blue outline on the graphite fill.
-    `    --flow-node-outline-bg: ${graphite[700]};`,
-    `    --flow-node-outline-border: ${blue[500]};`,
-    // 判断 — instrument blue (was graphite); the diamond is the only blue type.
-    `    --flow-condition-bg: ${v.conditionBg};`,
-    `    --flow-condition-border: ${v.conditionBorder};`,
-    // 延时 — dashed border, de-emphasised.
-    `    --flow-node-dashed-bg: ${graphite[700]};`,
-    `    --flow-node-dashed-border: ${graphite[300]};`,
+    // ------------------------------------------------------------------ //
+    // Node surfaces — 莫兰迪（Morandi）色调
+    //
+    // Low-saturation, mid-value fills so the canvas reads as one muted family.
+    // Every mix() below is derived from the primitives, so the palette stays
+    // governed by tokens.ts. All types carry WHITE text except 循环, which is
+    // deliberately light-amber-on-dark-amber.
+    // ------------------------------------------------------------------ //
+    `    --flow-node-solid-bg: ${graphite[700]};`,
+    `    --flow-node-weak-bg: ${graphite[600]};`,
+    // 开始 — 深莫兰迪蓝
+    `    --flow-node-start-bg: ${mix(blue[700], graphite[700], 0.70)};`,
+    `    --flow-node-start-fg: ${graphite[0]};`,
+    `    --flow-node-start-border: ${mix(blue[700], graphite[500], 0.55)};`,
+    // 初始化 — 蓝灰（低饱和，介于开始与判断之间）
+    `    --flow-node-init-bg: ${mix(blue[500], graphite[500], 0.42)};`,
+    `    --flow-node-init-fg: ${graphite[0]};`,
+    `    --flow-node-init-border: ${mix(blue[600], graphite[400], 0.45)};`,
+    // 操作 — 石墨灰（明确不是纯黑：#1C2228 太沉，改用 #3D4752）
+    `    --flow-node-action-bg: ${graphite[600]};`,
+    `    --flow-node-action-fg: ${graphite[0]};`,
+    `    --flow-node-action-border: ${graphite[500]};`,
+    // 判断 — 仪器蓝（偏浅）：比原先的深灰菱形亮，但仍够承载白字
+    `    --flow-node-cond-bg: ${mix(blue[600], graphite[600], 0.72)};`,
+    `    --flow-node-cond-fg: ${graphite[0]};`,
+    `    --flow-node-cond-border: ${mix(blue[700], graphite[400], 0.60)};`,
+    // 循环 — 浅琥珀底 + 深琥珀字（唯一不使用白字的类型）。
+    // 直接用 amber[700] 对 #F9E9CE 只有 3.0:1，达不到 AA，故再向石墨压暗。
+    `    --flow-node-loop-bg: ${amber[100]};`,
+    `    --flow-node-loop-fg: ${mix(amber[700], graphite[900], 0.70)};`,
+    `    --flow-node-loop-border: ${amber[500]};`,
+    `    --flow-loop-bar: ${amber[500]};`,
+    // 延时 — 中灰 + 虚线（弱化）
+    `    --flow-node-delay-bg: ${graphite[500]};`,
+    `    --flow-node-delay-fg: ${graphite[0]};`,
+    `    --flow-node-delay-border: ${graphite[300]};`,
+    // 结束 — 深灰（弱化，且绝不用红：红色专属 FAIL/ERROR）
+    `    --flow-node-end-bg: ${graphite[800]};`,
+    `    --flow-node-end-fg: ${graphite[0]};`,
+    `    --flow-node-end-border: ${graphite[600]};`,
+    // ------------------------------------------------------------------ //
+    // 连接点（handles）：统一仪器蓝 + 轮廓线，选中高亮。
+    // 判断的「是/非」两个出口仍保留深浅对比，但同属蓝色系。
+    // ------------------------------------------------------------------ //
+    `    --flow-handle-bg: ${blue[500]};`,
+    `    --flow-handle-border: ${graphite[50]};`,
+    `    --flow-handle-active: ${blue[300]};`,
+    `    --flow-handle-true: ${blue[700]};`,
+    `    --flow-handle-false: ${blue[300]};`,
     // Selection ring (blue) is a *state* layer, independent of node type.
     `    --flow-selected: ${rgba(blue[500], 0.45)};`,
-    // 循环 — the only amber type (1px ring + 3px left bar).
-    `    --flow-loop-bar: ${amber[500]};`,
-    `    --flow-loop-fg: ${amber[500]};`,
-    // Connection points are uniformly instrument blue and brighten on
-    // hover / selection, so they read as "grab me" on every node type.
-    `    --flow-handle: ${blue[500]};`,
-    `    --flow-handle-active: ${blue[300]};`,
-    `    --flow-handle-halo: ${rgba(blue[500], 0.35)};`,
+    `    --flow-selected-solid: ${graphite[850]};`,
     // IO badges sit on every node surface, so they need a neutral that reads
     // on both the graphite fill and the light blue tint.
     `    --flow-badge-bg: ${mix(graphite[200], v.canvasBg, 0.25)};`,

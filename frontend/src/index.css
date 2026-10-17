@@ -141,3 +141,16 @@ body {
 .react-flow .react-flow__handle.flow-handle-muted {
   opacity: 0.75;
 }
+
+/* 连接点：统一仪器蓝 + 轮廓线；选中时高亮。
+   选择器加 .react-flow 提升优先级，避免被 reactflow 自带样式覆盖。 */
+.react-flow .react-flow__handle {
+  background: var(--flow-handle-bg);
+  border: 1px solid var(--flow-handle-border);
+  width: 9px;
+  height: 9px;
+}
+.react-flow .react-flow__node.selected .react-flow__handle {
+  background: var(--flow-handle-active);
+  box-shadow: 0 0 0 2px var(--flow-selected);
+}
