@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 import { ConfigProvider, theme } from 'antd'
 import { antdTokens, type ThemeMode } from './tokens'
+import { cssVars } from './cssVars'
 
 export { primitives, semantic, componentTokens, graphite, blue, amber, red } from './tokens'
 export type { ThemeMode } from './tokens'
@@ -51,6 +52,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return (
     <ThemeContext.Provider value={value}>
+      {/* The flow editor (and any canvas/SVG surface) reads the palette through
+          these variables, so it follows the theme without hard-coded colours. */}
+      <style>{cssVars}</style>
       <ConfigProvider
         theme={{
           algorithm: mode === 'dark' ? theme.darkAlgorithm : theme.defaultAlgorithm,

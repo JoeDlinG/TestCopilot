@@ -100,3 +100,26 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============ 流程图编辑器（issue #22） ============ */
+/* 运行中态：琥珀脉冲光晕 —— 与「循环」节点的静态琥珀描边走不同形态通道，
+   动态 vs 静止，因此不会被误读成同一件事。 */
+@keyframes flow-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}
+.flow-pulse {
+  animation: flow-pulse 1.4s ease-in-out infinite;
+}
+
+/* 节点面板拖拽块：hover 抬升 + 手型反馈 */
+.flow-palette-chip {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.flow-palette-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+.flow-palette-chip:active {
+  cursor: grabbing;
+}

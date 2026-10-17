@@ -29,6 +29,9 @@ import {
   DeleteOutlined, DatabaseOutlined, ImportOutlined, ExportOutlined,
   CopyOutlined, SnippetsOutlined, DiffOutlined, ClockCircleOutlined,
   FullscreenOutlined, FullscreenExitOutlined,
+  // Native undo/redo: 返回 and 撤销 both used ArrowLeftOutlined, and redo was
+  // that same arrow mirrored horizontally. Both now have their own glyph.
+  UndoOutlined, RedoOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { testCaseAPI, deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
@@ -45,96 +48,210 @@ interface FlowNode extends Node {
 // Custom node components
 // ---------------------------------------------------------------------------
 
+/**
+ * Node type encoding (issue #22, 方案 A).
+ *
+ * Every type is distinguished by **shape / icon / fill mode** — never by a
+ * dedicated hue. Amber is the single exception and is reserved for 循环, whose
+ * iteration boundary is the thing engineers most need to spot.
+ *
+ *   开始   描边空心        初始化 低饱和蓝底     操作   石墨实心
+ *   判断   菱形（形状编码） 循环   琥珀描边+左色条  延时   虚线边框
+ *   结束   弱化深底
+ *
+ * Colours come from CSS variables emitted from ``src/theme/tokens.ts``, so the
+ * whole canvas follows the light/dark switch with no hard-coded hex here.
+ */
+type NodeKind = 'outline' | 'tint' | 'solid' | 'diamond' | 'loop' | 'dashed' | 'dim'
+
+const NODE_BASE: React.CSSProperties = {
+  padding: '10px 18px',
+  // The old start/end pills used 20px; the system caps radii at 6px.
+  borderRadius: 6,
+  fontWeight: 600,
+  fontSize: 12,
+  minWidth: 140,
+  textAlign: 'center',
+  wordBreak: 'break-word',
+}
+
+function nodeSurface(kind: NodeKind): React.CSSProperties {
+  switch (kind) {
+    case 'outline': // 开始 — hollow, blue outline
+      return {
+        background: 'var(--flow-node-outline-bg)',
+        color: 'var(--flow-node-outline-fg)',
+        border: '1px solid var(--flow-node-outline-border)',
+      }
+    case 'tint': // 初始化 — low-saturation blue wash
+      return {
+        background: 'var(--flow-node-tint-bg)',
+        color: 'var(--flow-node-tint-fg)',
+        border: '1px solid var(--flow-node-outline-border)',
+      }
+    case 'solid': // 操作 — standard graphite
+      return {
+        background: 'var(--flow-node-solid-bg)',
+        color: 'var(--flow-node-solid-fg)',
+        border: '1px solid var(--flow-border)',
+      }
+    case 'loop': // 循环 — the only amber type: 1px ring + 3px left bar
+      return {
+        background: 'var(--flow-node-solid-bg)',
+        color: 'var(--flow-loop-fg)',
+        border: '1px solid var(--flow-loop-bar)',
+        borderLeft: '3px solid var(--flow-loop-bar)',
+      }
+    case 'dashed': // 延时 — dashed, de-emphasised
+      return {
+        background: 'var(--flow-node-outline-bg)',
+        color: 'var(--flow-node-dashed-fg)',
+        border: '1px dashed var(--flow-node-dashed-border)',
+      }
+    case 'dim': // 结束 — dark, de-emphasised (never red: red = FAIL/ERROR)
+      return {
+        background: 'var(--flow-node-dim-bg)',
+        color: 'var(--flow-node-dim-fg)',
+        border: '1px solid var(--flow-border)',
+      }
+    default:
+      return { background: 'var(--flow-node-solid-bg)', color: 'var(--flow-node-solid-fg)' }
+  }
+}
+
+const handleColor = (kind: NodeKind) =>
+  kind === 'loop'
+    ? 'var(--flow-loop-bar)'
+    : kind === 'outline' || kind === 'tint'
+      ? 'var(--flow-node-outline-border)'
+      : 'var(--flow-node-solid-fg)'
+
+/**
+ * Runtime state is a *separate layer* from node type (issue #22).
+ *
+ * - 运行中 = amber **pulsing halo** + spinning corner badge → dynamic
+ * - 失败   = red ring → static
+ *
+ * Because it is a halo rather than a fill, it never competes with the static
+ * amber border of a 循环 node.
+ */
+function NodeRuntimeRing({ data, children }: { data: any; children: React.ReactNode }) {
+  const state = data?.runtimeState
+  if (!state) return <>{children}</>
+  const color = state === 'failed' ? 'var(--flow-failed)' : 'var(--flow-running)'
+  return (
+    <div style={{ position: 'relative' }}>
+      {children}
+      <span
+        className={state === 'running' ? 'flow-pulse' : undefined}
+        style={{
+          position: 'absolute', inset: -5, borderRadius: 8,
+          boxShadow: `0 0 0 2px ${color}`, pointerEvents: 'none',
+        }}
+      />
+      {state === 'running' && (
+        <SyncOutlined
+          spin
+          style={{
+            position: 'absolute', top: -9, right: -9, fontSize: 13, color,
+            background: 'var(--flow-node-solid-bg)', borderRadius: '50%', padding: 2,
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
 function StartNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '8px 20px', borderRadius: 20,
-      background: '#52c41a', color: '#fff', fontWeight: 600,
-      fontSize: 13, minWidth: 100, textAlign: 'center', border: '2px solid #389e0d',
-    }}>
-      {data.label}
-      <Handle type="source" position={Position.Bottom} style={{ background: '#389e0d' }} />
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('outline'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+        <PlayCircleOutlined style={{ fontSize: 14 }} />
+        {data.label}
+        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('outline') }} />
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function EndNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '8px 20px', borderRadius: 20,
-      background: '#ff4d4f', color: '#fff', fontWeight: 600,
-      fontSize: 13, minWidth: 100, textAlign: 'center', border: '2px solid #cf1322',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#cf1322' }} />
-      {data.label}
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('dim'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+        <Handle type="target" position={Position.Top} style={{ background: handleColor('dim') }} />
+        <StopOutlined style={{ fontSize: 14 }} />
+        {data.label}
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function ActionNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: '#1677ff', color: '#fff', fontWeight: 500,
-      fontSize: 12, minWidth: 140, textAlign: 'center',
-      border: '2px solid #0958d9', wordBreak: 'break-word',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#0958d9' }} />
-      {data.label}
-      <NodeIoBadges data={data} />
-      <Handle type="source" position={Position.Bottom} style={{ background: '#0958d9' }} />
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('solid') }}>
+        <Handle type="target" position={Position.Top} style={{ background: handleColor('solid') }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+          <ThunderboltOutlined style={{ fontSize: 14 }} />
+          {data.label}
+        </div>
+        <NodeIoBadges data={data} />
+        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('solid') }} />
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function ConditionNode({ data, selected }: NodeProps) {
+  // 判断 is encoded purely by shape: the diamond carries no hue at all, so it
+  // remains unambiguous in a greyscale screenshot.
   return (
-    <div style={{
-      width: 140, height: 70, position: 'relative',
-    }}>
-      {/* Diamond shape */}
-      <svg width="140" height="70" style={{ position: 'absolute', top: 0, left: 0 }}>
-        <polygon
-          points="70,2 138,35 70,68 2,35"
-          fill={selected ? '#faad14' : '#ffc53d'}
-          stroke="#d48806" strokeWidth="2"
-        />
-      </svg>
-      <div style={{
-        position: 'relative', zIndex: 2, width: 140, height: 70,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, fontWeight: 600, color: '#333', textAlign: 'center',
-        padding: '0 30px', lineHeight: 1.3,
-      }}>
-        {data.label}
+    <NodeRuntimeRing data={data}>
+      <div style={{ width: 140, height: 70, position: 'relative' }}>
+        <svg width="140" height="70" style={{ position: 'absolute', top: 0, left: 0 }}>
+          <polygon
+            points="70,2 138,35 70,68 2,35"
+            fill={selected ? 'var(--flow-node-solid-bg)' : 'var(--flow-node-weak-bg)'}
+            stroke="var(--flow-node-solid-fg)"
+            strokeWidth={selected ? 2 : 1}
+          />
+        </svg>
+        <div style={{
+          position: 'relative', zIndex: 2, width: 140, height: 70,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 600, color: 'var(--flow-node-solid-fg)',
+          textAlign: 'center', padding: '0 30px', lineHeight: 1.3,
+        }}>
+          {data.label}
+        </div>
+        <Handle type="target" position={Position.Top}
+          style={{ background: 'var(--flow-node-solid-fg)', top: 0, left: '50%' }} />
+        {/* True / false exits differ by lightness only — never green/red. */}
+        <Handle type="source" position={Position.Bottom} id="s-true"
+          style={{ background: 'var(--flow-node-solid-fg)', bottom: -2, left: '30%' }} />
+        <Handle type="source" position={Position.Bottom} id="s-false"
+          style={{ background: 'var(--flow-node-dim-fg)', bottom: -2, left: '70%' }} />
       </div>
-      <Handle type="target" position={Position.Top}
-        style={{ background: '#d48806', top: 0, left: '50%' }} />
-      <Handle type="source" position={Position.Bottom} id="s-true"
-        style={{ background: '#52c41a', bottom: -2, left: '30%' }} />
-      <Handle type="source" position={Position.Bottom} id="s-false"
-        style={{ background: '#ff4d4f', bottom: -2, left: '70%' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
-function LoopNode({ data, selected }: NodeProps) {
+function LoopNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#722ed1' : '#9254de',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #531dab',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <SyncOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#531dab' }} />
-      <div>
-        {data.label}
-        <NodeIoBadges data={data} />
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('loop'),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <SyncOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} style={{ background: handleColor('loop') }} />
+        <div>
+          {data.label}
+          <NodeIoBadges data={data} />
+        </div>
+        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('loop') }} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#531dab' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -142,17 +259,15 @@ function LoopNode({ data, selected }: NodeProps) {
 function InitNode({ data, selected }: NodeProps) {
   const vars: any[] = (data as any)?.variables || []
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#08979c' : '#13c2c2',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #006d75',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <DatabaseOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#006d75' }} />
-      <div>
-        <div>{data.label}</div>
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('tint'), ...(selected ? { outline: '2px solid var(--flow-selected)' } : null),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <DatabaseOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} style={{ background: handleColor('tint') }} />
+        <div>
+          <div>{data.label}</div>
         {vars.length > 0 && (
           <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
             {vars.slice(0, 3).map((v: any, i: number) => (
@@ -161,10 +276,11 @@ function InitNode({ data, selected }: NodeProps) {
             {vars.length > 3 ? ` +${vars.length - 3}` : ''}
           </div>
         )}
-        <NodeIoBadges data={data} />
+          <NodeIoBadges data={data} />
+        </div>
+        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('tint') }} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#006d75' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -172,24 +288,23 @@ function InitNode({ data, selected }: NodeProps) {
 function DelayNode({ data, selected }: NodeProps) {
   const ms = (data as any)?.duration
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#d46b08' : '#fa8c16',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #ad4e00',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <ClockCircleOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#ad4e00' }} />
-      <div>
-        <div>{data.label}</div>
-        <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
-          延时 {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('dashed'), ...(selected ? { outline: '2px solid var(--flow-selected)' } : null),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <ClockCircleOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} style={{ background: handleColor('dashed') }} />
+        <div>
+          <div>{data.label}</div>
+          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
+            延时 {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+          </div>
+          <NodeIoBadges data={data} />
         </div>
-        <NodeIoBadges data={data} />
+        <Handle type="source" position={Position.Bottom} style={{ background: handleColor('dashed') }} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#ad4e00' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -201,15 +316,19 @@ function NodeIoBadges({ data }: { data: any }) {
   const inputs: any[] = data?.inputs || []
   const outputs: any[] = data?.outputs || []
   if (inputs.length === 0 && outputs.length === 0) return null
+  // A translucent white badge was invisible on the light surfaces (开始 / 初始化)
+  // and unusable in dark mode; the neutral is now derived from the canvas.
+  const badge: React.CSSProperties = {
+    fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 4,
+    background: 'var(--flow-badge-bg)', color: 'var(--flow-badge-fg)',
+    border: '1px solid var(--flow-badge-border)',
+  }
   return (
     <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 3 }}>
       {inputs.length > 0 && (
         <span
           title={`输入参数：${inputs.map((i) => i?.name).join(', ')}`}
-          style={{
-            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
-            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
-          }}
+          style={badge}
         >
           <ImportOutlined /> {inputs.length}
         </span>
@@ -217,10 +336,7 @@ function NodeIoBadges({ data }: { data: any }) {
       {outputs.length > 0 && (
         <span
           title={`输出返回值：${outputs.map((o) => o?.name).join(', ')}`}
-          style={{
-            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
-            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
-          }}
+          style={badge}
         >
           <ExportOutlined /> {outputs.length}
         </span>
@@ -254,7 +370,8 @@ const nodeTypes = {
 interface PaletteItem {
   type: string
   label: string
-  color: string
+  /** Which surface encoding this type uses (see :func:`nodeSurface`). */
+  kind: NodeKind
   icon: React.ReactNode
 }
 
@@ -269,13 +386,27 @@ const VALUE_TYPE_OPTIONS = [
 ]
 
 const PALETTE: PaletteItem[] = [
-  { type: 'init', label: '初始化', color: '#13c2c2', icon: <DatabaseOutlined /> },
-  { type: 'action', label: '操作', color: '#1677ff', icon: <ThunderboltOutlined /> },
-  { type: 'condition', label: '判断', color: '#faad14', icon: <BranchesOutlined /> },
-  { type: 'loop', label: '循环', color: '#9254de', icon: <SyncOutlined /> },
-  { type: 'delay', label: '延时', color: '#fa8c16', icon: <ClockCircleOutlined /> },
-  { type: 'end', label: '结束', color: '#ff4d4f', icon: <PlayCircleOutlined /> },
+  { type: 'init', label: '初始化', kind: 'tint', icon: <DatabaseOutlined /> },
+  { type: 'action', label: '操作', kind: 'solid', icon: <ThunderboltOutlined /> },
+  { type: 'condition', label: '判断', kind: 'diamond', icon: <BranchesOutlined /> },
+  { type: 'loop', label: '循环', kind: 'loop', icon: <SyncOutlined /> },
+  { type: 'delay', label: '延时', kind: 'dashed', icon: <ClockCircleOutlined /> },
+  { type: 'end', label: '结束', kind: 'dim', icon: <StopOutlined /> },
 ]
+
+/** Diamond palette chips read as a lozenge glyph rather than a filled block. */
+function paletteChipStyle(kind: NodeKind): React.CSSProperties {
+  if (kind === 'diamond') {
+    return {
+      background: 'var(--flow-node-outline-bg)',
+      color: 'var(--flow-node-solid-fg)',
+      border: '1px solid var(--flow-node-solid-fg)',
+      clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+      borderRadius: 0,
+    }
+  }
+  return nodeSurface(kind)
+}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -347,7 +478,8 @@ export default function TestFlowEditor() {
           zIndex: 10,
           style: {
             ...(n.style || {}),
-            boxShadow: '0 0 0 3px rgba(22,119,255,0.45)',
+            // State layer: blue ring, independent of the node's type colour.
+            boxShadow: '0 0 0 3px var(--flow-selected)',
             borderRadius: 8,
           },
         }
@@ -360,9 +492,9 @@ export default function TestFlowEditor() {
           ...e,
           zIndex: 10,
           animated: true,
-          style: { ...(e.style || {}), stroke: '#1677ff', strokeWidth: 3 },
-          labelStyle: { ...(e.labelStyle || {}), fill: '#1677ff', fontWeight: 600 },
-          labelBgStyle: { ...(e.labelBgStyle || {}), fill: '#e6f4ff' },
+          style: { ...(e.style || {}), stroke: 'var(--b-500)', strokeWidth: 3 },
+          labelStyle: { ...(e.labelStyle || {}), fill: 'var(--b-500)', fontWeight: 600 },
+          labelBgStyle: { ...(e.labelBgStyle || {}), fill: 'var(--flow-canvas-bg)' },
         }
       : { ...e, style: { strokeWidth: 2, ...(e.style || {}) } }
   )), [edges])
@@ -839,8 +971,10 @@ export default function TestFlowEditor() {
     <div
       className="page-container"
       style={fullscreen ? {
-        // 全屏：脱离页面布局铺满视口，Esc 退出
-        position: 'fixed', inset: 0, zIndex: 1200, background: '#fff',
+        // 全屏：脱离页面布局铺满视口，Esc 退出。
+        // Background follows the theme — a hard-coded white became a white
+        // island the moment dark mode landed (issue #22).
+        position: 'fixed', inset: 0, zIndex: 1200, background: 'var(--flow-canvas-bg)',
         padding: 16, display: 'flex', flexDirection: 'column',
       } : {
         height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column',
@@ -859,17 +993,19 @@ export default function TestFlowEditor() {
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/testcases')}>返回</Button>
           <Title level={4} style={{ margin: 0 }}>{testCase?.name || '流程图编辑'}</Title>
-          <Tag color="blue">{nodes.length} 节点</Tag>
-          <Tag color="green">{edges.length} 边</Tag>
+          <Tag color="processing">{nodes.length} 节点</Tag>
+          <Tag>{edges.length} 边</Tag>
         </Space>
         <Space wrap>
+          {/* ① 历史 */}
           <Tooltip title="撤销 Ctrl+Z">
-            <Button icon={<ArrowLeftOutlined />} disabled={!canUndo} onClick={undo}>撤销</Button>
+            <Button icon={<UndoOutlined />} disabled={!canUndo} onClick={undo}>撤销</Button>
           </Tooltip>
           <Tooltip title="重做 Ctrl+Y">
-            <Button icon={<ArrowLeftOutlined style={{ display: 'inline-block', transform: 'scaleX(-1)' }} />} disabled={!canRedo} onClick={redo}>重做</Button>
+            <Button icon={<RedoOutlined />} disabled={!canRedo} onClick={redo}>重做</Button>
           </Tooltip>
           <Divider type="vertical" />
+          {/* ② 编辑 */}
           <Tooltip title="复制选中节点及其内部连线 Ctrl+C">
             <Button icon={<CopyOutlined />} onClick={handleCopy}>复制</Button>
           </Tooltip>
@@ -880,9 +1016,12 @@ export default function TestFlowEditor() {
             <Button icon={<DiffOutlined />} onClick={handleDuplicate}>创建副本</Button>
           </Tooltip>
           <Divider type="vertical" />
+          {/* ③ 危险操作 —— isolated so it can never be hit by accident */}
           <Tooltip title="选中节点或边后点击删除（开始/结束不可删）">
             <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>删除选中</Button>
           </Tooltip>
+          <Divider type="vertical" />
+          {/* ④ 视图 */}
           <Tooltip title={fullscreen ? '退出全屏 Esc' : '全屏编辑（画布铺满窗口）'}>
             <Button
               icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
@@ -891,11 +1030,12 @@ export default function TestFlowEditor() {
               {fullscreen ? '退出全屏' : '全屏'}
             </Button>
           </Tooltip>
+          <Divider type="vertical" />
+          {/* ⑤ 提交 —— 保存 / 生成代码。"生成代码" 曾用紫色（色板里没有的色相），
+              现与保存同为系统主色，危险操作与提交操作因此可辨。 */}
           <Button icon={<SaveOutlined />} type="primary" onClick={handleSaveFlow}>保存流程图</Button>
           <Button
             icon={<CodeOutlined />}
-            type="primary"
-            style={{ background: '#722ed1', borderColor: '#722ed1' }}
             onClick={handleGenerateCode}
             loading={codeLoading}
           >
@@ -907,11 +1047,13 @@ export default function TestFlowEditor() {
       <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 0 }}>
         {/* ---- Node palette sidebar ---- */}
         <div style={{
-          width: 120, minWidth: 120, background: '#fafafa',
-          borderRight: '2px solid #e8e8e8', padding: 12,
+          // 120 was too narrow for the icon + label; 148 also gives the drag
+          // chips room to breathe (issue #22).
+          width: 148, minWidth: 148, background: 'var(--flow-panel-bg)',
+          borderRight: '1px solid var(--flow-panel-border)', padding: 12,
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          <Text strong style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>节点面板</Text>
+          <Text strong style={{ fontSize: 12, color: 'var(--flow-panel-fg)', marginBottom: 4 }}>节点面板</Text>
           <Text type="secondary" style={{ fontSize: 11 }}>拖拽到画布</Text>
           {PALETTE.map((item) => (
             <div
@@ -921,12 +1063,13 @@ export default function TestFlowEditor() {
                 e.dataTransfer.setData('application/reactflow-type', item.type)
                 e.dataTransfer.effectAllowed = 'move'
               }}
+              className="flow-palette-chip"
               style={{
-                padding: '8px 10px', borderRadius: 6,
-                background: item.color, color: '#fff',
+                padding: '8px 10px',
+                ...paletteChipStyle(item.kind),
                 cursor: 'grab', fontSize: 12, fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 6,
-                userSelect: 'none', opacity: 0.9,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                userSelect: 'none',
               }}
             >
               {item.icon} {item.label}
@@ -956,7 +1099,7 @@ export default function TestFlowEditor() {
           >
             <Controls />
             <MiniMap />
-            <Background gap={20} color="#f0f0f0" />
+            <Background gap={20} color="var(--flow-grid)" />
           </ReactFlow>
         </Card>
       </div>
@@ -1135,7 +1278,7 @@ export default function TestFlowEditor() {
                   输入参数 / 输出返回值
                   {((editNode as any)?.config?.inputs?.length ||
                     (editNode as any)?.config?.outputs?.length)
-                    ? <Tag color="cyan" style={{ marginLeft: 8 }}>
+                    ? <Tag style={{ marginLeft: 8 }}>
                         in {(editNode as any)?.config?.inputs?.length || 0} · out {(editNode as any)?.config?.outputs?.length || 0}
                       </Tag>
                     : null}
@@ -1154,7 +1297,6 @@ export default function TestFlowEditor() {
                         ) : flowVars.map((v) => (
                           <Tag
                             key={v.name}
-                            color="geekblue"
                             style={{ cursor: 'pointer', marginBottom: 4 }}
                             onClick={() => {
                               navigator.clipboard.writeText(`{${v.name}}`)
@@ -1253,7 +1395,16 @@ export default function TestFlowEditor() {
 
       {/* ---- Code generation drawer ---- */}
       <Drawer
-        title={<>生成的 Python 测试代码 <Tag color="purple">{codeLoading ? '生成中...' : '就绪'}</Tag></>}
+        title={(
+          <>
+            生成的 Python 测试代码{' '}
+            {/* 生成中 = 运行中（琥珀）；就绪 = 中性。紫/青/蓝等 AntD 预设色
+                不受主题控制，已全部移除。 */}
+            {codeLoading
+              ? <Tag style={{ color: 'var(--a-fg)', borderColor: 'var(--a-fg)', background: 'transparent' }}>生成中...</Tag>
+              : <Tag>就绪</Tag>}
+          </>
+        )}
         open={codeDrawerOpen}
         onClose={() => setCodeDrawerOpen(false)}
         width={640}
@@ -1275,7 +1426,8 @@ export default function TestFlowEditor() {
         </Text>
         <Divider style={{ margin: '8px 0' }} />
         <pre style={{
-          background: '#1e1e1e', color: '#d4d4d4', padding: 16,
+          // 曾写死 VSCode 深色，浅色主题下很突兀；现跟随主题变量。
+          background: 'var(--flow-code-bg)', color: 'var(--flow-code-fg)', padding: 16,
           borderRadius: 6, fontSize: 13, fontFamily: 'Consolas, Monaco, monospace',
           overflow: 'auto', maxHeight: 'calc(100vh - 220px)', lineHeight: 1.6,
           whiteSpace: 'pre-wrap',
