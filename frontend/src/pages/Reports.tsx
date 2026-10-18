@@ -11,10 +11,12 @@ import {
 import { reportAPI, executionAPI } from '../services/api'
 import { extractData, extractItems, handleApiError } from '../services/apiHelper'
 import type { TestReport, ReportTemplate, TestExecution } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
 export default function Reports() {
+  const { t } = useI18n()
   const [reports, setReports] = useState<TestReport[]>([])
   const [templates, setTemplates] = useState<ReportTemplate[]>([])
   const [executions, setExecutions] = useState<TestExecution[]>([])
@@ -94,7 +96,7 @@ export default function Reports() {
 
   const reportColumns = [
     {
-      title: '报告名称',
+      title: t('col.reportName'),
       dataIndex: 'title',
       key: 'title',
       width: 240,
@@ -106,28 +108,28 @@ export default function Reports() {
       ),
     },
     {
-      title: '格式',
+      title: t('col.format'),
       dataIndex: 'format',
       key: 'format',
       width: 90,
       render: (f: string) => <Tag>{f.toUpperCase()}</Tag>,
     },
     {
-      title: '执行数量',
+      title: t('col.execCount'),
       dataIndex: 'execution_ids',
       key: 'execution_ids',
       width: 110,
       render: (ids: string[]) => ids?.length || 0,
     },
     {
-      title: '生成时间',
+      title: t('col.generatedAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       width: 160,
       render: (_: any, record: TestReport) => (
@@ -144,17 +146,17 @@ export default function Reports() {
   ]
 
   const templateColumns = [
-    { title: '模板名称', dataIndex: 'name', key: 'name' },
-    { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: t('col.templateName'), dataIndex: 'name', key: 'name' },
+    { title: t('col.description'), dataIndex: 'description', key: 'description', ellipsis: true },
     {
-      title: '字段数',
+      title: t('col.fieldCount'),
       dataIndex: 'fields',
       key: 'fields',
       width: 140,
       render: (fields: any[]) => fields?.length || 0,
     },
     {
-      title: '创建时间',
+      title: t('col.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
@@ -191,7 +193,7 @@ export default function Reports() {
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
-          <Card title="报告列表">
+          <Card title={t('card.reportList')}>
             <DataTable
               columns={reportColumns}
               dataSource={reports}
@@ -203,7 +205,7 @@ export default function Reports() {
           </Card>
         </Col>
         <Col xs={24} lg={10}>
-          <Card title="报告模板">
+          <Card title={t('card.reportTemplates')}>
             <DataTable
               columns={templateColumns}
               dataSource={templates}
@@ -266,7 +268,7 @@ export default function Reports() {
 
       {/* Create Template Modal */}
       <Modal
-        title="创建报告模板"
+        title={t('dlg.newTemplate')}
         open={templateModalVisible}
         onCancel={() => setTemplateModalVisible(false)}
         onOk={() => templateForm.submit()}

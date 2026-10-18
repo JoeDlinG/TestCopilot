@@ -13,6 +13,7 @@ import {
 import { pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
 import type { Plugin } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { Dragger } = Upload
@@ -23,6 +24,7 @@ const SkillEditorPanel = lazy(() => import('./SkillEditor'))
 
 /** The plugin list / upload / enable-disable screen (was the whole page). */
 function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [plugins, setPlugins] = useState<Plugin[]>([])
   const [loading, setLoading] = useState(false)
@@ -91,7 +93,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       form.resetFields()
       loadPlugins()
     } catch (err) {
-      handleApiError(err, '安装失败')
+      handleApiError(err, t('msg.installFailed'))
     }
   }
 
@@ -102,7 +104,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       loadPlugins()
       loadDiscovered()
     } catch (err) {
-      handleApiError(err, '安装失败')
+      handleApiError(err, t('msg.installFailed'))
     }
   }
 
@@ -115,9 +117,9 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
     }
   }
 
-  const columns = [
+  const columns = (t: (k: string) => string) => [
     {
-      title: '插件名称',
+      title: t('col.pluginName'),
       dataIndex: 'name',
       key: 'name',
       width: 200,
@@ -129,28 +131,28 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       ),
     },
     {
-      title: '版本',
+      title: t('col.version'),
       dataIndex: 'version',
       key: 'version',
       width: 90,
       render: (v: string) => <Tag color="blue">v{v}</Tag>,
     },
     {
-      title: '协议',
+      title: t('col.protocol'),
       dataIndex: 'protocol_type',
       key: 'protocol_type',
       width: 130,
       render: (p: string) => <Tag>{p}</Tag>,
     },
     {
-      title: '描述',
+      title: t('col.description'),
       dataIndex: 'description',
       key: 'description',
       width: 240,
       ellipsis: true,
     },
     {
-      title: '状态',
+      title: t('col.status'),
       dataIndex: 'status',
       key: 'status',
       width: 100,
@@ -161,7 +163,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       ),
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       width: 200,
       render: (_: any, record: Plugin) => (
@@ -179,7 +181,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
             icon={<ApiOutlined />}
             disabled={(record as any).status !== 'enabled'}
             onClick={() => handleAddDevice(record)}
-            title="根据插件创建设备"
+            title={t('btn.createFromPlugin')}
           >
             添加设备
           </Button>
@@ -192,7 +194,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>插件管理</Title>
+          <Title level={3} style={{ margin: 0 }}>{t('tab.manage')}</Title>
           <Text type="secondary">通过插件扩展自定义通信协议支持</Text>
         </div>
         <Space>
@@ -257,14 +259,14 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
             pagination={false}
             size="small"
             columns={[
-              { title: '名称', dataIndex: 'name', key: 'name' },
-              { title: '版本', dataIndex: 'version', key: 'version',
+              { title: t('col.name'), dataIndex: 'name', key: 'name' },
+              { title: t('col.version'), dataIndex: 'version', key: 'version',
                 render: (v: string) => <Tag color="blue">v{v}</Tag> },
-              { title: '协议', dataIndex: 'protocol_name', key: 'protocol_name',
+              { title: t('col.protocol'), dataIndex: 'protocol_name', key: 'protocol_name',
                 render: (p: string) => <Tag>{p}</Tag> },
-              { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+              { title: t('col.description'), dataIndex: 'description', key: 'description', ellipsis: true },
               {
-                title: '操作', key: 'actions',
+                title: t('col.actions'), key: 'actions',
                 render: (_: any, record: any) => (
                   <Button
                     size="small"
@@ -283,7 +285,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
 
       <Card>
         <DataTable
-          columns={columns}
+          columns={columns(t)}
           dataSource={plugins}
           rowKey="id"
           loading={loading}
@@ -293,7 +295,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       </Card>
 
       <Modal
-        title="安装插件"
+        title={t('dlg.installPlugin')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
@@ -331,6 +333,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
  * somewhere sensible.
  */
 export default function Plugins({ tab }: { tab?: string }) {
+  const { t } = useI18n()
   const [active, setActive] = useState(
     tab === 'editor' ? 'editor' : tab === 'skill' ? 'skill' : 'manage',
   )

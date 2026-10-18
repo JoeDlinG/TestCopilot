@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -42,6 +43,7 @@ const SKILL_SCAFFOLD = `## 适用范围
 `
 
 export default function SkillEditor() {
+  const { t } = useI18n()
   const [skills, setSkills] = useState<SkillMeta[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -127,7 +129,7 @@ export default function SkillEditor() {
       setDirty(false)
       loadSkills()
     } catch (err) {
-      handleApiError(err, '保存失败')
+      handleApiError(err, t('msg.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -145,7 +147,7 @@ export default function SkillEditor() {
       }
       loadSkills()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -162,7 +164,7 @@ export default function SkillEditor() {
       setImportText('')
       loadSkills()
     } catch (err) {
-      handleApiError(err, '导入失败')
+      handleApiError(err, t('msg.importFailed'))
     }
   }
 
@@ -177,7 +179,7 @@ export default function SkillEditor() {
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>Skill 编辑器</Title>
+          <Title level={3} style={{ margin: 0 }}>{t('tab.skillEditor')}</Title>
           <Text type="secondary">
             编辑插件 Skill（Markdown）：指导 AI 为对应协议/设备生成测试用例
           </Text>
@@ -248,7 +250,7 @@ export default function SkillEditor() {
                 onChange={(e) => { setName(e.target.value); setDirty(true) }}
               />
               <Input
-                addonBefore="协议标识"
+                addonBefore={t('label.protocolId')}
                 style={{ width: 240 }}
                 value={protocol}
                 placeholder="如：scpi"
@@ -281,12 +283,12 @@ export default function SkillEditor() {
               >
                 保存
               </Button>
-              <Tooltip title="复制当前正文到剪贴板">
+              <Tooltip title={t('tip.copyBody')}>
                 <Button
                   icon={<CopyOutlined />}
                   onClick={() => {
                     navigator.clipboard.writeText(content)
-                    message.success('已复制')
+                    message.success(t('msg.copied'))
                   }}
                 >
                   复制
@@ -307,7 +309,7 @@ export default function SkillEditor() {
       </div>
 
       <Modal
-        title="导入 Skill（.md）"
+        title={t('dlg.importSkill')}
         open={importOpen}
         onCancel={() => setImportOpen(false)}
         onOk={handleImport}
@@ -324,7 +326,7 @@ export default function SkillEditor() {
                 setImportText(text)
                 message.success(`已读取 ${file.name}`)
               } catch {
-                message.error('文件读取失败')
+                message.error(t('msg.readFileFailed'))
               }
               return false
             }}

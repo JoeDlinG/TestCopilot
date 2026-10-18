@@ -11,6 +11,7 @@ import { aiAPI } from '../services/api'
 import { _errorMessage } from '../services/apiHelper'
 import { extractData, handleApiError } from '../services/apiHelper'
 import { PROVIDERS, type AIModel, type AIModelConfigRequest, type AIChatMessage } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -19,6 +20,7 @@ const { Title, Text } = Typography
 const API_KEY_MASK = '•'.repeat(12)
 
 export default function ModelConfig() {
+  const { t } = useI18n()
   const [models, setModels] = useState<AIModel[]>([])
   const [loading, setLoading] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
@@ -122,7 +124,7 @@ export default function ModelConfig() {
       setModalVisible(false)
       loadModels()
     } catch (err) {
-      handleApiError(err, '保存失败')
+      handleApiError(err, t('msg.saveFailed'))
     }
   }
 
@@ -132,7 +134,7 @@ export default function ModelConfig() {
       message.success('模型已删除')
       loadModels()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -189,7 +191,7 @@ export default function ModelConfig() {
         input_type: 'text',
       })
       const data: any = res.data?.data || res.data
-      setChatMessages(prev => [...prev, { role: 'assistant', content: data?.response || '（无响应内容）' }])
+      setChatMessages(prev => [...prev, { role: 'assistant', content: data?.response || t('msg.noResponse') }])
     } catch (err) {
       const errMsg = _errorMessage(err, '对话失败')
       setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ 错误：${errMsg}` }])
@@ -200,7 +202,7 @@ export default function ModelConfig() {
 
   const columns = [
     {
-      title: '名称',
+      title: t('col.name'),
       dataIndex: 'name',
       key: 'name',
       render: (name: string, r: AIModel) => (
@@ -212,13 +214,13 @@ export default function ModelConfig() {
       ),
     },
     {
-      title: '供应商',
+      title: t('col.vendor'),
       dataIndex: 'provider',
       key: 'provider',
       render: (p: string) => <Tag>{PROVIDERS[p]?.label || p}</Tag>,
     },
     {
-      title: '模型',
+      title: t('col.model'),
       dataIndex: 'model_name',
       key: 'model_name',
     },
@@ -230,7 +232,7 @@ export default function ModelConfig() {
       render: (v: string) => v || <Text type="secondary">默认</Text>,
     },
     {
-      title: '状态',
+      title: t('col.status'),
       dataIndex: 'status',
       key: 'status',
       render: (s: string) => (
@@ -238,7 +240,7 @@ export default function ModelConfig() {
       ),
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       render: (_: any, record: AIModel) => (
         <Space>
@@ -335,11 +337,11 @@ export default function ModelConfig() {
               }}
             />
           </Form.Item>
-          <Form.Item name="model_name" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}>
+          <Form.Item name="model_name" label="模型名称" rules={[{ required: true, message: t('msg.enterModelName') }]}>
             <Input
               placeholder={
                 providerWatch
-                  ? PROVIDERS[providerWatch]?.hint || '请输入模型名称'
+                  ? PROVIDERS[providerWatch]?.hint || t('msg.enterModelName')
                   : '例如：gpt-4o / claude-3-opus / qwen-max'
               }
             />

@@ -12,6 +12,7 @@ import {
   CopyOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import { planAPI, planRunAPI, testCaseAPI, deviceAPI } from '../services/api'
+import { useI18n } from '../i18n'
 
 const { Text, Title } = Typography
 
@@ -68,6 +69,7 @@ const STATE_TAG: Record<string, { color: string; text: string }> = {
 }
 
 export default function ExecutionPlanner() {
+  const { t } = useI18n()
   const [cases, setCases] = useState<any[]>([])
   const [devices, setDevices] = useState<any[]>([])
   const [plans, setPlans] = useState<any[]>([])
@@ -231,7 +233,7 @@ export default function ExecutionPlanner() {
       message.success('计划已保存')
       loadBase()
     } catch (e: any) {
-      message.error(e?.response?.data?.detail?.message || '保存失败')
+      message.error(e?.response?.data?.detail?.message || t('msg.saveFailed'))
     } finally {
       setLoading(false)
     }
@@ -248,7 +250,7 @@ export default function ExecutionPlanner() {
   }
 
   const startRun = async () => {
-    if (!planId) { message.warning('请先保存计划'); return }
+    if (!planId) { message.warning(t('msg.savePlanFirst')); return }
     try {
       const res = await planAPI.run(planId)
       const data = extractData(res)
@@ -288,7 +290,7 @@ export default function ExecutionPlanner() {
 
   const itemColumns: any[] = [
     {
-      title: '序', width: 58,
+      title: t('col.seq'), width: 58,
       render: (_: any, __: any, idx: number) => (
         <Space size={2} direction="vertical">
           <Button size="small" type="text" icon={<ArrowUpOutlined />}
@@ -299,7 +301,7 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: '组', width: 130,
+      title: t('col.group'), width: 130,
       render: (_: any, r: PlanItem, idx: number) => (
         <Space size={4}>
           <Tag color={errorItemIds.has(r.id) ? 'red' : 'blue'}>组{r.group_no}</Tag>
@@ -307,18 +309,18 @@ export default function ExecutionPlanner() {
             <Button size="small" type="text" disabled={idx === 0}
               onClick={() => mergeWithPrev(idx)}>↰</Button>
           </Tooltip>
-          <Tooltip title="独立成组（串行）">
+          <Tooltip title={t('tip.splitGroup')}>
             <Button size="small" type="text" onClick={() => splitGroup(idx)}>⇥</Button>
           </Tooltip>
         </Space>
       ),
     },
     {
-      title: '用例', width: 220, ellipsis: true,
+      title: t('col.case'), width: 220, ellipsis: true,
       render: (_: any, r: PlanItem) => r.testcase_name || r.testcase_id,
     },
     {
-      title: '设备', width: 190,
+      title: t('col.device'), width: 190,
       render: (_: any, r: PlanItem) => {
         const st = STATE_TAG[r.resolved_state || 'unresolved']
         const ids = r.resolved_device_ids || []
@@ -346,7 +348,7 @@ export default function ExecutionPlanner() {
       },
     },
     {
-      title: '循环', width: 88,
+      title: t('col.loop'), width: 88,
       render: (_: any, r: PlanItem) => (
         <InputNumber size="small" min={1} max={10000} style={{ width: 72 }}
           value={r.loop_count}
@@ -354,16 +356,16 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: '延时(ms)', width: 190,
+      title: t('col.delayMs'), width: 190,
       render: (_: any, r: PlanItem) => (
         <Space size={2}>
-          <Tooltip title="前置延时"><InputNumber size="small" min={0} style={{ width: 58 }}
+          <Tooltip title={t('col.delayBefore')}><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.delay_before_ms}
             onChange={(v) => update(r.id, { delay_before_ms: Number(v) || 0 })} /></Tooltip>
           <Tooltip title="循环间隔"><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.loop_interval_ms}
             onChange={(v) => update(r.id, { loop_interval_ms: Number(v) || 0 })} /></Tooltip>
-          <Tooltip title="后置延时"><InputNumber size="small" min={0} style={{ width: 58 }}
+          <Tooltip title={t('col.delayAfter')}><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.delay_after_ms}
             onChange={(v) => update(r.id, { delay_after_ms: Number(v) || 0 })} /></Tooltip>
         </Space>
@@ -459,9 +461,9 @@ export default function ExecutionPlanner() {
                 <Select size="small" style={{ width: 120 }} value={onError}
                   onChange={setOnError}
                   options={[
-                    { value: 'abort_all', label: '停止全部' },
-                    { value: 'continue', label: '继续' },
-                    { value: 'abort_group', label: '停止本组' },
+                    { value: 'abort_all', label: t('onError.abortAll') },
+                    { value: 'continue', label: t('onError.continue') },
+                    { value: 'abort_group', label: t('onError.abortGroup') },
                   ]} />
               </Space>
             </Space>
@@ -511,7 +513,7 @@ export default function ExecutionPlanner() {
             )}
 
             <Divider style={{ margin: '10px 0' }} />
-            <Tooltip title={blocking ? '存在冲突，无法执行' : !planId ? '请先保存计划' : ''}>
+            <Tooltip title={blocking ? '存在冲突，无法执行' : !planId ? t('msg.savePlanFirst') : ''}>
               <Button block type="primary" icon={<PlayCircleOutlined />}
                 disabled={blocking || !items.length}
                 onClick={startRun}>开始执行</Button>
@@ -529,7 +531,7 @@ export default function ExecutionPlanner() {
       </Row>
 
       {/* ---------- 运行监控 ---------- */}
-      <Drawer title="批量运行监控" width={620} open={monitorOpen}
+      <Drawer title={t('dlg.batchMonitor')} width={620} open={monitorOpen}
         onClose={() => setMonitorOpen(false)}
         extra={run?.status === 'running' && (
           <Button danger size="small" icon={<StopOutlined />}

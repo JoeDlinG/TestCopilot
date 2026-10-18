@@ -148,12 +148,23 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 # python-can is synchronous; opening the channel must not block
                 # the event loop (see app.core.blocking).
                 self._bus = await run_blocking(can.interface.Bus, **bus_kwargs)
-            except Exception as e:  # noqa: BLE001 — never leak a raw OS error
+            except (can.CanError, OSError, ValueError) as e:
+                # Expected outcome: this interface/channel is simply not
+                # available. Explain it in operator language and try the next.
                 self._bus = None
                 reason = self._explain(e, iface)
                 self._attempts.append(f"{iface}/{ch}: {reason}")
                 logger.warning(f"PeakCAN: cannot open {iface}/{ch} — {reason}")
                 continue
+            except Exception:
+                # A programming error (bad helper signature, missing attribute…)
+                # must NOT be dressed up as a hardware/kernel problem — the
+                # previous `except Exception` turned a TypeError from
+                # run_blocking() into "kernel module not loaded", which sent
+                # the investigation down the wrong path for a whole cycle.
+                self._bus = None
+                logger.exception("PeakCAN: unexpected error opening %s/%s", iface, ch)
+                raise
 
             # Success — remember which combination actually worked.
             self._active_interface = iface

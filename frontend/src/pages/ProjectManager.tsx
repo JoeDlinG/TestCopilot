@@ -56,12 +56,13 @@ function Cell({ value }: { value: any }) {
  * truncated with the full text kept in the tooltip.
  */
 function SectionTable({ rows }: { rows: any[] }) {
+  const { t } = useI18n()
   const list = (rows || []).filter((r) => r && typeof r === 'object')
   if (list.length === 0) {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="该配置段无数据"
+        description={t('msg.sectionEmpty')}
         style={{ padding: '16px 0', margin: 0 }}
       />
     )
@@ -236,35 +237,36 @@ function PlanPreview({
   caseNames: Record<string, string>
   deviceNames: Record<string, string>
 }) {
+  const { t } = useI18n()
   const items: any[] = plan?.items || []
 
   const columns = [
     {
-      title: '组', dataIndex: 'group_no', key: 'group_no', width: 70,
+      title: t('col.group'), dataIndex: 'group_no', key: 'group_no', width: 70,
       render: (g: number) => <Tag>{g ?? '-'}</Tag>,
     },
     {
-      title: '序', dataIndex: 'seq', key: 'seq', width: 56,
+      title: t('col.seq'), dataIndex: 'seq', key: 'seq', width: 56,
     },
     {
-      title: '测试用例', dataIndex: 'testcase_id', key: 'testcase_id', width: 240,
+      title: t('col.testCase'), dataIndex: 'testcase_id', key: 'testcase_id', width: 240,
       render: (id: string) => (
         <span title={id}>{caseNames[id] || <Text type="secondary">{id || '-'}</Text>}</span>
       ),
     },
     {
-      title: '循环', dataIndex: 'loop_count', key: 'loop_count', width: 70,
+      title: t('col.loop'), dataIndex: 'loop_count', key: 'loop_count', width: 70,
     },
     {
-      title: '前置延时', dataIndex: 'delay_before_ms', key: 'delay_before_ms', width: 90,
+      title: t('col.delayBefore'), dataIndex: 'delay_before_ms', key: 'delay_before_ms', width: 90,
       render: (v: number) => (v ? `${v} ms` : '-'),
     },
     {
-      title: '后置延时', dataIndex: 'delay_after_ms', key: 'delay_after_ms', width: 90,
+      title: t('col.delayAfter'), dataIndex: 'delay_after_ms', key: 'delay_after_ms', width: 90,
       render: (v: number) => (v ? `${v} ms` : '-'),
     },
     {
-      title: '设备', dataIndex: 'resolved_device_ids', key: 'resolved_device_ids', width: 180,
+      title: t('col.device'), dataIndex: 'resolved_device_ids', key: 'resolved_device_ids', width: 180,
       render: (ids: string[]) => {
         if (!ids || ids.length === 0) return <Text type="secondary">自动推断</Text>
         return (
@@ -275,7 +277,7 @@ function PlanPreview({
       },
     },
     {
-      title: '节点数', dataIndex: 'node_count', key: 'node_count', width: 80,
+      title: t('col.nodes'), dataIndex: 'node_count', key: 'node_count', width: 80,
     },
   ]
 
@@ -381,7 +383,7 @@ export default function ProjectManager() {
       download(`Project_${bundle.project_name || 'export'}.json`, bundle)
       message.success('已导出当前配置')
     } catch (err) {
-      handleApiError(err, '导出失败')
+      handleApiError(err, t('msg.exportFailed'))
     } finally {
       setBusy('')
     }
@@ -421,7 +423,7 @@ export default function ProjectManager() {
       message.success(`已从「${from}」导入配置`)
       load()
     } catch (err) {
-      const detail = _errorMessage(err, '导入失败')
+      const detail = _errorMessage(err, t('msg.importFailed'))
       message.error(detail, 6)
       setImportResult({ error: detail, from })
     } finally {
@@ -439,7 +441,7 @@ export default function ProjectManager() {
         message.error('文件不是合法的 JSON')
       }
     }
-    reader.onerror = () => message.error('文件读取失败')
+    reader.onerror = () => message.error(t('msg.readFileFailed'))
     reader.readAsText(file)
     return false // prevent antd from uploading it
   }
@@ -472,12 +474,12 @@ export default function ProjectManager() {
     }
     try {
       await projectAPI.rename(renamingRef.current, newName)
-      message.success('已重命名')
+      message.success(t('msg.renamed'))
       setRenameOpen(false)
       renameForm.resetFields()
       load()
     } catch (err) {
-      handleApiError(err, '重命名失败')
+      handleApiError(err, t('msg.renameFailed'))
     }
   }
 
@@ -492,7 +494,7 @@ export default function ProjectManager() {
   const handleWizardFinish = async () => {
     const name = wizardName.trim()
     if (!name) {
-      message.warning('请输入工程名称')
+      message.warning(t('msg.enterProjectName'))
       return
     }
     setBusy('wizard')
@@ -542,7 +544,7 @@ export default function ProjectManager() {
   const handleDelete = async (row: ProjectRow) => {
     try {
       await projectAPI.remove(row.name)
-      message.success('已删除')
+      message.success(t('msg.deleted'))
       if (detailName === row.name) {
         setDetail(null)
         setDetailName('')
@@ -550,7 +552,7 @@ export default function ProjectManager() {
       }
       load()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -895,7 +897,7 @@ export default function ProjectManager() {
                             </div>
                           ))}
                           {rows.length === 0 && (
-                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该配置段无数据" />
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('msg.sectionEmpty')} />
                           )}
                         </Space>
                       ) : s.key === 'execution_plans' ? (
@@ -919,7 +921,7 @@ export default function ProjectManager() {
                             </div>
                           ))}
                           {rows.length === 0 && (
-                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该配置段无数据" />
+                            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('msg.sectionEmpty')} />
                           )}
                         </Space>
                       ) : (
@@ -961,7 +963,7 @@ export default function ProjectManager() {
           <Form.Item
             name="name"
             label="工程名称"
-            rules={[{ required: true, message: '请输入工程名称' }]}
+            rules={[{ required: true, message: t('msg.enterProjectName') }]}
             extra={`将保存为 Project_名称.json（当前包含 ${sections.length} 个配置段）`}
           >
             <Input placeholder="例如：CAN 联调测试" autoFocus />
@@ -994,7 +996,7 @@ export default function ProjectManager() {
       >
         <Steps
           size="small" current={wizardStep} style={{ marginBottom: 20 }}
-          items={[{ title: '选择配置段' }, { title: '命名工程' }, { title: '确认生成' }]}
+          items={[{ title: t('wizard.selectSections') }, { title: t('wizard.nameProject') }, { title: t('wizard.confirm') }]}
         />
 
         {wizardStep === 0 && (

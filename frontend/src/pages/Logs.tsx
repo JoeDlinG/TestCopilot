@@ -13,11 +13,13 @@ import { logAPI, deviceAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import type { CommunicationLog, Device } from '../types'
 import { INTERFACE_TYPES } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title } = Typography
 const { RangePicker } = DatePicker
 
 export default function Logs() {
+  const { t } = useI18n()
   const [logs, setLogs] = useState<CommunicationLog[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(false)
@@ -74,20 +76,20 @@ export default function Logs() {
       URL.revokeObjectURL(url)
       message.success('日志已导出')
     } catch (err) {
-      handleApiError(err, '导出失败')
+      handleApiError(err, t('msg.exportFailed'))
     }
   }
 
   const columns = [
     {
-      title: '时间',
+      title: t('col.time'),
       dataIndex: 'timestamp',
       key: 'timestamp',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '设备',
+      title: t('col.device'),
       dataIndex: 'device_id',
       key: 'device_id',
       width: 120,
@@ -97,14 +99,14 @@ export default function Logs() {
       },
     },
     {
-      title: '接口',
+      title: t('col.interface'),
       dataIndex: 'protocol',
       key: 'protocol',
       width: 100,
       render: (type: string) => <Tag>{INTERFACE_TYPES[type] || type}</Tag>,
     },
     {
-      title: '方向',
+      title: t('col.direction'),
       dataIndex: 'direction',
       key: 'direction',
       width: 80,
@@ -115,7 +117,7 @@ export default function Logs() {
       ),
     },
     {
-      title: '数据内容',
+      title: t('col.dataContent'),
       dataIndex: 'raw_data',
       key: 'raw_data',
       width: 320,
@@ -151,7 +153,7 @@ export default function Logs() {
           <Col xs={24} sm={8}>
             <Select
               allowClear
-              placeholder="选择设备"
+              placeholder={t('btn.selectDevice')}
               style={{ width: '100%' }}
               value={filters.device_id}
               onChange={(val: any) => setFilters({ ...filters, device_id: val })}
@@ -161,7 +163,7 @@ export default function Logs() {
           <Col xs={24} sm={8}>
             <Select
               allowClear
-              placeholder="选择接口类型"
+              placeholder={t('msg.selectInterface')}
               style={{ width: '100%' }}
               value={filters.interface_type}
               onChange={(val: any) => setFilters({ ...filters, interface_type: val })}

@@ -36,6 +36,7 @@ import {
 import { testCaseAPI, deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
 import type { TestCase } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -369,22 +370,22 @@ interface PaletteItem {
 }
 
 /** 输入参数 / 输出返回值支持的值类型（与后端 flow_context.VALUE_TYPES 对应） */
-const VALUE_TYPE_OPTIONS = [
-  { label: '字符串', value: 'string' },
-  { label: '整数', value: 'int' },
-  { label: '浮点', value: 'float' },
-  { label: '布尔', value: 'bool' },
-  { label: '十六进制', value: 'hex' },
-  { label: '任意', value: 'any' },
+const VALUE_TYPE_OPTIONS = (t: (k: string) => string) => [
+  { label: t('dtype.string'), value: 'string' },
+  { label: t('dtype.int'), value: 'int' },
+  { label: t('dtype.float'), value: 'float' },
+  { label: t('dtype.bool'), value: 'bool' },
+  { label: t('dtype.hex'), value: 'hex' },
+  { label: t('dtype.any'), value: 'any' },
 ]
 
-const PALETTE: PaletteItem[] = [
-  { type: 'init', label: '初始化', kind: 'tint', icon: <DatabaseOutlined /> },
-  { type: 'action', label: '操作', kind: 'solid', icon: <ThunderboltOutlined /> },
-  { type: 'condition', label: '判断', kind: 'diamond', icon: <BranchesOutlined /> },
-  { type: 'loop', label: '循环', kind: 'loop', icon: <SyncOutlined /> },
-  { type: 'delay', label: '延时', kind: 'dashed', icon: <ClockCircleOutlined /> },
-  { type: 'end', label: '结束', kind: 'dim', icon: <StopOutlined /> },
+const PALETTE = (t: (k: string) => string): PaletteItem[] => [
+  { type: 'init', label: t('node.init'), kind: 'tint', icon: <DatabaseOutlined /> },
+  { type: 'action', label: t('col.actions'), kind: 'solid', icon: <ThunderboltOutlined /> },
+  { type: 'condition', label: t('node.condition'), kind: 'diamond', icon: <BranchesOutlined /> },
+  { type: 'loop', label: t('col.loop'), kind: 'loop', icon: <SyncOutlined /> },
+  { type: 'delay', label: t('node.delay'), kind: 'dashed', icon: <ClockCircleOutlined /> },
+  { type: 'end', label: t('node.end'), kind: 'dim', icon: <StopOutlined /> },
 ]
 
 /** Diamond palette chips read as a lozenge glyph rather than a filled block. */
@@ -430,6 +431,7 @@ function collectFlowVariables(nds: Node[], stopBeforeId?: string) {
 }
 
 export default function TestFlowEditor() {
+  const { t } = useI18n()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
@@ -586,12 +588,12 @@ export default function TestFlowEditor() {
       } catch { /* no flow yet — use default */ }
       // Default empty flow
       setNodes([
-        { id: 'start', type: 'start', data: { label: '开始' }, position: { x: 400, y: 0 } },
-        { id: 'end', type: 'end', data: { label: '结束' }, position: { x: 400, y: 400 } },
+        { id: 'start', type: 'start', data: { label: t('node.start') }, position: { x: 400, y: 0 } },
+        { id: 'end', type: 'end', data: { label: t('node.end') }, position: { x: 400, y: 400 } },
       ])
       setEdges([])
     } catch (err) {
-      handleApiError(err, '加载测试用例失败')
+      handleApiError(err, t('msg.loadCasesFailed'))
     } finally {
       setLoading(false)
     }
@@ -762,7 +764,7 @@ export default function TestFlowEditor() {
         },
         position,
         config: paletteType === 'condition'
-          ? { condition: 'True', true_label: '是', false_label: '否' }
+          ? { condition: 'True', true_label: t('common.yes'), false_label: t('common.no') }
           : paletteType === 'loop'
             ? { loop_type: 'for', variable: 'i', condition: '3' }
             : paletteType === 'delay'
@@ -795,14 +797,14 @@ export default function TestFlowEditor() {
         try {
           await testCaseAPI.createFlow(id, { nodes, edges })
         } catch (err2) {
-          handleApiError(err2, '保存失败')
+          handleApiError(err2, t('msg.saveFailed'))
           return false
         }
       } else {
         // 400 (validation) / 409 / 5xx: a genuine failure.  Treating it as
         // "flow missing" and falling back to create() used to mask the error
         // and leave the old revision in place.
-        handleApiError(err, '保存失败')
+        handleApiError(err, t('msg.saveFailed'))
         return false
       }
     }
@@ -1046,7 +1048,7 @@ export default function TestFlowEditor() {
         }}>
           <Text strong style={{ fontSize: 12, color: 'var(--flow-panel-fg)', marginBottom: 4 }}>节点面板</Text>
           <Text type="secondary" style={{ fontSize: 11 }}>拖拽到画布</Text>
-          {PALETTE.map((item) => (
+          {PALETTE(t).map((item) => (
             <div
               key={item.type}
               draggable
@@ -1125,7 +1127,7 @@ export default function TestFlowEditor() {
               { label: '循环（for / while）', value: 'loop' },
               { label: '初始化（变量声明）', value: 'init' },
               { label: '延时（等待毫秒）', value: 'delay' },
-              { label: '结束', value: 'end' },
+              { label: t('node.end'), value: 'end' },
             ]} />
           </Form.Item>
           {['action', 'loop', 'delay'].includes(nodeType) && (
@@ -1155,18 +1157,18 @@ export default function TestFlowEditor() {
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'type']} initialValue="int">
                           <Select style={{ width: 92 }} options={[
-                            { label: '整数', value: 'int' },
-                            { label: '浮点', value: 'float' },
-                            { label: '字符串', value: 'string' },
-                            { label: '布尔', value: 'bool' },
-                            { label: '十六进制', value: 'hex' },
+                            { label: t('dtype.int'), value: 'int' },
+                            { label: t('dtype.float'), value: 'float' },
+                            { label: t('dtype.string'), value: 'string' },
+                            { label: t('dtype.bool'), value: 'bool' },
+                            { label: t('dtype.hex'), value: 'hex' },
                           ]} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'value']}>
                           <Input placeholder="初始值" style={{ width: 110 }} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'desc']}>
-                          <Input placeholder="说明(可选)" style={{ width: 120 }} />
+                          <Input placeholder={t('label.notesOptional')} style={{ width: 120 }} />
                         </Form.Item>
                         <Tooltip title="上移">
                           <Button size="small" type="text" onClick={() => move(field.name, field.name - 1)}
@@ -1193,7 +1195,7 @@ export default function TestFlowEditor() {
                 <Input.TextArea rows={2} placeholder="发送到设备的命令" />
               </Form.Item>
               <Form.Item name="expected" label="预期结果">
-                <Input placeholder="预期返回值" />
+                <Input placeholder={t('label.expectedReturn')} />
               </Form.Item>
             </>
           )}
@@ -1214,7 +1216,7 @@ export default function TestFlowEditor() {
           {nodeType === 'loop' && (
             <>
               <Form.Item name="loop_type" label="循环类型" rules={[{ required: true }]}>
-                <Select options={[{ label: 'for (固定次数)', value: 'for' }, { label: 'while (条件循环)', value: 'while' }]} />
+                <Select options={[{ label: t('loop.for'), value: 'for' }, { label: t('loop.while'), value: 'while' }]} />
               </Form.Item>
               {loopType !== 'while' && (
                 <Form.Item name="loop_variable" label="循环变量">
@@ -1239,7 +1241,7 @@ export default function TestFlowEditor() {
               </Form.Item>
               <Form.Item name="expected" label="预期结果（可选）"
                 extra="填写后每轮对该命令的返回值做断言">
-                <Input placeholder="预期返回值" />
+                <Input placeholder={t('label.expectedReturn')} />
               </Form.Item>
 
               {loopType === 'while' && (
@@ -1250,8 +1252,8 @@ export default function TestFlowEditor() {
                   </Form.Item>
                   <Form.Item name="entry_fail_action" label="进入条件不满足时">
                     <Select options={[
-                      { label: '跳过整个循环（继续后续节点）', value: 'skip' },
-                      { label: '判定为失败（抛错终止）', value: 'fail' },
+                      { label: t('onError.skipLoop'), value: 'skip' },
+                      { label: t('onError.fail'), value: 'fail' },
                     ]} />
                   </Form.Item>
                   <Form.Item name="break_condition" label="跳出条件（可选，每轮结束后判断）"
@@ -1323,13 +1325,13 @@ export default function TestFlowEditor() {
                                   <Input placeholder="参数名" style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
-                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS(t)} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'default']}>
                                   <Input placeholder="默认值" style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'desc']}>
-                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                  <Input placeholder={t('label.notesOptional')} style={{ width: 110 }} />
                                 </Form.Item>
                                 <Tooltip title="删除">
                                   <Button size="small" type="text" icon={<DeleteOutlined />}
@@ -1359,13 +1361,13 @@ export default function TestFlowEditor() {
                                   <Input placeholder="输出名" style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
-                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS(t)} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'value']}>
                                   <Input placeholder="response" style={{ width: 130 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'desc']}>
-                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                  <Input placeholder={t('label.notesOptional')} style={{ width: 110 }} />
                                 </Form.Item>
                                 <Tooltip title="删除">
                                   <Button size="small" type="text" icon={<DeleteOutlined />}

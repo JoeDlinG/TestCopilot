@@ -18,6 +18,7 @@ import { extractData, extractItems, handleApiError, _errorMessage } from '../ser
 import { useChatStore } from '../stores/chatStore'
 import TestCasePreviewModal from '../components/ai/TestCasePreviewModal'
 import type { AIModel, TestCase } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -56,6 +57,7 @@ const readFileAsBase64 = (file: File): Promise<string> =>
   })
 
 export default function AIChat() {
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   // --- global persisted state (survives page switches) ---
@@ -263,11 +265,11 @@ export default function AIChat() {
       onOk: async () => {
         try {
           await memoryAPI.remove(name)
-          message.success('已删除')
+          message.success(t('msg.deleted'))
           if (memView?.name === name) setMemView(null)
           loadMemories()
         } catch (err) {
-          handleApiError(err, '删除失败')
+          handleApiError(err, t('msg.deleteFailed'))
         }
       },
     })
@@ -296,7 +298,7 @@ export default function AIChat() {
       })
       const data: any = res.data?.data || res.data
       setSessionId(data?.session_id ?? '')
-      addMessage({ role: 'assistant', content: data?.response ?? '（无响应内容）' })
+      addMessage({ role: 'assistant', content: data?.response ?? t('msg.noResponse') })
     } catch (err) {
       const errMsg = _errorMessage(err, 'AI 请求失败')
       message.error(errMsg)
@@ -471,7 +473,7 @@ export default function AIChat() {
         items={[
           {
             key: 'chat',
-            label: '对话',
+            label: t('tab.chat'),
             children: (
               <Card>
                 <div style={OUTPUT_STYLE}>
@@ -517,7 +519,7 @@ export default function AIChat() {
                   {testCaseResult ? (
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                        <Title level={5} style={{ margin: 0 }}>AI 生成结果</Title>
+                        <Title level={5} style={{ margin: 0 }}>{t('card.aiResult')}</Title>
                         {caseCount > 0 && (
                           <Button
                             type="primary" icon={<ImportOutlined />}
@@ -589,7 +591,7 @@ export default function AIChat() {
                                   <Button type="link" size="small" icon={<EyeOutlined />}
                                     onClick={() => setPreviewCase(tc)}>预览</Button>
                                 </Tooltip>,
-                                <Tooltip title="导入到测试用例列表" key="import">
+                                <Tooltip title={t('btn.importToList')} key="import">
                                   <Button type="link" size="small" icon={<ImportOutlined />}
                                     loading={importingIds.has(tc.name)}
                                     onClick={() => handleSaveOne(tc)}>添加</Button>
@@ -620,7 +622,7 @@ export default function AIChat() {
           },
           {
             key: 'memory',
-            label: '项目记忆',
+            label: t('tab.memory'),
             children: (
               <Card>
                 <div style={OUTPUT_STYLE}>
@@ -699,7 +701,7 @@ export default function AIChat() {
                 <div style={OUTPUT_STYLE}>
                   {queryResult ? (
                     <div>
-                      <Title level={5}>查询结果</Title>
+                      <Title level={5}>{t('card.queryResult')}</Title>
                       <Text type="secondary">SQL: {queryResult.sql_generated}</Text>
                       <p>共找到 {queryResult.result_count} 条记录</p>
                       {queryResult.results?.length > 0 && (

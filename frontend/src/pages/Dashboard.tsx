@@ -14,10 +14,12 @@ import {
 } from '@ant-design/icons'
 import { deviceAPI, testCaseAPI, executionAPI, aiAPI } from '../services/api'
 import { extractItems, extractData } from '../services/apiHelper'
+import { useI18n } from '../i18n'
 
 const { Title } = Typography
 
 export default function Dashboard() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
@@ -199,10 +201,10 @@ export default function Dashboard() {
               onChange={setRefreshSec}
               style={{ width: 120 }}
               options={[
-                { label: '5 秒刷新', value: 5 },
-                { label: '10 秒刷新', value: 10 },
-                { label: '30 秒刷新', value: 30 },
-                { label: '60 秒刷新', value: 60 },
+                { label: t('refresh.5s'), value: 5 },
+                { label: t('refresh.10s'), value: 10 },
+                { label: t('refresh.30s'), value: 30 },
+                { label: t('refresh.60s'), value: 60 },
               ]}
             />
             <Button size="large" icon={<ReloadOutlined />} onClick={() => loadRef.current()}>
@@ -222,7 +224,7 @@ export default function Dashboard() {
         <Row gutter={[20, 20]}>
           <Col xs={24} sm={12} xl={6}>
             {bigCard(
-              '设备总数',
+              t('label.deviceTotal'),
               stats.devices,
               `${stats.connectedDevices} 台已连接`,
               <ApiOutlined />, 'var(--app-accent)',
@@ -320,7 +322,7 @@ export default function Dashboard() {
         <Col xs={24} sm={12} lg={8}>
           <Card hoverable onClick={() => navigate('/devices')}>
             <Statistic
-              title="设备总数"
+              title={t('label.deviceTotal')}
               value={stats.devices}
               prefix={<ApiOutlined />}
               suffix={
@@ -334,7 +336,7 @@ export default function Dashboard() {
         <Col xs={24} sm={12} lg={8}>
           <Card hoverable onClick={() => navigate('/testcases')}>
             <Statistic
-              title="测试用例"
+              title={t('col.testCase')}
               value={stats.testCases}
               prefix={<DiffOutlined />}
             />
@@ -343,7 +345,7 @@ export default function Dashboard() {
         <Col xs={24} sm={12} lg={8}>
           <Card hoverable onClick={() => navigate('/executions')}>
             <Statistic
-              title="测试执行"
+              title={t('card.executions')}
               value={stats.executions}
               prefix={<PlayCircleOutlined />}
               suffix={
@@ -364,7 +366,7 @@ export default function Dashboard() {
           >
             <List
               dataSource={recentExecutions}
-              locale={{ emptyText: '暂无执行记录' }}
+              locale={{ emptyText: t('msg.noExecutions') }}
               renderItem={(item: any) => (
                 <List.Item>
                   <List.Item.Meta
@@ -378,7 +380,7 @@ export default function Dashboard() {
           </Card>
         </Col>
         <Col xs={24} lg={8}>
-          <Card title="快捷操作">
+          <Card title={t('card.quickActions')}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Button
                 type="primary"

@@ -7,6 +7,7 @@
  * still renders sensibly instead of showing raw keys.
  */
 import type { Locale } from './index'
+import { EXTRA, EXTRA2, EXTRA3 } from './extraKeys'
 
 export const messages: Record<Locale, Record<string, string>> = {
   'zh-CN': {
@@ -288,4 +289,13 @@ export const messages: Record<Locale, Record<string, string>> = {
     'project.clearedTotal': '{n} configuration entries cleared',
     'project.kept': 'Kept: ',
   },
+}
+
+// Bulk entries (table columns, tabs, statuses) live in ./extraKeys so the
+// hand-written catalogue above stays readable. Merged once at module load.
+for (const extra of [EXTRA, EXTRA2, EXTRA3]) {
+  for (const [zh, [key, en]] of Object.entries(extra)) {
+    messages['zh-CN'][key] = zh
+    messages['en-US'][key] = en
+  }
 }

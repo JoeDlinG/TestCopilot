@@ -17,6 +17,7 @@ import ResultParserConfig, { DATA_TYPES } from '../components/ResultParserConfig
 import type { ParserSpec } from '../components/ResultParserConfig'
 import { openDock } from '../stores/outputDockStore'
 import type { TestCase } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -31,6 +32,7 @@ function extractResponse(actual?: string): string {
 }
 
 export default function TestCases() {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [testCases, setTestCases] = useState<TestCase[]>([])
   const [loading, setLoading] = useState(false)
@@ -76,7 +78,7 @@ export default function TestCases() {
       const res = await testCaseAPI.list()
       setTestCases(extractItems(res))
     } catch (err) {
-      handleApiError(err, '加载测试用例失败')
+      handleApiError(err, t('msg.loadCasesFailed'))
     } finally {
       setLoading(false)
     }
@@ -260,18 +262,18 @@ export default function TestCases() {
             render: (_: any, __: any, i: number) => i + 1,
           },
           {
-            title: '步骤', dataIndex: ['data', 'label'],
+            title: t('col.steps'), dataIndex: ['data', 'label'],
             render: (v: string, n: any) => v || n?.label || '-',
           },
           {
-            title: '下发指令', key: 'cmd', ellipsis: true,
+            title: t('col.command'), key: 'cmd', ellipsis: true,
             render: (_: any, n: any) => {
               const cmd = n?.config?.command || ''
               return cmd ? <Text code style={{ fontSize: 11 }}>{String(cmd).slice(0, 70)}</Text> : '-'
             },
           },
           {
-            title: '解析配置', key: 'parsers', width: 200,
+            title: t('col.parserConfig'), key: 'parsers', width: 200,
             render: (_: any, n: any) => {
               const ps: ParserSpec[] = n?.config?.parsers || []
               if (!ps.length) return <Text type="secondary" style={{ fontSize: 12 }}>未配置</Text>
@@ -292,7 +294,7 @@ export default function TestCases() {
             },
           },
           {
-            title: '操作', key: 'act', width: 130,
+            title: t('col.actions'), key: 'act', width: 130,
             render: (_: any, n: any, i: number) => (
               <Button
                 size="small"
@@ -322,17 +324,17 @@ export default function TestCases() {
       form.resetFields()
       loadTestCases()
     } catch (err) {
-      handleApiError(err, '创建失败')
+      handleApiError(err, t('msg.createFailed'))
     }
   }
 
   const handleDelete = async (id: string) => {
     try {
       await testCaseAPI.delete(id)
-      message.success('已删除')
+      message.success(t('msg.deleted'))
       loadTestCases()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -363,11 +365,11 @@ export default function TestCases() {
     try {
       setRenamingSaving(true)
       await testCaseAPI.update(renaming.id, { name })
-      message.success('已重命名')
+      message.success(t('msg.renamed'))
       setRenameOpen(false)
       loadTestCases()
     } catch (err) {
-      handleApiError(err, '重命名失败')
+      handleApiError(err, t('msg.renameFailed'))
     } finally {
       setRenamingSaving(false)
     }
@@ -431,7 +433,7 @@ export default function TestCases() {
   // cell pushed into 状态 / 创建时间 / 操作 and the text overlapped.
   const columns = [
     {
-      title: '用例名称',
+      title: t('col.caseName'),
       dataIndex: 'name',
       key: 'name',
       width: 240,
@@ -445,21 +447,21 @@ export default function TestCases() {
       ),
     },
     {
-      title: '描述',
+      title: t('col.description'),
       dataIndex: 'description',
       key: 'description',
       width: 260,
       ellipsis: true,
     },
     {
-      title: '步骤数',
+      title: t('col.stepCount'),
       key: 'steps',
       width: 80,
       align: 'center' as const,
       render: (_: any, record: TestCase) => record.steps?.length || 0,
     },
     {
-      title: '标签',
+      title: t('col.tags'),
       dataIndex: 'tags',
       key: 'tags',
       width: 220,
@@ -483,7 +485,7 @@ export default function TestCases() {
       },
     },
     {
-      title: '状态',
+      title: t('col.status'),
       dataIndex: 'status',
       key: 'status',
       width: 90,
@@ -492,14 +494,14 @@ export default function TestCases() {
       ),
     },
     {
-      title: '创建时间',
+      title: t('col.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 170,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       width: 250,
       render: (_: any, record: TestCase) => (
@@ -527,7 +529,7 @@ export default function TestCases() {
               onClick={() => openRename(record)}
             />
           </Tooltip>
-          <Tooltip title="流程图编辑">
+          <Tooltip title={t('page.flowEditor')}>
             <Button
               size="small"
               icon={<ApartmentOutlined />}
@@ -565,7 +567,7 @@ export default function TestCases() {
         />
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>测试用例</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('col.testCase')}</Title>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadTestCases}>刷新</Button>
           <Popconfirm
@@ -613,7 +615,7 @@ export default function TestCases() {
       </Card>
 
       <Modal
-        title="创建测试用例"
+        title={t('dlg.newTestCase')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
@@ -683,7 +685,7 @@ export default function TestCases() {
 
       {/* 切换设备：按设备ID号重新绑定，并重新生成代码 */}
       <Modal
-        title="切换设备"
+        title={t('btn.switchDevice')}
         open={switchOpen}
         onOk={handleSwitchDevice}
         confirmLoading={switchSaving}
@@ -706,7 +708,7 @@ export default function TestCases() {
             rules={[{ required: true, message: '请选择目标设备' }]}
           >
             <Select
-              placeholder="选择设备"
+              placeholder={t('btn.selectDevice')}
               options={devices.map((d) => ({
                 value: d.device_key,
                 label: `${d.device_key}　${d.name}（${d.protocol}）`,

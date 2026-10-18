@@ -13,6 +13,7 @@ import { extractItems } from '../services/apiHelper'
 import type { Device } from '../types'
 import { useTerminalStore, nextMsgId } from '../stores/terminalStore'
 import type { TerminalMessage } from '../stores/terminalStore'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -214,6 +215,7 @@ function createWebSocket(deviceId: string): WebSocket {
 // Single terminal window (one device). Extracted so it can use hooks
 // independently of the parent's render cycle.
 function TerminalWindow({ deviceId }: { deviceId: string }) {
+  const { t } = useI18n()
   const tab = useTerminalStore((s) => s.tabs[deviceId])
   const commandInput = useTerminalStore((s) => s.commandInputs[deviceId] || '')
   const setCommandInput = useTerminalStore((s) => s.setCommandInput)
@@ -330,7 +332,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
           </Tag>
         </Space>
         <Space>
-          <Tooltip title={tab.listening ? '停止监听' : '开始监听实时数据'}>
+          <Tooltip title={tab.listening ? t('btn.stopListen') : '开始监听实时数据'}>
             <Button
               size="small"
               type={tab.listening ? 'primary' : 'default'}
@@ -339,10 +341,10 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
               onClick={toggleListening}
               disabled={!isOpen}
             >
-              {tab.listening ? '停止监听' : '开始监听'}
+              {tab.listening ? t('btn.stopListen') : '开始监听'}
             </Button>
           </Tooltip>
-          <Tooltip title="清空日志">
+          <Tooltip title={t('btn.clearLogs')}>
             <Button
               size="small"
               icon={<ClearOutlined />}
@@ -422,6 +424,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
 }
 
 export default function DebugTerminal() {
+  const { t } = useI18n()
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -728,7 +731,7 @@ export default function DebugTerminal() {
           padding: '12px 16px',
           borderBottom: '1px solid var(--app-border)',
         }}>
-          <Title level={5} style={{ margin: 0 }}>指令 / 历史</Title>
+          <Title level={5} style={{ margin: 0 }}>{t('card.commandsHistory')}</Title>
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
           {activeHistory.length === 0 ? (

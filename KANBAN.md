@@ -126,6 +126,34 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.0.1 — PeakCAN 连接回归修复 + 英文版补全（2026-10-18，分支 `feature/flow-enhancements`）
+
+**1）修复：PeakCAN 无法连接（v2.0.0 自引入回归）**
+- [x] 根因：v2.0.0 线程化时写成 `run_blocking(can.interface.Bus, **bus_kwargs)`，
+      而 `run_blocking` 只收 `*args` → `TypeError: unexpected keyword argument 'interface'`；
+      被 `except Exception` 兜住后经 `_explain()` 误报成「内核模块没加载」
+- [x] 修根因：给 `run_blocking` 补 `**kwargs` 转发（对齐 `asyncio.to_thread` 语义）
+- [x] 堵误导：`connect()` 异常分支拆两类 —— CAN/OS 错误走人话解释；
+      **其余异常 `logger.exception` 后原样抛出**，不再包装成硬件问题
+- [x] 验证：`POST /devices/connect` → **200 / status: connected**
+
+**2）防复发：新增 `Test/test_blocking.py`（6 项全 PASS）**
+- [x] kwargs 被正确转发（本次故障直接回归点）/ 位置参数仍生效 / 混用 /
+      阻塞调用在其它线程 / 阻塞期间事件循环未被卡住 / 异常向上传播
+- [x] 教训：给"转发调用"类工具函数补参数能力时，必须同步补覆盖新签名的测试
+
+**3）英文版补全**
+- [x] 新增 `src/i18n/extraKeys.ts`：三批共 **181 条** `中文 → [key, 英文]`
+      （EXTRA 表格列名/状态/标签页/节点/数据类型；EXTRA2 卡片弹窗区块标题；EXTRA3 操作反馈/按钮/空状态）
+- [x] 原 16 页中仅 2 页接入 i18n → **现 16/16 全部接入**（含子组件 PluginManagement /
+      TerminalWindow / SectionTable / PlanPreview / ComMonitorCard）
+- [x] 模块级常量改工厂：`Plugins.columns`、`TestFlowEditor.PALETTE` / `VALUE_TYPE_OPTIONS`
+- [x] **词条 296（115 手写 + 181 批量），en-US 缺失 0**
+- [x] 待办：页面内仍有约 1587 处长尾中文（长句提示/tooltip/告警正文），建议按页拆小批推进
+
+**4）验证**：`test_blocking` 6/6 PASS；原 7 个脚本全 PASS；PeakCAN+MG100 均 connected；
+命令期间 `/health` 最大 111 ms；`tsc` + `build` 通过；用例 89 条
+
 ### v2.0.0 — 执行卡死修复 + 响应性能优化 + Issue #23 硬编码色 token 化（2026-10-17，分支 `feature/flow-enhancements`）
 
 **1）修复：执行中的测试突然卡住（P0）**

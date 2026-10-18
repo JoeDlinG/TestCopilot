@@ -19,6 +19,7 @@ import { extractItems, handleApiError } from '../services/apiHelper'
 import ParsedTrendChart, { toNumber } from '../components/ParsedTrendChart'
 import { useOutputDock } from '../stores/outputDockStore'
 import type { TestExecution } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -338,6 +339,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
   devices: any[]
   height?: number
 }) {
+  const { t } = useI18n()
   return (
     <Card
       size="small"
@@ -356,7 +358,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
           <Select
             size="small"
             style={{ width: 170 }}
-            placeholder="选择设备"
+            placeholder={t('btn.selectDevice')}
             value={m.selectedDevice || undefined}
             onChange={(v: any) => { m.setSelectedDevice(v); m.clear() }}
             options={devices.map((d: any) => ({
@@ -417,6 +419,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
 }
 
 export default function Executions() {
+  const { t } = useI18n()
   const [executions, setExecutions] = useState<TestExecution[]>([])
   const [loading, setLoading] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -506,7 +509,7 @@ export default function Executions() {
       if (!selectedCase && items.length) setSelectedCase(items[0].id)
       setStartOpen(true)
     } catch (err) {
-      handleApiError(err, '加载测试用例失败')
+      handleApiError(err, t('msg.loadCasesFailed'))
     }
   }
 
@@ -535,7 +538,7 @@ export default function Executions() {
     running: { color: 'processing', icon: <SyncOutlined spin />, text: '运行中' },
     passed: { color: 'success', icon: <CheckCircleOutlined />, text: '通过' },
     failed: { color: 'error', icon: <CloseCircleOutlined />, text: '失败' },
-    error: { color: 'warning', icon: <ExclamationCircleOutlined />, text: '异常' },
+    error: { color: 'warning', icon: <ExclamationCircleOutlined />, text: t('label.exception') },
     stopped: { color: 'default', icon: <PauseCircleOutlined />, text: '已停止' },
   }
 
@@ -544,7 +547,7 @@ export default function Executions() {
     running: { color: 'processing', text: '执行中' },
     passed: { color: 'success', text: '通过' },
     failed: { color: 'error', text: '失败' },
-    error: { color: 'warning', text: '异常' },
+    error: { color: 'warning', text: t('label.exception') },
     skipped: { color: 'default', text: '跳过' },
   }
 
@@ -901,14 +904,14 @@ export default function Executions() {
 
   const columns = [
     {
-      title: '执行 ID',
+      title: t('col.execId'),
       dataIndex: 'id',
       key: 'id',
       width: 150,
       render: (id: string) => id.slice(0, 8) + '...',
     },
     {
-      title: '测试用例',
+      title: t('col.testCase'),
       dataIndex: 'testcase_id',
       key: 'testcase_id',
       width: 150,
@@ -922,7 +925,7 @@ export default function Executions() {
       ),
     },
     {
-      title: '状态',
+      title: t('col.status'),
       dataIndex: 'status',
       key: 'status',
       width: 100,
@@ -936,28 +939,28 @@ export default function Executions() {
       },
     },
     {
-      title: '开始时间',
+      title: t('col.startedAt'),
       dataIndex: 'started_at',
       key: 'started_at',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '结束时间',
+      title: t('col.completedAt'),
       dataIndex: 'completed_at',
       key: 'completed_at',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '耗时 (ms)',
+      title: t('col.durationMs'),
       dataIndex: 'duration_ms',
       key: 'duration_ms',
       width: 110,
       render: (v: number) => v ?? '-',
     },
     {
-      title: '结果详情',
+      title: t('col.resultDetail'),
       dataIndex: 'results',
       key: 'results',
       width: 120,
@@ -967,7 +970,7 @@ export default function Executions() {
       },
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
       width: 160,
       render: (_: any, record: TestExecution) => (
@@ -1008,7 +1011,7 @@ export default function Executions() {
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <Title level={3} style={{ margin: 0 }}>测试执行</Title>
+          <Title level={3} style={{ margin: 0 }}>{t('card.executions')}</Title>
           {/* 当前执行（或正在跟踪）的用例名称 —— 一眼看出在跑什么 */}
           {currentCaseName && (
             <Tag color="blue" style={{ marginInlineEnd: 0, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1046,7 +1049,7 @@ export default function Executions() {
         <Col xs={12} sm={6}>
           <Card>
             <Statistic
-              title="通过"
+              title={t('status.passed')}
               value={stats.passed}
               valueStyle={{ color: 'var(--app-pass)' }}
               prefix={<CheckCircleOutlined />}
@@ -1056,7 +1059,7 @@ export default function Executions() {
         <Col xs={12} sm={6}>
           <Card>
             <Statistic
-              title="失败"
+              title={t('status.failed')}
               value={stats.failed}
               valueStyle={{ color: 'var(--app-fail)' }}
               prefix={<CloseCircleOutlined />}
@@ -1066,7 +1069,7 @@ export default function Executions() {
         <Col xs={12} sm={6}>
           <Card>
             <Statistic
-              title="通过率"
+              title={t('col.passRate')}
               value={stats.passRate}
               suffix="%"
               valueStyle={{ color: stats.passRate >= 80 ? 'var(--app-pass)' : 'var(--app-warn)' }}
@@ -1206,7 +1209,7 @@ export default function Executions() {
                     icon={bigScreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
                     onClick={() => setBigScreen(v => !v)}
                   >
-                    {bigScreen ? '退出大屏' : '大屏'}
+                    {bigScreen ? t('btn.exitBigScreen') : t('btn.bigScreenShort')}
                   </Button>
                 </Tooltip>
               </Space>
@@ -1265,7 +1268,7 @@ export default function Executions() {
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
-          locale={{ emptyText: <Empty description="暂无执行记录" /> }}
+          locale={{ emptyText: <Empty description={t('msg.noExecutions')} /> }}
         />
       </Card>
 
@@ -1296,13 +1299,13 @@ export default function Executions() {
                 value={trendFields}
                 onChange={(v) => setTrendFields(v as string[])}
               />
-              <Tooltip title="大屏模式">
+              <Tooltip title={t('btn.bigScreen')}>
                 <Button
                   size="small"
                   icon={bigScreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
                   onClick={() => setBigScreen(v => !v)}
                 >
-                  {bigScreen ? '退出大屏' : '大屏'}
+                  {bigScreen ? t('btn.exitBigScreen') : t('btn.bigScreenShort')}
                 </Button>
               </Tooltip>
             </Space>
@@ -1327,7 +1330,7 @@ export default function Executions() {
 
       {/* ---------- start a new execution ---------- */}
       <Modal
-        title="启动测试执行"
+        title={t('dlg.startExecution')}
         open={startOpen}
         onCancel={() => setStartOpen(false)}
         onOk={handleStart}
@@ -1388,22 +1391,22 @@ export default function Executions() {
               columns={[
                 { title: '#', dataIndex: 'step_index', width: 50 },
                 {
-                  title: '状态', dataIndex: 'status', width: 80,
+                  title: t('col.status'), dataIndex: 'status', width: 80,
                   render: (s: string) => (
                     <Tag color={s === 'passed' ? 'green' : s === 'failed' ? 'red' : 'default'}>
                       {s}
                     </Tag>
                   ),
                 },
-                { title: '耗时', dataIndex: 'duration_ms', width: 70 },
+                { title: t('col.duration'), dataIndex: 'duration_ms', width: 70 },
                 {
-                  title: '下发指令', dataIndex: 'command',
+                  title: t('col.command'), dataIndex: 'command',
                   render: (c: string) => (
                     <Text code style={{ fontSize: 11, wordBreak: 'break-all' }}>{c || '-'}</Text>
                   ),
                 },
                 {
-                  title: '设备实际响应', dataIndex: 'actual',
+                  title: t('col.actualResponse'), dataIndex: 'actual',
                   render: (a: string) => (
                     <Text style={{ fontSize: 11, wordBreak: 'break-all' }}>{a || '-'}</Text>
                   ),

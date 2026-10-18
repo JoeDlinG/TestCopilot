@@ -16,6 +16,7 @@ import {
 } from '@ant-design/icons'
 import { pluginEditorAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -43,6 +44,7 @@ const TEMPLATE_TYPE_LABEL: Record<string, string> = {
 }
 
 export default function PluginEditor() {
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   const [templates, setTemplates] = useState<TemplateItem[]>([])
@@ -100,7 +102,7 @@ export default function PluginEditor() {
       setDirty(false)
       loadAll()
     } catch (err) {
-      handleApiError(err, '保存失败')
+      handleApiError(err, t('msg.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -131,7 +133,7 @@ export default function PluginEditor() {
       }
       loadAll()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -177,7 +179,7 @@ export default function PluginEditor() {
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>插件编辑器</Title>
+          <Title level={3} style={{ margin: 0 }}>{t('tab.pluginEditor')}</Title>
           <Text type="secondary">
             基于模板新建插件（自动套用示例），或直接编辑 plugins/ 下的插件源码
           </Text>
@@ -325,7 +327,7 @@ export default function PluginEditor() {
             <Input placeholder="例如：Mini Gateway 100" />
           </Form.Item>
           <Form.Item
-            name="protocol_name" label="协议标识" rules={[{ required: true }]}
+            name="protocol_name" label={t('label.protocolId')} rules={[{ required: true }]}
             extra="小写字母/数字/下划线/连字符，设备 protocol 字段会用它"
           >
             <Input placeholder="例如：mini_gateway100" />

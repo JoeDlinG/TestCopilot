@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-10-18: v2.0.1 —— PeakCAN 连接回归修复 + 英文版补全
+
+### 一、修复：PeakCAN 无法连接（我自己在 v2.0.0 引入的回归）
+
+**现象**：`POST /devices/connect` 返回 400，报错为「没有可用的 CAN 接口 —— 通常只是内核模块没加载」，
+并附带 `sudo modprobe peak_usb` 提示。按提示排查内核模块**是死路**。
+
+**根因**：v2.0.0 把 python-can 调用移出事件循环时，写成了
+
+```python
+self._bus = await run_blocking(can.interface.Bus, **bus_kwargs)
+```
+
+而 `run_blocking` 当时的签名是 `run_blocking(func, *args)` —— **不接受关键字参数**。
+每个候选接口都抛 `TypeError: run_blocking() got an unexpected keyword argument 'interface'`，
+被 `except Exception` 兜住后，再经 `_explain()` 翻译成「内核模块没加载」，
+把排查方向彻底带偏。
+
+**两层修复**：
+
+1. **修根因（不是改调用点）**：给 `run_blocking` 补上 `**kwargs` 转发，
+   与它所模拟的 `asyncio.to_thread` 语义一致。这样任何 `func(**kwargs)` 调用都不会再踩坑。
+2. **堵住误导**：`connect()` 的异常分支拆成两类 ——
+   `can.CanError / OSError / ValueError` 走「接口不可用」的人话解释；
+   **其余异常（TypeError、AttributeError…）一律 `logger.exception` 后原样抛出**，
+   绝不再包装成硬件/环境问题。
+
+**验证**：`POST /devices/connect` → **200**，`status: connected`。
+
+### 二、防复发：新增 `Test/test_blocking.py`
+
+把这次踩的坑钉成契约，6 项检查全 PASS：
+
+| 检查 | 目的 |
+|---|---|
+| kwargs 被正确转发 | **本次故障的直接回归点** |
+| 位置参数仍然生效 | 防止改坏既有调用 |
+| 位置参数与 kwargs 混用 | 覆盖组合场景 |
+| 阻塞调用在其它线程执行 | 确认真的离开了事件循环 |
+| 阻塞期间事件循环未被卡住 | 确认修复的目的仍然成立 |
+| 异常向上传播 | 防止被静默吞掉 |
+
+> **教训**：给通用工具函数（尤其"转发调用"类）补参数能力时，
+> 必须同步补**覆盖新签名**的测试；否则调用方换个写法就会静默炸掉，
+> 而且错误会被上层的宽泛 `except Exception` 翻译成完全不相干的原因。
+
+### 三、英文版补全
+
+原 i18n 只覆盖导航 / 通用 / 设备 / 接口 / 工程，**16 个页面里只有 2 个接入了 `useI18n`**，
+其余全部硬编码中文（全库约 1800 处中文字符串）。
+
+本次按「**标题 → 表格 title → 状态**」三类系统治理：
+
+- 新增 `src/i18n/extraKeys.ts`，分三批共 **181 条** `中文 → [key, 英文]` 映射：
+  - `EXTRA`（107）：表格列名、状态词、标签页、流程节点类型、数据类型、刷新间隔、出错策略、循环类型、向导步骤
+  - `EXTRA2`（32）：卡片 / 弹窗 / 区块标题
+  - `EXTRA3`（42）：操作反馈（删除失败、保存失败…）、表单标签、空状态、操作按钮
+- `messages.ts` 在模块加载时把三批合并进 zh 与 en 两个语言包
+- **16 个页面全部接入 `useI18n()`**（含子组件：`PluginManagement`、`TerminalWindow`、
+  `SectionTable`、`PlanPreview`、`ComMonitorCard`）
+- 模块级常量（`Plugins.columns`、`TestFlowEditor.PALETTE` / `VALUE_TYPE_OPTIONS`）
+  改为 `(t) => [...]` 工厂函数，因为它们拿不到 hook
+
+**词条总量 296（115 手写 + 181 批量），en-US 缺失 0。**
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_blocking.py` | 6/6 PASS |
+| `Test/` 原有 7 个脚本 | 全 PASS |
+| PeakCAN 连接 | **200 / connected** |
+| MG100 连接 | connected |
+| 命令期间 `/health` 最大延迟 | 111 ms（v2.0.0 修复前 2024 ms） |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| i18n 覆盖 | 16/16 页接入；296 键，en 缺失 0 |
+
+> 说明：页面内仍有约 1587 处中文（多为长句提示、tooltip、告警正文）。
+> 本次按你的要求覆盖了「标题 / 表格 title / 状态」三类；若要 100% 英文，
+> 需再逐条补剩余长尾文案，建议按页面拆成后续小批次推进。
+
+---
+
 ## 2026-10-17: v2.0.0 —— 执行卡死修复 + 响应性能优化 + Issue #23 硬编码色 token 化
 
 ### 一、修复：正在执行的测试突然卡住（P0）

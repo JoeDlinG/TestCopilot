@@ -34,10 +34,16 @@ BLOCKING_POOL = concurrent.futures.ThreadPoolExecutor(
 )
 
 
-async def run_blocking(func: Callable[..., Any], *args: Any) -> Any:
+async def run_blocking(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Await *func* executed in the blocking-I/O thread pool.
 
-    Python 3.8 has no ``asyncio.to_thread``, hence this backport.
+    Python 3.8 has no ``asyncio.to_thread``, hence this backport. Like
+    ``to_thread`` it forwards keyword arguments — callers such as
+    ``can.interface.Bus(**kwargs)`` depend on that.
     """
     loop = asyncio.get_running_loop()
+    if kwargs:
+        return await loop.run_in_executor(
+            BLOCKING_POOL, lambda: func(*args, **kwargs)
+        )
     return await loop.run_in_executor(BLOCKING_POOL, func, *args)

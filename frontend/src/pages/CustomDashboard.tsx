@@ -18,6 +18,7 @@ import { dashboardAPI, testCaseAPI, logAPI } from '../services/api'
 import type {
   CustomDashboard, DashboardWidget, DashboardLayoutItem, DashboardSnapshot, WidgetType,
 } from '../types'
+import { useI18n } from '../i18n'
 import { WIDGET_LIST, newWidget, STATUS_COLOR } from '../components/dashboard/registry'
 import { WidgetBody } from '../components/dashboard/widgets'
 import WidgetConfigDrawer from '../components/dashboard/WidgetConfigDrawer'
@@ -29,6 +30,7 @@ const GRID_COLS = 12
 const ROW_HEIGHT = 40
 
 export default function CustomDashboard() {
+  const { t } = useI18n()
   const [loading, setLoading] = useState(true)
   const [dashboards, setDashboards] = useState<CustomDashboard[]>([])
   const [current, setCurrent] = useState<CustomDashboard | null>(null)
@@ -272,7 +274,7 @@ export default function CustomDashboard() {
       message.success('已保存')
       await loadDashboards()
     } catch {
-      message.error('保存失败')
+      message.error(t('msg.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -292,7 +294,7 @@ export default function CustomDashboard() {
       setEditMode(true)
       message.success('已创建，开始添加组件吧')
     } catch {
-      message.error('创建失败')
+      message.error(t('msg.createFailed'))
     }
   }
 
@@ -540,7 +542,7 @@ export default function CustomDashboard() {
               const res = await dashboardAPI.duplicate(current.id)
               await loadDashboards()
               setCurrent(res.data?.data || null)
-              message.success('已复制')
+              message.success(t('msg.copied'))
             }}
           >
             <Button size="small" icon={<CopyOutlined />}>复制</Button>
@@ -603,7 +605,7 @@ export default function CustomDashboard() {
               await dashboardAPI.delete(current.id)
               setCurrent(null)
               await loadDashboards()
-              message.success('已删除')
+              message.success(t('msg.deleted'))
             }}
           >
             <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>

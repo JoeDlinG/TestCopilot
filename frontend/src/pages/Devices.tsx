@@ -102,7 +102,7 @@ export default function Devices() {
       message.success('设备已删除')
       loadDevices()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
@@ -126,7 +126,7 @@ export default function Devices() {
       form.resetFields()
       loadDevices()
     } catch (err) {
-      handleApiError(err, '添加设备失败')
+      handleApiError(err, t('msg.addDeviceFailed'))
     }
   }
 
@@ -183,14 +183,14 @@ export default function Devices() {
       setDiscoverModalVisible(false)
       loadDevices()
     } catch (err) {
-      handleApiError(err, '添加设备失败')
+      handleApiError(err, t('msg.addDeviceFailed'))
     }
   }
 
   const columns = [
     {
       // Stable identifier test cases bind to — it survives a hardware swap.
-      title: '设备ID号',
+      title: t('col.deviceId'),
       dataIndex: 'device_key',
       key: 'device_key',
       width: 110,
@@ -211,7 +211,7 @@ export default function Devices() {
       ),
     },
     {
-      title: '设备名称',
+      title: t('col.deviceName'),
       dataIndex: 'name',
       key: 'name',
       width: 200,
@@ -263,7 +263,7 @@ export default function Devices() {
       render: (_: any, record: Device) => (
         <Space>
           {(record as any).status === 'connected' ? (
-            <Tooltip title="断开连接">
+            <Tooltip title={t('btn.disconnectDevice')}>
               <Button
                 size="small"
                 danger
@@ -272,7 +272,7 @@ export default function Devices() {
               />
             </Tooltip>
           ) : (
-            <Tooltip title="连接设备">
+            <Tooltip title={t('btn.connectDevice')}>
               <Button
                 size="small"
                 type="primary"
@@ -281,7 +281,7 @@ export default function Devices() {
               />
             </Tooltip>
           )}
-          <Tooltip title="发送命令">
+          <Tooltip title={t('btn.sendCommand')}>
             <Button
               size="small"
               icon={<ApiOutlined />}
@@ -374,7 +374,7 @@ export default function Devices() {
             } />
           </Form.Item>
           <Form.Item name="interface_type" label="接口类型" rules={[{ required: true }]}>
-            <Select placeholder="选择接口类型" options={
+            <Select placeholder={t('msg.selectInterface')} options={
               Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: v, value: k }))
             } />
           </Form.Item>
@@ -427,7 +427,7 @@ export default function Devices() {
 
       {/* Discover Devices Modal */}
       <Modal
-        title="发现的设备"
+        title={t('card.discovered')}
         open={discoverModalVisible}
         onCancel={() => setDiscoverModalVisible(false)}
         footer={null}
@@ -445,23 +445,23 @@ export default function Devices() {
             rowKey={(record, index) => record.serial_port || record.visa_address || `usb-${record.vid}-${record.pid}` || String(index)}
             pagination={false}
             columns={[
-              { title: '设备名称', dataIndex: 'name', key: 'name', ellipsis: true },
+              { title: t('col.deviceName'), dataIndex: 'name', key: 'name', ellipsis: true },
               { title: 'VID', dataIndex: 'vid', key: 'vid', width: 80,
                 render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
               { title: 'PID', dataIndex: 'pid', key: 'pid', width: 80,
                 render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
-              { title: '端口/地址', dataIndex: 'serial_port', key: 'serial_port',
+              { title: t('col.portAddress'), dataIndex: 'serial_port', key: 'serial_port',
                 render: (v: string, r: any) => v || r.visa_address || '(raw USB)' },
-              { title: '协议', dataIndex: 'protocol', key: 'protocol',
+              { title: t('col.protocol'), dataIndex: 'protocol', key: 'protocol',
                 render: (v: string) => <Tag color="blue">{v?.toUpperCase()}</Tag> },
-              { title: '驱动状态', dataIndex: 'has_kernel_driver', key: 'driver',
+              { title: t('col.driverStatus'), dataIndex: 'has_kernel_driver', key: 'driver',
                 render: (v: boolean | undefined, r: any) => {
                   if (r.serial_port) return <Tag color="green">已加载</Tag>
                   if (v === false) return <Tag color="orange">需pyusb</Tag>
                   return <Tag>未知</Tag>
                 }},
               {
-                title: '操作', key: 'actions',
+                title: t('col.actions'), key: 'actions',
                 render: (_: any, record: any) => (
                   <Button size="small" type="primary" onClick={() => handleQuickAdd(record)}>
                     快速添加
