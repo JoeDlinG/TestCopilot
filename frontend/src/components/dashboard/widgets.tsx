@@ -1,7 +1,10 @@
 import { useMemo } from 'react'
 import {
   Empty, Tag, Statistic, Progress, Table, List, Typography, Spin, Space, Tooltip,
+  DatePicker, Button,
 } from 'antd'
+import { ClearOutlined, WarningOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import ReactMarkdown from 'react-markdown'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
@@ -23,6 +26,10 @@ export interface WidgetProps {
   big?: boolean
   logs?: any[]
   logsLoading?: boolean
+  /** Lower bound of the 执行统计 window (ISO-8601); null = all history. */
+  since?: string | null
+  /** Persist a new 起始时间 — or clear it (清零) with null. */
+  onSinceChange?: (iso: string | null) => void
 }
 
 /* ------------------------------------------------------------------ */
@@ -118,9 +125,34 @@ export function ParsedValueWidget({ widget, snapshot, big }: WidgetProps) {
         {display}
       </div>
 
+      {/* 判定说明：只有真正的 FAIL 用红色；限值/越界属「需注意」，用琥珀。
+          红色留给 fail，避免用户把「超限值」误读成「这条失败了」。 */}
       {latest.detail && (
-        <div style={{ color: 'var(--app-fail)', fontSize: big ? 16 : 12 }}>
+        <div style={{
+          color: latest.status === 'fail' ? 'var(--app-fail)' : 'var(--app-warn)',
+          fontSize: big ? 16 : 12,
+        }}>
           {latest.detail}
+        </div>
+      )}
+
+      {/* 限值区间：琥珀 —— 它是阈值，不是失败判定 */}
+      {(widget.config?.min_value !== undefined && widget.config?.min_value !== ''
+        || widget.config?.max_value !== undefined && widget.config?.max_value !== '') && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: big ? 15 : 12, color: 'var(--app-warn)',
+          border: '1px solid var(--app-warn)', borderRadius: 4,
+          padding: '1px 8px', alignSelf: 'flex-start',
+        }}>
+          <WarningOutlined />
+          限值 {widget.config?.min_value !== undefined && widget.config?.min_value !== ''
+            ? `≥ ${fmtNum(widget.config.min_value)}` : ''}
+          {widget.config?.min_value !== undefined && widget.config?.min_value !== ''
+            && widget.config?.max_value !== undefined && widget.config?.max_value !== ''
+            ? ' · ' : ''}
+          {widget.config?.max_value !== undefined && widget.config?.max_value !== ''
+            ? `≤ ${fmtNum(widget.config.max_value)}` : ''}
         </div>
       )}
 
@@ -453,11 +485,44 @@ export function DeviceStatusWidget({ widget, snapshot, big }: WidgetProps) {
 /* ------------------------------------------------------------------ */
 /* 执行统计                                                            */
 /* ------------------------------------------------------------------ */
-export function ExecutionStatsWidget({ widget, snapshot, big }: WidgetProps) {
+export function ExecutionStatsWidget({
+  widget, snapshot, big, since, onSinceChange,
+}: WidgetProps) {
   const e = snapshot?.executions
   if (!e) return <Spin />
+
+  const sinceValue = since ? dayjs(since) : null
+  // "清零" restarts the window at *now* — every counter drops back to zero and
+  // only executions started from this moment on are counted.
+  const resetToNow = () => onSinceChange?.(dayjs().toISOString())
+  const clearWindow = () => onSinceChange?.(null)
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 12 }}>
+      {/* 起始时间 / 清零 —— 统计窗口由后端按 since 过滤，故需落盘 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Text type="secondary" style={{ fontSize: big ? 14 : 12 }}>起始时间</Text>
+        <DatePicker
+          size="small"
+          showTime
+          allowClear
+          style={{ width: big ? 230 : 200 }}
+          value={sinceValue}
+          placeholder="全部历史"
+          onChange={(v) => onSinceChange?.(v ? v.toISOString() : null)}
+        />
+        <Tooltip title="把统计窗口设为当前时刻，计数从 0 重新开始">
+          <Button size="small" icon={<ClearOutlined />} onClick={resetToNow}>
+            清零
+          </Button>
+        </Tooltip>
+        {since && (
+          <Button size="small" type="link" onClick={clearWindow}>
+            恢复全部历史
+          </Button>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: big ? 40 : 24, flexWrap: 'wrap' }}>
         <Statistic title="执行总数" value={e.total} valueStyle={{ fontSize: big ? 36 : 26 }} />
         <Statistic title="通过" value={e.passed} valueStyle={{ color: 'var(--app-pass)', fontSize: big ? 36 : 26 }} />
@@ -470,6 +535,11 @@ export function ExecutionStatsWidget({ widget, snapshot, big }: WidgetProps) {
         strokeWidth={big ? 18 : 12}
         format={(p) => `通过率 ${p ?? 0}%`}
       />
+      {since && (
+        <div style={{ fontSize: big ? 14 : 11, color: 'var(--app-warn)' }}>
+          统计自 {fmtTime(since)} 起（{e.total} 条）
+        </div>
+      )}
       {e.recent?.length > 0 && (
         <div style={{ fontSize: big ? 15 : 12, color: 'var(--app-fg-subtle)' }}>
           最近：{e.recent[0].id?.slice(0, 12)} · {STATUS_LABEL[e.recent[0].status] || e.recent[0].status}

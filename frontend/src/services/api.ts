@@ -205,9 +205,13 @@ export const dashboardAPI = {
   duplicate: (id: string) => api.post(`/dashboards/${id}/duplicate`),
   setDefault: (id: string) => api.post(`/dashboards/${id}/set-default`),
   importJson: (data: any) => api.post('/dashboards/import', data),
-  snapshot: (testCaseId?: string | null, limit = 50) =>
+  snapshot: (testCaseId?: string | null, limit = 50, since?: string | null) =>
     api.get('/dashboards/snapshot', {
-      params: { test_case_id: testCaseId || undefined, limit },
+      params: {
+        test_case_id: testCaseId || undefined,
+        limit,
+        since: since || undefined,
+      },
     }),
 }
 

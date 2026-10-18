@@ -193,6 +193,8 @@ export interface DashboardDataSource {
   test_case_id: string | null
   limit: number
   refresh_sec: number
+  /** 执行统计的起始时间（ISO-8601）；null / 缺省 = 统计全部历史。 */
+  since?: string | null
 }
 
 export interface CustomDashboard {

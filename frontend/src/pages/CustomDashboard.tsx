@@ -93,6 +93,7 @@ export default function CustomDashboard() {
       const res = await dashboardAPI.snapshot(
         d?.data_source?.test_case_id || null,
         Number(d?.data_source?.limit) || 50,
+        d?.data_source?.since || null,
       )
       setSnapshot(res.data?.data || null)
     } catch {
@@ -125,7 +126,8 @@ export default function CustomDashboard() {
     if (!current) return
     loadSnapshot()
     loadLogs()
-  }, [current?.id, current?.data_source?.test_case_id, current?.data_source?.limit, loadSnapshot, loadLogs])
+  }, [current?.id, current?.data_source?.test_case_id, current?.data_source?.limit,
+      current?.data_source?.since, loadSnapshot, loadLogs])
 
   // auto refresh
   const refreshSec = Number(current?.data_source?.refresh_sec) || 10
@@ -280,6 +282,32 @@ export default function CustomDashboard() {
     }
   }
 
+  /**
+   * 执行统计组件的「起始时间 / 清零」。
+   * Persisted on the dashboard's data source so the window survives a reload —
+   * and pushed straight to the backend because the counts are computed there.
+   */
+  const updateSince = async (iso: string | null) => {
+    if (!current) return
+    const next = {
+      ...current,
+      data_source: { ...current.data_source, since: iso },
+    }
+    setCurrent(next)
+    try {
+      await dashboardAPI.update(current.id, {
+        name: next.name,
+        description: next.description,
+        layout: next.layout,
+        widgets: next.widgets,
+        data_source: next.data_source,
+      })
+      loadSnapshot()
+    } catch {
+      message.error(t('msg.saveFailed'))
+    }
+  }
+
   const createDashboard = async () => {
     const name = window.prompt('新仪表盘名称', '我的仪表盘')
     if (!name) return
@@ -376,6 +404,8 @@ export default function CustomDashboard() {
             big={bigMode}
             logs={logs}
             logsLoading={logsLoading}
+            since={current?.data_source?.since || null}
+            onSinceChange={updateSince}
           />
         </div>
       </div>

@@ -3,13 +3,13 @@ import { usePolling } from '../hooks/usePolling'
 import {
   Row, Col, Card, Table, Button, Space, Input, InputNumber, Select, Tag,
   Alert, Modal, Drawer, Progress, Tooltip, Typography, Divider, message,
-  List, Checkbox, Empty, Spin,
+  List, Checkbox, Empty, Spin, Popconfirm,
 } from 'antd'
 import { DataTable } from '../components/ui'
 import {
   PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
   PlayCircleOutlined, SaveOutlined, StopOutlined, WarningOutlined,
-  CopyOutlined, ReloadOutlined,
+  CopyOutlined, ReloadOutlined, UndoOutlined, FileAddOutlined,
 } from '@ant-design/icons'
 import { planAPI, planRunAPI, testCaseAPI, deviceAPI } from '../services/api'
 import { useI18n } from '../i18n'
@@ -80,6 +80,10 @@ export default function ExecutionPlanner() {
   const [onError, setOnError] = useState('abort_all')
   const [items, setItems] = useState<PlanItem[]>([])
   const [selected, setSelected] = useState<string[]>([])
+  /** Rows ticked in the middle plan-item table (bulk copy / delete). */
+  const [itemSelected, setItemSelected] = useState<string[]>([])
+  /** Undo stack of plan snapshots; Ctrl+Z pops one. */
+  const [history, setHistory] = useState<any[]>([])
   const [keyword, setKeyword] = useState('')
   const [validation, setValidation] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -158,49 +162,159 @@ export default function ExecutionPlanner() {
   useEffect(() => { pollRun() }, [pollRun])
   usePolling(pollRun, 2000, !!runId)
 
+  // ---- undo (Ctrl+Z) --------------------------------------------------
+  const snapshot = () => ({
+    items: items.map((i) => ({ ...i })),
+    planName, planLoop, maxParallel, onError,
+  })
+
+  /** Call *before* mutating so the pre-change state can be restored. */
+  const pushHistory = () => setHistory((h) => [...h.slice(-49), snapshot()])
+
+  const undo = () => {
+    if (!history.length) { message.info('没有可撤销的操作'); return }
+    const prev = history[history.length - 1]
+    setHistory((h) => h.slice(0, -1))
+    setItems(prev.items)
+    setPlanName(prev.planName)
+    setPlanLoop(prev.planLoop)
+    setMaxParallel(prev.maxParallel)
+    setOnError(prev.onError)
+    setItemSelected((ids) => ids.filter((id) => prev.items.some((i: PlanItem) => i.id === id)))
+    message.success('已撤销')
+  }
+
+  // Ctrl+Z / ⌘Z. Held in a ref so the listener is bound once, not per render.
+  const undoRef = useRef(undo)
+  undoRef.current = undo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || String(e.key).toLowerCase() !== 'z') return
+      if (e.shiftKey) return // redo is not implemented yet
+      const el = e.target as HTMLElement | null
+      // Let text fields keep their own native undo.
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      e.preventDefault()
+      undoRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // ---- item helpers ----------------------------------------------------
   const addSelected = () => {
     if (!selected.length) { message.warning('请先在左侧勾选用例'); return }
-    const existing = new Set(items.map((i) => i.testcase_id))
-    const added: PlanItem[] = []
-    selected.forEach((cid) => {
-      if (existing.has(cid)) return
-      const tc = cases.find((c) => c.id === cid)
-      added.push({
-        id: `tmp_${Date.now()}_${cid}`,
-        testcase_id: cid,
-        testcase_name: tc?.name,
-        ...DEFAULT_ITEM,
-        // Default = own sequence number => fully serial (PRD FR3.1)
-        group_no: items.length + added.length + 1,
+    pushHistory()
+    setItems((prev) => {
+      const existing = new Set(prev.map((i) => i.testcase_id))
+      const added: PlanItem[] = []
+      selected.forEach((cid) => {
+        if (existing.has(cid)) return
+        const tc = cases.find((c) => c.id === cid)
+        added.push({
+          id: `tmp_${Date.now()}_${cid}`,
+          testcase_id: cid,
+          testcase_name: tc?.name,
+          ...DEFAULT_ITEM,
+          // Default = own sequence number => fully serial (PRD FR3.1)
+          group_no: prev.length + added.length + 1,
+        })
       })
+      return [...prev, ...added]
     })
-    setItems([...items, ...added])
     setSelected([])
   }
 
-  const update = (id: string, patch: Partial<PlanItem>) =>
+  /** Duplicate the ticked plan items, appended at the end. */
+  const copyItems = () => {
+    if (!itemSelected.length) { message.warning('请先勾选计划项'); return }
+    pushHistory()
+    setItems((prev) => {
+      const clones = prev
+        .filter((i) => itemSelected.includes(i.id))
+        .map((i) => ({ ...i, id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }))
+      return [...prev, ...clones]
+    })
+    message.success(`已复制 ${itemSelected.length} 项`)
+  }
+
+  const removeItems = () => {
+    if (!itemSelected.length) { message.warning('请先勾选计划项'); return }
+    pushHistory()
+    setItems((prev) => prev.filter((i) => !itemSelected.includes(i.id)))
+    setItemSelected([])
+    message.success(`已删除 ${itemSelected.length} 项`)
+  }
+
+  // ---- plan-level helpers ---------------------------------------------
+  const newPlan = () => {
+    pushHistory()
+    setPlanId(null)
+    setPlanName('新建执行计划')
+    setPlanLoop(1)
+    setMaxParallel(4)
+    setOnError('abort_all')
+    setItems([])
+    setSelected([])
+    setItemSelected([])
+    setValidation(null)
+    setRunId(null)
+    setRun(null)
+  }
+
+  const update = (id: string, patch: Partial<PlanItem>) => {
+    pushHistory()
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)))
+  }
 
   const move = (index: number, delta: number) => {
     const target = index + delta
     if (target < 0 || target >= items.length) return
+    pushHistory()
     const next = [...items]
     ;[next[index], next[target]] = [next[target], next[index]]
     setItems(next)
   }
 
-  const remove = (id: string) => setItems((prev) => prev.filter((i) => i.id !== id))
+  const remove = (id: string) => {
+    pushHistory()
+    setItems((prev) => prev.filter((i) => i.id !== id))
+  }
 
   const mergeWithPrev = (index: number) => {
     if (index === 0) return
+    pushHistory()
     const prevGroup = items[index - 1].group_no
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, group_no: prevGroup } : it)))
   }
 
   const splitGroup = (index: number) => {
+    pushHistory()
     const maxGroup = Math.max(...items.map((i) => i.group_no))
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, group_no: maxGroup + 1 } : it)))
+  }
+
+  // ---- existing plan operations (copy / delete) ------------------------
+  const duplicatePlan = async (id: string, name: string) => {
+    try {
+      const d = extractData(await planAPI.duplicate(id))
+      await openPlan(d.id)
+      loadBase()
+      message.success(`已复制「${name}」`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || '复制失败')
+    }
+  }
+
+  const deletePlan = async (id: string, name: string) => {
+    try {
+      await planAPI.delete(id)
+      message.success(`已删除「${name}」`)
+      if (planId === id) newPlan()
+      loadBase()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || t('msg.deleteFailed'))
+    }
   }
 
   // ---- persistence -----------------------------------------------------
@@ -384,6 +498,22 @@ export default function ExecutionPlanner() {
 
   return (
     <div style={{ padding: 4 }}>
+      {/* 顶部工具条：新建 / 撤销 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+        <Space>
+          <Button icon={<FileAddOutlined />} onClick={newPlan}>新建计划</Button>
+          <Tooltip title="撤销 Ctrl+Z">
+            <Button icon={<UndoOutlined />} disabled={!history.length} onClick={undo}>
+              撤销{history.length ? `（${history.length}）` : ''}
+            </Button>
+          </Tooltip>
+          {planId && <Tag>编辑中：{planName}</Tag>}
+        </Space>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          勾选计划项后可批量复制 / 删除；按 Ctrl+Z 可撤销上一步
+        </Text>
+      </div>
+
       <Row gutter={12}>
         {/* ---------- 左：用例库 ---------- */}
         <Col span={6}>
@@ -411,19 +541,45 @@ export default function ExecutionPlanner() {
               onClick={addSelected}>加入计划（{selected.length}）</Button>
           </Card>
 
-          <Card size="small" title="已有计划" style={{ marginTop: 12 }}>
+          <Card size="small" title="已有计划" style={{ marginTop: 12 }}
+            extra={<Text type="secondary" style={{ fontSize: 11 }}>点击选中并编辑</Text>}>
             <List size="small" dataSource={plans}
               locale={{ emptyText: <Empty description="暂无" /> }}
-              renderItem={(p: any) => (
-                <List.Item style={{ padding: '4px 0' }}>
-                  <Space>
-                    <Button size="small" type="link" onClick={() => openPlan(p.id)}>
-                      {p.name}
-                    </Button>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{p.item_count} 项</Text>
-                  </Space>
-                </List.Item>
-              )} />
+              renderItem={(p: any) => {
+                const active = p.id === planId
+                return (
+                  <List.Item
+                    style={{
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      background: active ? 'var(--app-accent-subtle)' : undefined,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => openPlan(p.id)}
+                  >
+                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space size={4}>
+                        <Button size="small" type="link" style={{ padding: 0 }}
+                          onClick={(e) => { e.stopPropagation(); openPlan(p.id) }}>
+                          <Text strong={active}>{p.name}</Text>
+                        </Button>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{p.item_count} 项</Text>
+                      </Space>
+                      <Space size={0}>
+                        <Tooltip title="复制该计划">
+                          <Button size="small" type="text" icon={<CopyOutlined />}
+                            onClick={(e) => { e.stopPropagation(); duplicatePlan(p.id, p.name) }} />
+                        </Tooltip>
+                        <Popconfirm title={`删除计划「${p.name}」？`}
+                          onConfirm={() => deletePlan(p.id, p.name)}>
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                            onClick={(e) => e.stopPropagation()} />
+                        </Popconfirm>
+                      </Space>
+                    </Space>
+                  </List.Item>
+                )
+              }} />
           </Card>
         </Col>
 
@@ -468,8 +624,34 @@ export default function ExecutionPlanner() {
               </Space>
             </Space>
 
+            {/* Bulk actions for ticked plan items */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+              <Button size="small" icon={<CopyOutlined />}
+                disabled={!itemSelected.length} onClick={copyItems}>
+                复制选中（{itemSelected.length}）
+              </Button>
+              <Button size="small" danger icon={<DeleteOutlined />}
+                disabled={!itemSelected.length} onClick={removeItems}>
+                删除选中（{itemSelected.length}）
+              </Button>
+              <Button size="small" type="link"
+                disabled={!itemSelected.length}
+                onClick={() => setItemSelected(items.map((i) => i.id))}>
+                全选
+              </Button>
+              <Button size="small" type="link"
+                disabled={!itemSelected.length} onClick={() => setItemSelected([])}>
+                取消选择
+              </Button>
+            </div>
+
             <DataTable size="small" rowKey="id" pagination={false}
               dataSource={items} columns={itemColumns}
+              rowSelection={{
+                selectedRowKeys: itemSelected,
+                onChange: (keys) => setItemSelected(keys as string[]),
+                columnWidth: 36,
+              }}
               rowClassName={(r) => (errorItemIds.has(r.id) ? 'plan-row-error' : '')}
               locale={{ emptyText: <Empty description="从左侧勾选用例加入" /> }} />
           </Card>
