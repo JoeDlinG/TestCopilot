@@ -45,7 +45,7 @@ export default function ModelConfig() {
       const res = await aiAPI.listModels()
       setModels(extractData(res, []))
     } catch (err) {
-      handleApiError(err, '加载模型列表失败')
+      handleApiError(err, t('msg.loadModelsFailed'))
     } finally {
       setLoading(false)
     }
@@ -85,7 +85,7 @@ export default function ModelConfig() {
         try {
           parameters = JSON.parse(values.parameters)
         } catch {
-          message.error('高级参数不是合法的 JSON')
+          message.error(t('msg.advParamsInvalid'))
           return
         }
       } else {
@@ -110,16 +110,16 @@ export default function ModelConfig() {
     // Custom (OpenAI-compatible) provider MUST have a Base URL, otherwise the
     // request silently falls back to OpenAI and fails with a confusing error.
     if (values.provider === 'custom' && !values.base_url?.trim()) {
-      message.error('自定义供应商必须填写 Base URL（OpenAI 兼容接口地址）')
+      message.error(t('model.baseUrlRequired'))
       return
     }
     try {
       if (editing) {
         await aiAPI.updateModel(editing.id, payload)
-        message.success('模型已更新')
+        message.success(t('msg.modelUpdated'))
       } else {
         await aiAPI.createModel(payload)
-        message.success('模型已添加')
+        message.success(t('msg.modelAdded'))
       }
       setModalVisible(false)
       loadModels()
@@ -131,7 +131,7 @@ export default function ModelConfig() {
   const handleDelete = async (id: string) => {
     try {
       await aiAPI.deleteModel(id)
-      message.success('模型已删除')
+      message.success(t('msg.modelDeleted'))
       loadModels()
     } catch (err) {
       handleApiError(err, t('msg.deleteFailed'))
@@ -141,10 +141,10 @@ export default function ModelConfig() {
   const handleSetDefault = async (id: string) => {
     try {
       await aiAPI.activateModel(id)
-      message.success('已设为默认模型')
+      message.success(t('msg.defaultModelSet'))
       loadModels()
     } catch (err) {
-      handleApiError(err, '设置失败')
+      handleApiError(err, t('msg.setFailed'))
     }
   }
 
@@ -154,14 +154,14 @@ export default function ModelConfig() {
       const res = await aiAPI.testModel(id)
       const data: any = res.data?.data || res.data
       if (data?.status === 'ok') {
-        message.success('连接测试成功')
+        message.success(t('msg.connTestOk'))
       } else {
         // Show the concrete failure reason returned by the backend
-        const reason = data?.error || '未知原因'
-        message.error(`连接测试失败：${reason}`)
+        const reason = data?.error || t('label.unknownReason')
+        message.error(`${t('label.connTestFailed')}${reason}`)
       }
     } catch (err) {
-      handleApiError(err, '连接测试失败')
+      handleApiError(err, t('msg.connTestFail'))
     } finally {
       setTestingId('')
     }
@@ -193,8 +193,8 @@ export default function ModelConfig() {
       const data: any = res.data?.data || res.data
       setChatMessages(prev => [...prev, { role: 'assistant', content: data?.response || t('msg.noResponse') }])
     } catch (err) {
-      const errMsg = _errorMessage(err, '对话失败')
-      setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ 错误：${errMsg}` }])
+      const errMsg = _errorMessage(err, t('msg.chatFailed'))
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${t('label.errorColon')}${errMsg}` }])
     } finally {
       setChatLoading(false)
     }
@@ -209,7 +209,7 @@ export default function ModelConfig() {
         <Space>
           <ApiOutlined />
           {name}
-          {r.is_default && <Tag color="green">默认</Tag>}
+          {r.is_default && <Tag color="green">{t('status.default')}</Tag>}
         </Space>
       ),
     },
@@ -229,7 +229,7 @@ export default function ModelConfig() {
       dataIndex: 'base_url',
       key: 'base_url',
       ellipsis: true,
-      render: (v: string) => v || <Text type="secondary">默认</Text>,
+      render: (v: string) => v || <Text type="secondary">{t('status.default')}</Text>,
     },
     {
       title: t('col.status'),
@@ -249,27 +249,21 @@ export default function ModelConfig() {
               size="small"
               icon={<CheckCircleOutlined />}
               onClick={() => handleSetDefault(record.id)}
-            >
-              设为默认
-            </Button>
+            >{t('btn.setDefault')}</Button>
           )}
           <Button
             size="small"
             icon={<ThunderboltOutlined />}
             loading={testingId === record.id}
             onClick={() => handleTest(record.id)}
-          >
-            测试
-          </Button>
+          >{t('btn.test')}</Button>
           <Button
             size="small"
             icon={<MessageOutlined />}
             onClick={() => openChat(record)}
-          >
-            对话测试
-          </Button>
+          >{t('btn.chatTest')}</Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)} />
-          <Popconfirm title="确定删除该模型？" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm title={t('msg.deleteModel')} onConfirm={() => handleDelete(record.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -281,14 +275,12 @@ export default function ModelConfig() {
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>模型配置</Title>
-          <Text type="secondary">配置 AI 模型（通过 API Key 调用主流大模型）</Text>
+          <Title level={3} style={{ margin: 0 }}>{t('page.modelConfig')}</Title>
+          <Text type="secondary">{t('model.configDesc')}</Text>
         </div>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadModels}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            添加模型
-          </Button>
+          <Button icon={<ReloadOutlined />} onClick={loadModels}>{t('common.refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('btn.addModel')}</Button>
         </Space>
       </div>
 
@@ -301,10 +293,8 @@ export default function ModelConfig() {
           pagination={false}
           locale={{
             emptyText: (
-              <Empty description="暂无模型配置，请点击「添加模型」">
-                <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                  添加模型
-                </Button>
+              <Empty description={t('model.none')}>
+                <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('btn.addModel')}</Button>
               </Empty>
             ),
           }}
@@ -312,7 +302,7 @@ export default function ModelConfig() {
       </Card>
 
       <Modal
-        title={editing ? '编辑模型' : '添加模型'}
+        title={editing ? t('btn.editModel') : t('btn.addModel')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
@@ -320,12 +310,12 @@ export default function ModelConfig() {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="name" label="配置名称" rules={[{ required: true, message: '请输入配置名称' }]}>
-            <Input placeholder="例如：我的 OpenAI" />
+          <Form.Item name="name" label={t('label.configName')} rules={[{ required: true, message: t('msg.enterConfigName') }]}>
+            <Input placeholder={t('label.exampleMine')} />
           </Form.Item>
-          <Form.Item name="provider" label="供应商" rules={[{ required: true }]}>
+          <Form.Item name="provider" label={t('col.vendor')} rules={[{ required: true }]}>
             <Select
-              placeholder="选择模型供应商"
+              placeholder={t('label.pickProvider')}
               options={Object.entries(PROVIDERS).map(([k, v]) => ({ label: v.label, value: k }))}
               onChange={(val: any) => {
                 const info = PROVIDERS[val]
@@ -337,36 +327,36 @@ export default function ModelConfig() {
               }}
             />
           </Form.Item>
-          <Form.Item name="model_name" label="模型名称" rules={[{ required: true, message: t('msg.enterModelName') }]}>
+          <Form.Item name="model_name" label={t('label.modelName')} rules={[{ required: true, message: t('msg.enterModelName') }]}>
             <Input
               placeholder={
                 providerWatch
                   ? PROVIDERS[providerWatch]?.hint || t('msg.enterModelName')
-                  : '例如：gpt-4o / claude-3-opus / qwen-max'
+                  : t('model.nameExample')
               }
             />
           </Form.Item>
           <Form.Item
             name="api_key"
             label="API Key"
-            extra={editing ? '已保存的 Key 以掩码显示；留空或不变更即保留原 Key，输入新值则覆盖' : '本地存储，未加密（演示环境）'}
+            extra={editing ? t('model.keyHint') : t('model.storageNote')}
           >
             <Input.Password placeholder="sk-..." />
           </Form.Item>
-          <Form.Item name="base_url" label="Base URL" extra="OpenAI 兼容接口地址；留空使用供应商默认地址">
+          <Form.Item name="base_url" label="Base URL" extra={t('model.baseUrlFull')}>
             <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
-          <Form.Item name="is_default" label="设为默认模型" valuePropName="checked">
+          <Form.Item name="is_default" label={t('btn.setDefaultModel')} valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="parameters" label="高级参数" extra="temperature / max_tokens 等">
+          <Form.Item name="parameters" label={t('label.advancedParams')} extra={t('model.advancedExample')}>
             <Input.TextArea rows={3} placeholder='{"temperature": 0.7, "max_tokens": 16384}' />
           </Form.Item>
         </Form>
       </Modal>
 
       <Drawer
-        title={`对话测试 — ${chatModel?.name || ''} (${PROVIDERS[chatModel?.provider || '']?.label || chatModel?.provider})`}
+        title={`${t('label.chatTest')} ${chatModel?.name || ''} (${PROVIDERS[chatModel?.provider || '']?.label || chatModel?.provider})`}
         open={chatVisible}
         onClose={() => setChatVisible(false)}
         width={520}
@@ -382,7 +372,7 @@ export default function ModelConfig() {
         >
           {chatMessages.length === 0 ? (
             <Empty
-              description="发送一条消息以测试该模型的对话能力"
+              description={t('model.testHint')}
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             />
           ) : (
@@ -397,7 +387,7 @@ export default function ModelConfig() {
                 }}
               >
                 <div style={{ fontWeight: 600, color: msg.role === 'assistant' ? 'var(--app-accent)' : 'var(--app-pass)' }}>
-                  {msg.role === 'assistant' ? 'AI' : '我'}
+                  {msg.role === 'assistant' ? t('label.assistant') : t('label.me')}
                 </div>
                 <div style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{msg.content}</div>
               </div>
@@ -408,7 +398,7 @@ export default function ModelConfig() {
         <Input.TextArea
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
-          placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+          placeholder={t('model.chatHint')}
           autoSize={{ minRows: 2, maxRows: 5 }}
           onPressEnter={(e) => {
             if (!e.shiftKey) {
@@ -426,9 +416,7 @@ export default function ModelConfig() {
             onClick={handleChatSend}
             loading={chatLoading}
             disabled={!chatInput.trim()}
-          >
-            发送
-          </Button>
+          >{t('btn.send')}</Button>
         </div>
       </Drawer>
     </div>

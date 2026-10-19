@@ -37,7 +37,7 @@ export default function Logs() {
       const res = await logAPI.list(params)
       setLogs(extractItems(res))
     } catch (err) {
-      handleApiError(err, '加载日志失败')
+      handleApiError(err, t('msg.loadLogsFailed'))
     } finally {
       if (!silent) setLoading(false)
     }
@@ -74,7 +74,7 @@ export default function Logs() {
       a.download = `communication_logs_${new Date().toISOString().slice(0, 10)}.csv`
       a.click()
       URL.revokeObjectURL(url)
-      message.success('日志已导出')
+      message.success(t('msg.logsExported'))
     } catch (err) {
       handleApiError(err, t('msg.exportFailed'))
     }
@@ -112,7 +112,7 @@ export default function Logs() {
       width: 80,
       render: (dir: string) => (
         <Tag color={dir === 'sent' ? 'blue' : 'green'} icon={dir === 'sent' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}>
-          {dir === 'sent' ? '发送' : '接收'}
+          {dir === 'sent' ? t('btn.send') : t('term.recv')}
         </Tag>
       ),
     },
@@ -141,10 +141,10 @@ export default function Logs() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>通信日志</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('label.commLog')}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>刷新</Button>
-          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>导出 CSV</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>{t('common.refresh')}</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>{t('btn.exportCsv')}</Button>
         </Space>
       </div>
 
@@ -186,9 +186,9 @@ export default function Logs() {
             pageSize: 20,
             showSizeChanger: true,
             pageSizeOptions: [20, 50, 100, 200],
-            showTotal: (total) => `共 ${total} 条`,
+            showTotal: (total) => `${t('label.total')} ${total} ${t('unit.items')}`,
           }}
-          locale={{ emptyText: <Empty description="暂无通信日志" /> }}
+          locale={{ emptyText: <Empty description={t('msg.noComLogs')} /> }}
           size="small"
           scroll={{ x: 1000, y: 'calc(100vh - 430px)' }}
         />

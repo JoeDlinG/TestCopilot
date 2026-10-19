@@ -4,6 +4,74 @@
 
 ---
 
+## 2026-10-19: 英文界面补全 —— 逐个标签页治理并完成复查（v2.2.0）
+
+上一轮（v2.0.1）仅覆盖了「标题 / 表格 title / 状态」三类，点进页面后仍有大量中文。
+本轮按「**逐个页面检查并翻译**」推进，并在完成后**做了第二遍复查**。
+
+### 起点与结果
+
+| 口径 | 起点 | 本轮结果 |
+|---|---|:--:|
+| 页面内唯一中文串（排除注释） | **858** | **0** |
+| 接入 `useI18n` 的页面 | 2 / 16 | **16 / 16** |
+| 词条总量 | 115（仅手写） | **115 手写 + 1036 批量** |
+| `en-US` 缺失 | 0 | **0** |
+
+### 词条库分层
+
+`messages.ts` 只保留**手写**的导航 / 通用 / 设备 / 接口 / 工程词条，批量词条按批拆到独立模块，
+由 `messages.ts` 在模块加载时合并进 zh 与 en 两个语言包（合并幂等，同键同值）：
+
+| 模块 | 条目 | 内容 |
+|---|---:|---|
+| `extraKeys.ts` | 107 + 32 + 42 | 表格列名 · 状态词 · 标签页 · 流程节点 · 数据类型 · 刷新间隔 · 出错策略 · 向导步骤 · 卡片/弹窗标题 · 操作反馈 · 表单标签 · 空状态 · 按钮 |
+| `extraKeys4.ts` | ~180 | 通用词汇（与既有 key 对齐，便于批量替换按中文原文定位） |
+| `extraKeys5–12.ts` | 剩余 | 逐页文案、完整属性值（混合中英串）、最后长尾 |
+
+### 逐页推进
+
+`Logs` → `Dashboard` → `DebugTerminal` → `Reports` → `CustomDashboard` → `SkillEditor` →
+`Plugins` → `ModelConfig` → `Devices` → `ExecutionPlanner` → `TestCases` → `AIChat` →
+`Executions` → `ProjectManager` → `TestFlowEditor` → `PluginEditor`，每页翻译后单独编译验证。
+
+**最终各页界面中文均为 0**（Logs / Reports / AIChat / DebugTerminal / Devices / ExecutionPlanner 率先归零）。
+
+### 工程性难点与处理
+
+1. **模块级常量拿不到 hook** —— 改为工厂函数 `(tr) => [...]`：
+   `Plugins.columns`、`TestFlowEditor.PALETTE` / `VALUE_TYPE_OPTIONS`、
+   `ProjectManager.WIDGET_TYPE_LABEL` / `ON_ERROR_LABEL`、
+   `PluginEditor.TEMPLATE_TYPE_LABEL`、`SkillEditor.SKILL_SCAFFOLD`、
+   `AIChat.BUILTIN_SKILLS`
+2. **非组件函数** —— 追加 `t` 形参：`DebugTerminal.createWebSocket`、`AIChat.readFileAsBase64`
+3. **子组件缺 hook** —— 逐个补：`PluginManagement`、`TerminalWindow`、`SectionTable`、
+   `PlanPreview`、`ComMonitorCard`、`StepList`、`Cell`、`NodeIoBadges`、`DashboardPreview`
+4. **变量遮蔽** —— `PluginEditor` 里模板回调的 `t` 与翻译函数同名，回调改名 `tpl`
+5. **JSON 键名误替换** —— `placeholder='{"测试人员": ""}'` 中的 `"测试人员"` 会被当成普通串替换，
+   已加负向预查 `(?!\s*:)` 守卫；该处示例 JSON 最终改为英文 `{"tester": ...}`
+6. **混合串（`'AI 未提炼出内容'`）** —— 一律转模板字符串 `` `AI ${t('...')}` ``
+7. **JSX 属性缺花括号** —— 每次批量替换后统一跑一遍 `attr=t('k')` → `attr={t('k')}` 归一
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 界面中文（排除注释） | **0** |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| dev 编译新模块 | 5/5 `http=200` |
+| 反引号配对检查 | 全部偶数（修复了 6 处未闭合模板字符串） |
+| `Test/` 7 个脚本 | 全 PASS |
+| `Test/test_blocking.py` | 6/6 PASS |
+| 端点回归 | **16/16 通过** |
+| 数据完整性 | 用例 89 条；PeakCAN 与 MG100 均 `connected` |
+
+> 说明：用户可编辑 / 可输入的内容（测试用例正文、命令、Skill Markdown、报告模板等）
+> 按你的要求**不在本次范围内**，其示例占位符中的值保持原样。
+> 代码注释仍为中文的部分不影响界面，未强行改写。
+
+---
+
 ## 2026-10-18: v2.1.0 —— 执行管理器完善 + 自定义仪表盘优化
 
 ### 一、执行管理器（`/execution-plans`）

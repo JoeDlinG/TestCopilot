@@ -136,6 +136,7 @@ function lineColor(dir: ComLine['dir']): string {
  * 页面上同时存在两个（A / B），用于并行执行时分别盯不同的设备。
  */
 function useDeviceMonitor(devices: any[], slot: number) {
+  const { t } = useI18n()
   const [selectedDevice, setSelectedDevice] = useState<string>('')
   const [lines, setLines] = useState<ComLine[]>([])
   const [paused, setPaused] = useState(false)
@@ -201,7 +202,7 @@ function useDeviceMonitor(devices: any[], slot: number) {
 
     ws.onopen = () => {
       setWsState('open')
-      pushLine('SYS', `已连接设备 ${selectedDevice}`)
+      pushLine('SYS', `${t('card.connectedDevices')} ${selectedDevice}`)
     }
     ws.onclose = () => setWsState('closed')
     ws.onerror = () => setWsState('closed')
@@ -219,10 +220,10 @@ function useDeviceMonitor(devices: any[], slot: number) {
           pushLine('RX', formatPayload(msg.data))
           break
         case 'command_error':
-          pushLine('SYS', `[错误] ${msg.error ?? ''}`)
+          pushLine('SYS', `[${t('status.error')}] ${msg.error ?? ''}`)
           break
         case 'connected':
-          pushLine('SYS', String(msg.message ?? '已连接'))
+          pushLine('SYS', String(msg.message ?? t('status.connected')))
           break
         case 'error':
           pushLine('SYS', String(msg.message ?? ''))
@@ -260,9 +261,10 @@ function StepList({ steps, stepStatusConfig }: {
   steps: any[]
   stepStatusConfig: Record<string, { color: string; text: string }>
 }) {
+  const { t } = useI18n()
   if (!steps.length) {
     return (
-      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无步骤" style={{ marginTop: 40 }} />
+      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('msg.noSteps')} style={{ marginTop: 40 }} />
     )
   }
   return (
@@ -286,7 +288,7 @@ function StepList({ steps, stepStatusConfig }: {
                 {s.step_index}
               </Tag>
               <span style={{ flex: 1, wordBreak: 'break-all' }}>
-                {s.label || `步骤 ${s.step_index}`}
+                {s.label || `${t('col.steps')} ${s.step_index}`}
               </span>
               <Tag color={cfg.color} style={{ marginInlineEnd: 0 }}>
                 {cfg.text}
@@ -303,7 +305,7 @@ function StepList({ steps, stepStatusConfig }: {
               <div style={{ marginTop: 4, paddingLeft: 28 }}>
                 {(s.samples?.length || 0) > 1 && (
                   <Tag style={{ marginBottom: 2, fontSize: 11 }}>
-                    共 {s.samples.length} 次采样，显示最后一次
+                    t('label.total') {s.samples.length} {t('label.lastSample')}
                   </Tag>
                 )}
                 {s.parsed.map((p: any, i: number) => {
@@ -315,7 +317,7 @@ function StepList({ steps, stepStatusConfig }: {
                         style={{ marginBottom: 2, fontSize: 11 }}
                       >
                         {p.name}={p.value === null || p.value === undefined
-                          ? '解析失败'
+                          ? t('msg.parseFailed')
                           : String(p.value)}
                         {' '}
                         {unknown ? '?' : (p.ok ? '✓' : '✗')}
@@ -348,9 +350,9 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
           <ApiOutlined />
           <span>{title}</span>
           <Tag color={m.wsState === 'open' ? 'green' : m.wsState === 'connecting' ? 'gold' : 'red'}>
-            {m.wsState === 'open' ? '已连接' : m.wsState === 'connecting' ? '连接中' : '未连接'}
+            {m.wsState === 'open' ? t('status.connected') : m.wsState === 'connecting' ? t('label.connecting') : t('status.disconnected')}
           </Tag>
-          {m.paused && <Tag color="orange">已暂停</Tag>}
+          {m.paused && <Tag color="orange">{t('label.paused')}</Tag>}
         </Space>
       }
       extra={
@@ -371,9 +373,9 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
             icon={m.paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
             onClick={m.togglePause}
           >
-            {m.paused ? '继续' : '暂停'}
+            {m.paused ? t('onError.continue') : t('btn.pause')}
           </Button>
-          <Button size="small" icon={<ClearOutlined />} onClick={m.clear}>清空</Button>
+          <Button size="small" icon={<ClearOutlined />} onClick={m.clear}>{t('common.clear')}</Button>
         </Space>
       }
     >
@@ -389,9 +391,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         }}
       >
         {m.lines.length === 0 ? (
-          <div style={{ color: 'var(--app-fg-muted)', padding: 8 }}>
-            等待端口通信数据…（下发命令或设备主动上报时会实时显示）
-          </div>
+          <div style={{ color: 'var(--app-fg-muted)', padding: 8 }}>{t('exec.waitingTraffic')}</div>
         ) : (
           m.lines.map(line => (
             <div key={line.id} style={{ color: lineColor(line.dir), lineHeight: 1.7 }}>
@@ -411,8 +411,8 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         <div ref={m.endRef} />
       </div>
       <div style={{ marginTop: 6, color: 'var(--app-fg-muted)', fontSize: 12 }}>
-        共 {m.lines.length} 行（最多保留 {MAX_LINES} 行）
-        {m.paused && ` · 暂停期间已缓存 ${m.bufferRef.current.length} 行`}
+        t('label.total') {m.lines.length} ${t('label.rowsKept')} {MAX_LINES} {t('unit.rowsParen')}
+        {m.paused && ` · ${t('label.cachedWhilePaused')} ${m.bufferRef.current.length} ${t('unit.row')}`}
       </div>
     </Card>
   )
@@ -461,7 +461,7 @@ export default function Executions() {
       setDetail(res.data?.data ?? res.data)
       setDetailOpen(true)
     } catch (err) {
-      handleApiError(err, '加载执行详情失败')
+      handleApiError(err, t('msg.loadDetailFailed'))
     }
   }
 
@@ -476,7 +476,7 @@ export default function Executions() {
         items.filter((e: any) => e.status === 'running').length,
       )
     } catch (err) {
-      handleApiError(err, '加载执行记录失败')
+      handleApiError(err, t('msg.loadRunsFailed'))
     } finally {
       setLoading(false)
     }
@@ -488,15 +488,15 @@ export default function Executions() {
     const running = executions.find(e => e.status === 'running')
     const target = id || running?.id || (trackedExec?.status === 'running' ? trackedId : '')
     if (!target) {
-      message.info('当前没有运行中的执行')
+      message.info(t('msg.noRunningExec'))
       return
     }
     try {
       await executionAPI.stop(target)
-      message.success('已停止执行')
+      message.success(t('msg.runStopped'))
       loadExecutions()
     } catch (err) {
-      handleApiError(err, '停止失败')
+      handleApiError(err, t('msg.stopFailed'))
     }
   }
 
@@ -515,40 +515,40 @@ export default function Executions() {
 
   const handleStart = async () => {
     if (!selectedCase) {
-      message.warning('请先选择测试用例')
+      message.warning(t('msg.pickCaseFirst'))
       return
     }
     try {
       setStarting(true)
       const res = await executionAPI.run(selectedCase)
       const started = (res as any)?.data?.data ?? (res as any)?.data
-      message.success('已启动执行')
+      message.success(t('msg.runStarted'))
       setStartOpen(false)
       if (started?.id) setTrackedId(started.id)
       await loadExecutions()
     } catch (err) {
-      handleApiError(err, '启动执行失败')
+      handleApiError(err, t('msg.startRunFailed'))
     } finally {
       setStarting(false)
     }
   }
 
   const statusConfig: Record<string, { color: string; icon: React.ReactNode; text: string }> = {
-    pending: { color: 'default', icon: <SyncOutlined />, text: '等待中' },
-    running: { color: 'processing', icon: <SyncOutlined spin />, text: '运行中' },
-    passed: { color: 'success', icon: <CheckCircleOutlined />, text: '通过' },
-    failed: { color: 'error', icon: <CloseCircleOutlined />, text: '失败' },
+    pending: { color: 'default', icon: <SyncOutlined />, text: t('label.waiting') },
+    running: { color: 'processing', icon: <SyncOutlined spin />, text: t('status.running') },
+    passed: { color: 'success', icon: <CheckCircleOutlined />, text: t('status.passed') },
+    failed: { color: 'error', icon: <CloseCircleOutlined />, text: t('status.failed') },
     error: { color: 'warning', icon: <ExclamationCircleOutlined />, text: t('label.exception') },
-    stopped: { color: 'default', icon: <PauseCircleOutlined />, text: '已停止' },
+    stopped: { color: 'default', icon: <PauseCircleOutlined />, text: t('status.stopped') },
   }
 
   const stepStatusConfig: Record<string, { color: string; text: string }> = {
-    pending: { color: 'default', text: '等待' },
-    running: { color: 'processing', text: '执行中' },
-    passed: { color: 'success', text: '通过' },
-    failed: { color: 'error', text: '失败' },
+    pending: { color: 'default', text: t('label.wait') },
+    running: { color: 'processing', text: t('status.running') },
+    passed: { color: 'success', text: t('status.passed') },
+    failed: { color: 'error', text: t('status.failed') },
     error: { color: 'warning', text: t('label.exception') },
-    skipped: { color: 'default', text: '跳过' },
+    skipped: { color: 'default', text: t('status.skip') },
   }
 
   const stats = {
@@ -592,7 +592,7 @@ export default function Executions() {
         next[i] = { ...next[i], ...patch }
         return next
       }
-      return [...prev, { step_index: index, label: patch.label ?? `步骤 ${index}`, ...patch }]
+      return [...prev, { step_index: index, label: patch.label ?? `${t('unit.stepShort')} ${index}`, ...patch }]
         .sort((a, b) => Number(a.step_index) - Number(b.step_index))
     })
   }, [])
@@ -698,7 +698,7 @@ export default function Executions() {
               label: n?.data?.label || n?.label || '',
               command: n?.config?.command || '',
               hasParsers: (n?.config?.parsers || []).length > 0,
-              // 节点级设备绑定 —— 并行流程按此拆列显示
+              // 节点级设备绑定 —— 并t('unit.row')流程按此拆列显示
               device_id: n?.config?.device_id || '',
             }))
         )
@@ -709,7 +709,7 @@ export default function Executions() {
     return () => { cancelled = true }
   }, [trackedInfo?.testcase_id])
 
-  // 用例名称兜底：后端已带 testcase_name，这里只在旧数据/用例已删除时补一次
+  // 用例名称兜底：后端已带 testcase_name，这里只在旧数据/用例已删除时补一{t('label.times')}
   useEffect(() => {
     const tcId = trackedInfo?.testcase_id
     if (!tcId || caseNames[tcId]) return
@@ -738,7 +738,7 @@ export default function Executions() {
         const r = execSteps.find(s => Number(s.step_index) === i + 1)
         return {
           step_index: i + 1,
-          label: f.label || `步骤 ${i + 1}`,
+          label: f.label || `${t('col.steps')} ${i + 1}`,
           status: r?.status || 'pending',
           duration_ms: r?.duration_ms,
           parsed: normalizeParsed(r?.parsed_results),
@@ -755,7 +755,7 @@ export default function Executions() {
 
   /** device id -> readable name */
   const deviceName = useCallback((id: string) => {
-    if (!id) return '未指定设备'
+    if (!id) return t('label.unresolved')
     const d = devices.find((x: any) => x.id === id)
     return d ? `${d.name}` : id
   }, [devices])
@@ -773,7 +773,7 @@ export default function Executions() {
         groups.set(key, {
           key,
           title: key === '__default__'
-            ? (trackedInfo?.device_id ? deviceName(trackedInfo.device_id) : '主流程')
+            ? (trackedInfo?.device_id ? deviceName(trackedInfo.device_id) : t('label.mainFlow'))
             : deviceName(key),
           steps: [],
         })
@@ -841,7 +841,7 @@ export default function Executions() {
   const openTrend = async () => {
     const tcId = trackedInfo?.testcase_id
     if (!tcId) {
-      message.info('请先选择一次执行记录')
+      message.info(t('msg.pickRunFirst'))
       return
     }
     setTrendOpen(true)
@@ -852,7 +852,7 @@ export default function Executions() {
       setTrendData(data)
       setTrendFields((data?.fields || []).slice(0, 5))
     } catch (err) {
-      handleApiError(err, '加载历史趋势失败')
+      handleApiError(err, t('msg.loadTrendFailed'))
     } finally {
       setTrendLoading(false)
     }
@@ -894,7 +894,7 @@ export default function Executions() {
   const trackedExec = executions.find(e => e.id === trackedId)
   const runningExec = executions.find(e => e.status === 'running')
 
-  // 标题处显示的用例名称：优先取正在运行的执行，其次取当前跟踪的执行
+  // 标题处显示的用例名称：优先取正在运行的t('label.execution')，其次取当前跟踪的执行
   const currentCaseName =
     runningExec?.testcase_name
     || trackedExec?.testcase_name
@@ -917,7 +917,7 @@ export default function Executions() {
       width: 150,
       render: (id: string, record: any) => (
         <Space size={4}>
-          <span>{record?.testcase_name || '（用例已删除）'}</span>
+          <span>{record?.testcase_name || `（${t('label.caseDeleted')}`}</span>
           <Text type="secondary" style={{ fontSize: 11 }}>
             {id?.slice(0, 8) + '…' || '-'}
           </Text>
@@ -966,7 +966,7 @@ export default function Executions() {
       width: 120,
       render: (results: any[]) => {
         if (!results?.length) return '-'
-        return `${results.filter((r: any) => r.status === 'passed').length}/${results.length} 通过`
+        return `${results.filter((r: any) => r.status === 'passed').length}/${results.length} ${t('status.passed')}`
       },
     },
     {
@@ -979,17 +979,15 @@ export default function Executions() {
             size="small"
             icon={<EyeOutlined />}
             onClick={() => handleViewDetail(record.id)}
-          >
-            详情
-          </Button>
-          <Tooltip title="在下方步骤状态窗口中实时跟踪该执行">
+          >{t('btn.detail')}</Button>
+          <Tooltip title={t('tip.trackBelow')}>
             <Button
               size="small"
               type={trackedId === record.id ? 'primary' : 'default'}
               icon={<AimOutlined />}
               onClick={() => setTrackedId(record.id)}
             >
-              跟踪
+                  {t('label.trackingShort')}
             </Button>
           </Tooltip>
           {record.status === 'running' && (
@@ -998,9 +996,7 @@ export default function Executions() {
               danger
               icon={<PauseCircleOutlined />}
               onClick={() => handleStop(record.id)}
-            >
-              停止
-            </Button>
+            >{t('common.stop')}</Button>
           )}
         </Space>
       ),
@@ -1012,7 +1008,7 @@ export default function Executions() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <Title level={3} style={{ margin: 0 }}>{t('card.executions')}</Title>
-          {/* 当前执行（或正在跟踪）的用例名称 —— 一眼看出在跑什么 */}
+        {/* Name of the case currently running (or being tracked) */}
           {currentCaseName && (
             <Tag color="blue" style={{ marginInlineEnd: 0, maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis' }}>
               <DiffOutlined /> {currentCaseName}
@@ -1025,25 +1021,21 @@ export default function Executions() {
             icon={<PlayCircleOutlined />}
             onClick={openStartModal}
             disabled={executions.some(e => e.status === 'running')}
-          >
-            启动
-          </Button>
+          >{t('common.start')}</Button>
           <Button
             danger
             icon={<PauseCircleOutlined />}
             onClick={() => handleStop()}
             disabled={!executions.some(e => e.status === 'running')}
-          >
-            停止
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={loadExecutions}>刷新</Button>
+          >{t('common.stop')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadExecutions}>{t('common.refresh')}</Button>
         </Space>
       </div>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} sm={6}>
           <Card>
-            <Statistic title="总执行次数" value={stats.total} prefix={<PlayCircleOutlined />} />
+            <Statistic title={t('label.totalRuns')} value={stats.total} prefix={<PlayCircleOutlined />} />
           </Card>
         </Col>
         <Col xs={12} sm={6}>
@@ -1081,10 +1073,10 @@ export default function Executions() {
       {/* ---------- live communication monitor: TWO windows ---------- */}
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={12}>
-          <ComMonitorCard title="实时通信监控 A" m={monitorA} devices={devices} />
+          <ComMonitorCard title={t('card.comMonitorA')} m={monitorA} devices={devices} />
         </Col>
         <Col xs={24} lg={12}>
-          <ComMonitorCard title="实时通信监控 B" m={monitorB} devices={devices} />
+          <ComMonitorCard title={t('card.comMonitorB')} m={monitorB} devices={devices} />
         </Col>
       </Row>
 
@@ -1095,7 +1087,7 @@ export default function Executions() {
             title={
               <Space>
                 <OrderedListOutlined />
-                <span>执行步骤状态</span>
+                <span>{t('tab.steps')}</span>
                 {trackedExec && (
                   <Tag color={(statusConfig[trackedExec.status] || statusConfig.pending).color}>
                     {(statusConfig[trackedExec.status] || statusConfig.pending).text}
@@ -1105,7 +1097,7 @@ export default function Executions() {
             }
             extra={
               <Text type="secondary" style={{ fontSize: 12 }}>
-                {trackedId ? `跟踪: ${trackedId.slice(0, 8)}…` : '未选择执行'}
+                {trackedId ? `${t('label.tracking')} ${trackedId.slice(0, 8)}…` : t('msg.noRunSelected')}
               </Text>
             }
           >
@@ -1115,21 +1107,19 @@ export default function Executions() {
                 showIcon
                 icon={<SyncOutlined spin />}
                 style={{ marginBottom: 8 }}
-                message={`正在执行第 ${currentStep.step_index} 步`}
+                message={`${t('label.runningStep')} ${currentStep.step_index} ${t('unit.step')}`}
                 description={currentStep.label}
               />
             ) : (
               <div style={{ marginBottom: 8 }}>
                 {trackedInfo ? (
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    共 {trackedInfo.total_steps ?? 0} 步 ·
-                    通过 {trackedInfo.passed_steps ?? 0} ·
-                    失败 {trackedInfo.failed_steps ?? 0}
+                    t('label.total') {trackedInfo.total_steps ?? 0} {t('unit.stepDot')}
+                    t('status.passed') {trackedInfo.passed_steps ?? 0} ·
+                    t('status.failed') {trackedInfo.failed_steps ?? 0}
                   </Text>
                 ) : (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    选择一次执行以查看步骤进度
-                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('ph.pickRun')}</Text>
                 )}
               </div>
             )}
@@ -1137,7 +1127,7 @@ export default function Executions() {
             {stepColumns.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无步骤（执行开始后将实时显示）"
+                description={t('msg.noStepsYet')}
                 style={{ marginTop: 60 }}
               />
             ) : (
@@ -1165,9 +1155,9 @@ export default function Executions() {
                           <Text strong style={{ fontSize: 12 }}>{col.title}</Text>
                         </Space>
                         <Space size={4}>
-                          <Tag color="success" style={{ marginInlineEnd: 0, fontSize: 11 }}>通过 {passed}</Tag>
-                          <Tag color="error" style={{ marginInlineEnd: 0, fontSize: 11 }}>失败 {failed}</Tag>
-                          <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>{col.steps.length} 步</Tag>
+                          <Tag color="success" style={{ marginInlineEnd: 0, fontSize: 11 }}>t('status.passed') {passed}</Tag>
+                          <Tag color="error" style={{ marginInlineEnd: 0, fontSize: 11 }}>t('status.failed') {failed}</Tag>
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>{col.steps.length} {t('unit.step')}</Tag>
                         </Space>
                       </div>
                       <div style={{ height: 288, overflowY: 'auto' }}>
@@ -1189,21 +1179,19 @@ export default function Executions() {
             title={
               <Space>
                 <LineChartOutlined />
-                <span>解析数据曲线</span>
-                <Tag color="purple">{curvePoints.length} 点</Tag>
+                <span>{t('tab.trend')}</span>
+                <Tag color="purple">{curvePoints.length} {t('unit.point')}</Tag>
                 {selectedFields.length > 0 && (
                   <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
-                    已选 {selectedFields.length} 项
+            {t('label.selected')} {selectedFields.length} {t('label.items')}
                   </Text>
                 )}
               </Space>
             }
             extra={
               <Space>
-                <Button size="small" icon={<LineChartOutlined />} onClick={openTrend}>
-                  历史趋势
-                </Button>
-                <Tooltip title={bigScreen ? '退出大屏模式' : '大屏模式'}>
+                <Button size="small" icon={<LineChartOutlined />} onClick={openTrend}>{t('card.historyTrend')}</Button>
+                <Tooltip title={bigScreen ? t('btn.exitBigScreen') : t('btn.bigScreen')}>
                   <Button
                     size="small"
                     icon={bigScreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
@@ -1218,14 +1206,12 @@ export default function Executions() {
             {availableFields.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="该用例尚未配置结果解析 — 在「测试用例」页展开步骤即可配置，执行后这里会画出数据曲线"
+                description={t('msg.noParserConfigured')}
               />
             ) : (
               <>
                 <div style={{ marginBottom: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>
-                    选择需要实时显示的数据：
-                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>{t('label.pickLiveData')}</Text>
                   <Checkbox.Group
                     options={availableFields.map(f => ({ label: f, value: f }))}
                     value={selectedFields}
@@ -1247,9 +1233,9 @@ export default function Executions() {
                           color={s.fails ? 'red' : 'blue'}
                           style={{ fontSize: bigScreen ? 15 : 12 }}
                         >
-                          {s.field}：最新 {s.last ?? '-'} · 最小 {s.min ?? '-'} · 最大 {s.max ?? '-'}
-                          {s.unknowns ? ` · 空帧 ${s.unknowns} 次` : ''}
-                          {s.fails ? ` · 判定 FAIL ${s.fails} 次` : (s.unknowns ? '' : ' · 全部 PASS')}
+                          {s.field}：{t('label.latest')} {s.last ?? '-'} · {t('label.min')} {s.min ?? '-'} · {t('label.max')} {s.max ?? '-'}
+                          {s.unknowns ? ` · ${t('col.emptyFrames')} ${s.unknowns} ${t('label.times')}` : ''}
+                          {s.fails ? ` · ${t('label.failPoints')} ${s.fails} ${t('label.times')}` : (s.unknowns ? '' : ` · ${t('label.allPass')}`)}
                         </Tag>
                       ))}
                     </Space>
@@ -1276,8 +1262,8 @@ export default function Executions() {
         title={
           <Space>
             <LineChartOutlined />
-            <span>历史解析数据趋势</span>
-            <Tag color="blue">最近 {trendData?.executions?.length ?? 0} 次执行</Tag>
+            <span>{t('tab.history')}</span>
+            <Tag color="blue">t('label.recent') {trendData?.executions?.length ?? 0} {t('unit.runs')}</Tag>
           </Space>
         }
         open={trendOpen}
@@ -1291,9 +1277,7 @@ export default function Executions() {
         ) : (
           <>
             <Space style={{ marginBottom: 10 }} wrap>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                选择查看的数据：
-              </Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('label.pickViewData')}</Text>
               <Checkbox.Group
                 options={(trendData?.fields || []).map((f: string) => ({ label: f, value: f }))}
                 value={trendFields}
@@ -1319,9 +1303,9 @@ export default function Executions() {
 
             <div style={{ marginTop: 8 }}>
               <Text type="secondary" style={{ fontSize: 11 }}>
-                趋势数据直接来自已落库的步骤解析结果（共 {trendData?.total_points ?? 0} 个采样点），
-                无需额外建表。每一步的每条应答都是一个采样点；空帧记为 unknown，不参与判定。
-                判定 FAIL 的点同样记录在案 —— FAIL 是判定结果，不是系统/设备告警。
+                t('exec.trendSource') {trendData?.total_points ?? 0} {t('unit.samplePoints')}
+                {t('exec.samplingNote')}
+                {t('exec.failNote')}
               </Text>
             </div>
           </>
@@ -1335,17 +1319,15 @@ export default function Executions() {
         onCancel={() => setStartOpen(false)}
         onOk={handleStart}
         confirmLoading={starting}
-        okText="启动"
-        cancelText="取消"
+        okText={t('common.start')}
+        cancelText={t('common.cancel')}
       >
         <div style={{ marginBottom: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            选择要执行的测试用例；执行开始后本页会自动跟踪这一次执行。
-          </Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('exec.selectHint')}</Text>
         </div>
         <Select
           style={{ width: '100%' }}
-          placeholder="选择测试用例"
+          placeholder={t('ph.pickCase')}
           showSearch
           optionFilterProp="label"
           value={selectedCase || undefined}
@@ -1357,15 +1339,13 @@ export default function Executions() {
         />
         {caseOptions.length === 0 && (
           <div style={{ marginTop: 8 }}>
-            <Text type="danger" style={{ fontSize: 12 }}>
-              暂无测试用例 —— 请先在「测试用例」页创建。
-            </Text>
+            <Text type="danger" style={{ fontSize: 12 }}>{t('msg.noCasesYet')}</Text>
           </div>
         )}
       </Modal>
 
       <Drawer
-        title="执行详情 — 每步真实收发"
+        title={t('card.execDetail')}
         width={860}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
@@ -1373,10 +1353,10 @@ export default function Executions() {
         {detail && (
           <>
             <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="执行 ID">{detail.id}</Descriptions.Item>
-              <Descriptions.Item label="状态">{detail.status}</Descriptions.Item>
-              <Descriptions.Item label="步骤">{detail.total_steps}</Descriptions.Item>
-              <Descriptions.Item label="通过 / 失败">
+              <Descriptions.Item label={t('col.execId')}>{detail.id}</Descriptions.Item>
+              <Descriptions.Item label={t('col.status')}>{detail.status}</Descriptions.Item>
+              <Descriptions.Item label={t('col.steps')}>{detail.total_steps}</Descriptions.Item>
+              <Descriptions.Item label={t('label.passFail')}>
                 {detail.passed_steps} / {detail.failed_steps}
               </Descriptions.Item>
             </Descriptions>

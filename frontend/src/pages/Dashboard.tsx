@@ -180,10 +180,10 @@ export default function Dashboard() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 1 }}>
-              AITestLab 测试监控大屏
+              AITestLab {t('dash.monitorTitle')}
             </div>
             <div style={{ fontSize: 14, opacity: 0.6, marginTop: 4 }}>
-              无需权限，可直接投屏 · 每 {refreshSec} 秒自动刷新
+            {t('dash.castNoPerm')} · {t('label.every')} {refreshSec} {t('dash.autoRefreshSuffix')}
             </div>
           </div>
           <Space size="middle" wrap>
@@ -207,17 +207,13 @@ export default function Dashboard() {
                 { label: t('refresh.60s'), value: 60 },
               ]}
             />
-            <Button size="large" icon={<ReloadOutlined />} onClick={() => loadRef.current()}>
-              立即刷新
-            </Button>
+            <Button size="large" icon={<ReloadOutlined />} onClick={() => loadRef.current()}>{t('btn.refreshNow')}</Button>
             <Button
               size="large"
               type="primary"
               icon={<FullscreenExitOutlined />}
               onClick={exitBigScreen}
-            >
-              退出大屏
-            </Button>
+            >{t('btn.exitBigScreen')}</Button>
           </Space>
         </div>
 
@@ -226,29 +222,29 @@ export default function Dashboard() {
             {bigCard(
               t('label.deviceTotal'),
               stats.devices,
-              `${stats.connectedDevices} 台已连接`,
+              `${stats.connectedDevices} ${t('unit.connectedSuffix')}`,
               <ApiOutlined />, 'var(--app-accent)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
             {bigCard(
-              '测试用例',
+              t('col.testCase'),
               stats.testCases,
-              '已创建的用例数',
+              t('dash.casesCreated'),
               <DiffOutlined />, 'var(--app-pass)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
             {bigCard(
-              '测试执行',
+              t('card.executions'),
               stats.executions,
-              `${stats.passedExecutions} 次通过`,
+              `${stats.passedExecutions} ${t('dash.passesSuffix')}`,
               <PlayCircleOutlined />, 'var(--app-warn)',
             )}
           </Col>
           <Col xs={24} sm={12} xl={6}>
             {bigCard(
-              '通过率',
+              t('col.passRate'),
               `${passRate}%`,
               <Progress
                 percent={passRate}
@@ -271,11 +267,9 @@ export default function Dashboard() {
             overflow: 'auto',
           }}
         >
-          <div style={{ fontSize: 18, opacity: 0.85, marginBottom: 10 }}>最近执行</div>
+          <div style={{ fontSize: 18, opacity: 0.85, marginBottom: 10 }}>{t('label.recentExec')}</div>
           {recentExecutions.length === 0 ? (
-            <div style={{ opacity: 0.5, fontSize: 16, paddingTop: 30, textAlign: 'center' }}>
-              暂无执行记录
-            </div>
+            <div style={{ opacity: 0.5, fontSize: 16, paddingTop: 30, textAlign: 'center' }}>{t('msg.noExecutions')}</div>
           ) : (
             <List
               dataSource={recentExecutions}
@@ -285,13 +279,13 @@ export default function Dashboard() {
                     avatar={<span style={{ fontSize: 24 }}>{statusIcon(item.status)}</span>}
                     title={
                       <span style={{ color: 'var(--app-on-dark)', fontSize: 17 }}>
-                        执行 {item.id?.slice(0, 8)} · {item.status}
+                        t('label.execution') {item.id?.slice(0, 8)} · {item.status}
                       </span>
                     }
                     description={
                       <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14 }}>
                         {item.started_at ? new Date(item.started_at).toLocaleString('zh-CN') : '-'}
-                        {' · 耗时 '}{item.duration_ms ?? '-'} ms
+                        {` · ${t('col.duration')} `}{item.duration_ms ?? '-'} ms
                       </span>
                     }
                   />
@@ -308,13 +302,11 @@ export default function Dashboard() {
     <div className="page-container">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>仪表盘</Title>
-          <p style={{ color: 'var(--app-fg-muted)', marginTop: 4 }}>AITestLab - AI 驱动的硬件测试平台</p>
+          <Title level={3} style={{ margin: 0 }}>{t('page.dashboard')}</Title>
+          <p style={{ color: 'var(--app-fg-muted)', marginTop: 4 }}>AITestLab - AI {t('dash.tagline')}</p>
         </div>
-        <Tooltip title="投屏到产线/实验室大屏：超大字号、自动刷新（无权限控制）">
-          <Button type="primary" icon={<FullscreenOutlined />} onClick={enterBigScreen}>
-            大屏模式
-          </Button>
+        <Tooltip title={t('dash.bigScreenHint')}>
+          <Button type="primary" icon={<FullscreenOutlined />} onClick={enterBigScreen}>{t('btn.bigScreen')}</Button>
         </Tooltip>
       </div>
 
@@ -327,7 +319,7 @@ export default function Dashboard() {
               prefix={<ApiOutlined />}
               suffix={
                 <span style={{ fontSize: 14, color: 'var(--app-pass)' }}>
-                  {stats.connectedDevices} 已连接
+                  {stats.connectedDevices} {t('status.connected')}
                 </span>
               }
             />
@@ -350,7 +342,7 @@ export default function Dashboard() {
               prefix={<PlayCircleOutlined />}
               suffix={
                 <span style={{ fontSize: 14, color: 'var(--app-pass)' }}>
-                  {stats.passedExecutions} 通过
+                  {stats.passedExecutions} {t('status.passed')}
                 </span>
               }
             />
@@ -361,8 +353,8 @@ export default function Dashboard() {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={16}>
           <Card
-            title="最近执行"
-            extra={<Button type="link" onClick={() => navigate('/executions')}>查看全部</Button>}
+            title={t('label.recentExec')}
+            extra={<Button type="link" onClick={() => navigate('/executions')}>{t('btn.viewAll')}</Button>}
           >
             <List
               dataSource={recentExecutions}
@@ -372,7 +364,7 @@ export default function Dashboard() {
                   <List.Item.Meta
                     avatar={statusIcon(item.status)}
                     title={item.id?.slice(0, 8) + '...'}
-                    description={`状态: ${item.status} | 时长: ${item.duration_ms || '-'}ms`}
+                    description={`${t('label.statusColon')} ${item.status} | ${t('label.durationColon')} ${item.duration_ms || '-'}ms`}
                   />
                 </List.Item>
               )}
@@ -387,30 +379,24 @@ export default function Dashboard() {
                 icon={<PlusOutlined />}
                 block
                 onClick={() => navigate('/devices')}
-              >
-                添加设备
-              </Button>
+              >{t('device.add')}</Button>
               <Button
                 icon={<RobotOutlined />}
                 block
                 onClick={() => navigate('/ai')}
               >
-                AI 生成测试用例
+                AI {t('btn.generateCases')}
               </Button>
               <Button
                 icon={<DiffOutlined />}
                 block
                 onClick={() => navigate('/testcases')}
-              >
-                管理测试用例
-              </Button>
+              >{t('btn.manageCases')}</Button>
               <Button
                 icon={<PlayCircleOutlined />}
                 block
                 onClick={() => navigate('/executions')}
-              >
-                查看测试执行
-              </Button>
+              >{t('btn.viewExecutions')}</Button>
             </Space>
           </Card>
         </Col>

@@ -39,7 +39,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       const res = await pluginAPI.list()
       setPlugins(extractData(res, []))
     } catch (err) {
-      handleApiError(err, '加载插件列表失败')
+      handleApiError(err, t('msg.loadPluginsFailed'))
     } finally {
       setLoading(false)
     }
@@ -51,7 +51,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       const res = await pluginAPI.discovered()
       setDiscovered(extractData(res, []))
     } catch (err) {
-      handleApiError(err, '扫描插件失败')
+      handleApiError(err, t('msg.scanPluginsFailed'))
     } finally {
       setDiscovering(false)
     }
@@ -64,14 +64,14 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       const isEnabled = (plugin as any).status === 'enabled'
       if (isEnabled) {
         await pluginAPI.disable(plugin.id)
-        message.success(`${plugin.name} 已禁用`)
+        message.success(`${plugin.name} ${t('status.disabled')}`)
       } else {
         await pluginAPI.enable(plugin.id)
-        message.success(`${plugin.name} 已启用`)
+        message.success(`${plugin.name} ${t('status.enabled')}`)
       }
       loadPlugins()
     } catch (err) {
-      handleApiError(err, '操作失败')
+      handleApiError(err, t('msg.failed'))
     }
   }
 
@@ -88,7 +88,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
         class_name: values.name?.replace(/\s+/g, '') + 'Plugin' || 'CustomPlugin',
       }
       await pluginAPI.install(payload)
-      message.success('插件安装成功')
+      message.success(t('msg.pluginInstalled'))
       setModalVisible(false)
       form.resetFields()
       loadPlugins()
@@ -100,7 +100,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
   const handleInstallDiscovered = async (item: any) => {
     try {
       await pluginAPI.installDiscovered(item)
-      message.success(`插件 ${item.name} 安装成功`)
+      message.success(`${t('label.plugin')} ${item.name} ${t('msg.installed')}`)
       loadPlugins()
       loadDiscovered()
     } catch (err) {
@@ -111,9 +111,9 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
   const handleAddDevice = async (plugin: Plugin) => {
     try {
       await pluginAPI.addDevice(plugin.id)
-      message.success(`已从插件 "${plugin.name}" 创建设备`)
+      message.success(`${t('label.fromPlugin')} "${plugin.name}" ${t('btn.createDevice')}`)
     } catch (err) {
-      handleApiError(err, '创建设备失败')
+      handleApiError(err, t('msg.createDeviceFailed'))
     }
   }
 
@@ -158,7 +158,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       width: 100,
       render: (status: string) => (
         <Tag color={status === 'enabled' ? 'green' : 'default'}>
-          {status === 'enabled' ? '已启用' : '已禁用'}
+          {status === 'enabled' ? t('status.enabled') : t('status.disabled')}
         </Tag>
       ),
     },
@@ -174,7 +174,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
             icon={<PoweroffOutlined />}
             onClick={() => handleToggle(record)}
           >
-            {(record as any).status === 'enabled' ? '禁用' : '启用'}
+            {(record as any).status === 'enabled' ? t('common.disable') : t('common.enable')}
           </Button>
           <Button
             size="small"
@@ -182,9 +182,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
             disabled={(record as any).status !== 'enabled'}
             onClick={() => handleAddDevice(record)}
             title={t('btn.createFromPlugin')}
-          >
-            添加设备
-          </Button>
+          >{t('device.add')}</Button>
         </Space>
       ),
     },
@@ -195,22 +193,18 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
           <Title level={3} style={{ margin: 0 }}>{t('tab.manage')}</Title>
-          <Text type="secondary">通过插件扩展自定义通信协议支持</Text>
+          <Text type="secondary">{t('plugin.extendDesc')}</Text>
         </div>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadPlugins}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadPlugins}>{t('common.refresh')}</Button>
           <Button
             icon={<CodeOutlined />}
             onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}
-          >
-            插件编辑器
-          </Button>
+          >{t('tab.pluginEditor')}</Button>
           <Button
             icon={<FileMarkdownOutlined />}
             onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}
-          >
-            Skill 编辑器
-          </Button>
+          >{t('tab.skillEditor')}</Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -218,40 +212,34 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
               setModalVisible(true)
               form.resetFields()
             }}
-          >
-            安装插件
-          </Button>
+          >{t('dlg.installPlugin')}</Button>
         </Space>
       </div>
 
       <Card style={{ marginBottom: 16 }}>
-        <Text strong>如何创建自定义协议插件？</Text>
+        <Text strong>{t('link.howToPlugin')}</Text>
         <div style={{ marginTop: 8, color: 'var(--app-fg-subtle)' }}>
           <p>
-            1. 创建一个 Python 文件，继承 <code>BaseProtocolPlugin</code>
+            1. t('plugin.inheritHint') <code>BaseProtocolPlugin</code>
           </p>
-          <p>2. 实现 <code>connect</code>、<code>disconnect</code>、<code>send</code>、<code>receive</code> 方法</p>
+          <p>2. t('label.implement') <code>connect</code>、<code>disconnect</code>、<code>send</code>、<code>receive</code>{t('label.method')}</p>
           <p>
-            3. 将插件文件放入 <code>plugins/</code> 目录，通过下方表单安装
-          </p>
-          <p>参考示例：<code>plugins/example_plugin.py</code> (Modbus RTU 协议)</p>
-          <p>
-            更推荐：打开「<a onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}>插件编辑器</a>」
-            选择模板（协议 / 设备驱动 / 数据解析 / 报告模板）一键生成带示例的插件骨架；
-            Skill（AI 用例生成指南）可在「<a onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}>Skill 编辑器</a>」中导入与修改。
+            3. t('plugin.dropHint') <code>plugins/</code>{t('plugin.installHint')}</p>
+          <p>{t('label.reference')}<code>plugins/example_plugin.py</code> (Modbus RTU t('col.protocol'))</p>
+          <p>{t('label.betterOpen')}<a onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}>{t('tab.pluginEditor')}</a>」
+            {t('plugin.templateHint')}
+            Skill（AI {t('btn.generateCases')}{t('label.guideInPanel')}<a onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}>{t('tab.skillEditor')}</a>」{t('label.importEditSuffix')}
           </p>
         </div>
       </Card>
 
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <Text strong>已发现的插件</Text>
-          <Button size="small" icon={<ReloadOutlined />} loading={discovering} onClick={loadDiscovered}>
-            扫描
-          </Button>
+          <Text strong>{t('card.discoveredPlugins')}</Text>
+          <Button size="small" icon={<ReloadOutlined />} loading={discovering} onClick={loadDiscovered}>{t('btn.scan')}</Button>
         </div>
         {discovered.length === 0 ? (
-          <Empty description="未在 plugins/ 目录发现可安装插件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          <Empty description={t('plugin.noneFound')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <DataTable
             dataSource={discovered}
@@ -273,9 +261,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
                     type="primary"
                     icon={<AppstoreAddOutlined />}
                     onClick={() => handleInstallDiscovered(record)}
-                  >
-                    安装
-                  </Button>
+                  >{t('btn.install')}</Button>
                 ),
               },
             ]}
@@ -290,7 +276,7 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
-          locale={{ emptyText: <Empty description="暂无安装的插件" /> }}
+          locale={{ emptyText: <Empty description={t('msg.noPluginsInstalled')} /> }}
         />
       </Card>
 
@@ -302,20 +288,20 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
         width={560}
       >
         <Form form={form} layout="vertical" onFinish={handleInstall}>
-          <Form.Item name="name" label="插件名称" rules={[{ required: true }]}>
-            <Input placeholder="例如：Modbus RTU" />
+          <Form.Item name="name" label={t('col.pluginName')} rules={[{ required: true }]}>
+            <Input placeholder={t('label.exampleModbus')} />
           </Form.Item>
-          <Form.Item name="version" label="版本" initialValue="1.0.0">
+          <Form.Item name="version" label={t('col.version')} initialValue="1.0.0">
             <Input placeholder="1.0.0" />
           </Form.Item>
-          <Form.Item name="protocol_name" label="协议名称" rules={[{ required: true }]}>
-            <Input placeholder="例如：modbus_rtu" />
+          <Form.Item name="protocol_name" label={t('label.protocolName')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.protocolExample2')} />
           </Form.Item>
-          <Form.Item name="module_path" label="模块路径" rules={[{ required: true }]}>
-            <Input placeholder="例如：example_plugin.py" />
+          <Form.Item name="module_path" label={t('label.modulePath')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.pluginFileExample')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={2} placeholder="插件功能描述" />
+          <Form.Item name="description" label={t('col.description')}>
+            <Input.TextArea rows={2} placeholder={t('label.pluginDesc')} />
           </Form.Item>
         </Form>
       </Modal>
@@ -350,12 +336,12 @@ export default function Plugins({ tab }: { tab?: string }) {
         items={[
           {
             key: 'manage',
-            label: <span><AppstoreAddOutlined /> 插件管理</span>,
+            label: <span><AppstoreAddOutlined />{t('tab.manage')}</span>,
             children: <PluginManagement onOpenTab={setActive} />,
           },
           {
             key: 'editor',
-            label: <span><CodeOutlined /> 插件编辑器</span>,
+            label: <span><CodeOutlined />{t('tab.pluginEditor')}</span>,
             children: (
               <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
                 <PluginEditorPanel />
@@ -364,7 +350,7 @@ export default function Plugins({ tab }: { tab?: string }) {
           },
           {
             key: 'skill',
-            label: <span><FileMarkdownOutlined /> Skill 编辑器</span>,
+            label: <span><FileMarkdownOutlined />{t('tab.skillEditor')}</span>,
             children: (
               <Suspense fallback={<Spin style={{ display: 'block', margin: '40px auto' }} />}>
                 <SkillEditorPanel />

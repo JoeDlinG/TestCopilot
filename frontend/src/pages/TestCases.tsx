@@ -103,11 +103,11 @@ export default function TestCases() {
     try {
       const res = await testCaseAPI.rebindDevices()
       const data: any = res.data?.data || res.data
-      message.success(`已重新绑定 ${data.rebound ?? 0} 个节点到当前设备`)
+      message.success(`${t('msg.rebound')} ${data.rebound ?? 0} ${t('msg.nodesToDevice')}`)
       setStale(0)
       loadTestCases()
     } catch (err) {
-      handleApiError(err, '重新绑定设备失败')
+      handleApiError(err, t('msg.rebindFailed'))
     } finally {
       setRebinding(false)
     }
@@ -144,12 +144,12 @@ export default function TestCases() {
       const data: any = res.data?.data || res.data
       setSwitchResult(data)
       message.success(
-        `已将 ${data.changed_count} 个步骤切换到 ${data.device?.device_key}，并重新生成代码`,
+            `${t('msg.switchedPrefix')}${data.changed_count} ${t('msg.stepsSwitched')} ${data.device?.device_key}${t('label.andRegen')}${t('btn.generateCode')}`,
       )
       loadTestCases()
       checkStaleBindings()
     } catch (err) {
-      handleApiError(err, '切换设备失败')
+      handleApiError(err, t('msg.switchFailed'))
     } finally {
       setSwitchSaving(false)
     }
@@ -204,7 +204,7 @@ export default function TestCases() {
     setParserTarget({
       tcId,
       nodeId: node.id,
-      label: node?.data?.label || node?.label || `步骤 ${stepIndex}`,
+      label: node?.data?.label || node?.label || `${t('col.steps')} ${stepIndex}`,
       parsers: cfg.parsers || [],
       sample: stepSamples[tcId]?.[stepIndex] || '',
       otherNames,
@@ -224,10 +224,10 @@ export default function TestCases() {
       ))
       await testCaseAPI.updateFlow(tcId, { nodes, edges: flow.edges })
       setFlows(p => ({ ...p, [tcId]: { ...flow, nodes } }))
-      message.success('结果解析配置已保存，执行时将按此配置解析并判定')
+      message.success(t('msg.parserSaved'))
       setParserOpen(false)
     } catch (err) {
-      handleApiError(err, '保存解析配置失败')
+      handleApiError(err, t('msg.saveParserFailed'))
     } finally {
       setParserSaving(false)
     }
@@ -240,12 +240,12 @@ export default function TestCases() {
       (n: any) => n.type !== 'start' && n.type !== 'end'
     )
 
-    if (loadingFlow) return <Text type="secondary">加载步骤…</Text>
+    if (loadingFlow) return <Text type="secondary">{t('msg.loadingSteps')}</Text>
     if (!steps.length) {
       return (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="该用例还没有流程图步骤，请先编辑流程图"
+          description={t('msg.noFlowSteps')}
         />
       )
     }
@@ -276,16 +276,16 @@ export default function TestCases() {
             title: t('col.parserConfig'), key: 'parsers', width: 200,
             render: (_: any, n: any) => {
               const ps: ParserSpec[] = n?.config?.parsers || []
-              if (!ps.length) return <Text type="secondary" style={{ fontSize: 12 }}>未配置</Text>
+              if (!ps.length) return <Text type="secondary" style={{ fontSize: 12 }}>{t('label.notConfigured')}</Text>
               return (
                 <Space size={4} wrap>
                   {ps.map((p, i) => (
                     <Tooltip
                       key={i}
-                      title={`类型 ${p.data_type} · 起始 ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · 长度 ${p.length}`}
+                      title={`${t('col.type')} ${p.data_type} · t('label.start')} ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · ${t('label.length')} ${p.length}`}
                     >
                       <Tag color="purple">
-                        {p.name || `字段${i + 1}`}({DATA_TYPES.find(d => d.value === p.data_type)?.label.split(' ')[0] || p.data_type})
+                        {p.name || `${t('label.field')}${i + 1}`}({DATA_TYPES.find(d => d.value === p.data_type)?.label.split(' ')[0] || p.data_type})
                       </Tag>
                     </Tooltip>
                   ))}
@@ -301,7 +301,7 @@ export default function TestCases() {
                 icon={<SettingOutlined />}
                 onClick={() => openParserConfig(record.id, n, i + 1)}
               >
-                解析配置
+                {t('col.parserConfig')}
                 {(n?.config?.parsers || []).length > 0 && (
                   <Badge
                     count={(n.config.parsers || []).length}
@@ -319,7 +319,7 @@ export default function TestCases() {
   const handleCreate = async (values: any) => {
     try {
       await testCaseAPI.create(values)
-      message.success('测试用例创建成功')
+      message.success(t('msg.caseCreated'))
       setModalVisible(false)
       form.resetFields()
       loadTestCases()
@@ -355,7 +355,7 @@ export default function TestCases() {
       return
     }
     if (!name) {
-      message.warning('名称不能为空')
+      message.warning(t('msg.nameRequired'))
       return
     }
     if (name === renaming.name) {
@@ -378,7 +378,7 @@ export default function TestCases() {
   // ---- clear the whole list ----
   const handleClearAll = async () => {
     if (testCases.length === 0) {
-      message.info('列表已经是空的')
+      message.info(t('msg.listEmpty'))
       return
     }
     try {
@@ -392,9 +392,9 @@ export default function TestCases() {
         }
       }
       if (failed) {
-        message.warning(`已清空，但有 ${failed} 个用例删除失败，请刷新后重试`)
+        message.warning(`${t('msg.clearedBut')} ${failed} ${t('msg.deleteFailedSuffix')}`)
       } else {
-        message.success(`已清空 ${testCases.length} 个测试用例`)
+        message.success(`${t('msg.cleared')} ${testCases.length} t('label.count')}${t('col.testCase')}`)
       }
       await loadTestCases()
     } finally {
@@ -407,13 +407,13 @@ export default function TestCases() {
     try {
       setRunningId(tc.id)
       await executionAPI.run(tc.id)
-      message.success(`开始执行: ${tc.name}`)
+      message.success(`${t('label.startColon')} ${tc.name}`)
       // Issue #20: results must be visible immediately — open the output dock
       // on the 测试执行 tab instead of navigating away from the authoring page.
       openDock('executions')
       navigate('/executions')
     } catch (err) {
-      handleApiError(err, '执行失败')
+      handleApiError(err, t('msg.execFailed'))
     } finally {
       setRunningId(null)
     }
@@ -429,7 +429,7 @@ export default function TestCases() {
 
   // Every column declares an explicit width. AntD switches the table to
   // `table-layout: fixed` as soon as any column sets `ellipsis`; without
-  // widths the remaining space is distributed by content, so a long "标签"
+  // widths the remaining space is distributed by content, so a long t('col.tags')
   // cell pushed into 状态 / 创建时间 / 操作 and the text overlapped.
   const columns = [
     {
@@ -506,7 +506,7 @@ export default function TestCases() {
       width: 250,
       render: (_: any, record: TestCase) => (
         <Space>
-          <Tooltip title="运行测试">
+          <Tooltip title={t('btn.runCase')}>
             <Button
               size="small"
               type="primary"
@@ -515,14 +515,14 @@ export default function TestCases() {
               onClick={() => handleRun(record)}
             />
           </Tooltip>
-          <Tooltip title="切换设备（按设备ID号重新绑定并重新生成代码）">
+          <Tooltip title={t('btn.switchDeviceLong')}>
             <Button
               size="small"
               icon={<SwapOutlined />}
               onClick={() => openSwitch(record)}
             />
           </Tooltip>
-          <Tooltip title="重命名">
+          <Tooltip title={t('common.rename')}>
             <Button
               size="small"
               icon={<EditOutlined />}
@@ -537,10 +537,10 @@ export default function TestCases() {
             />
           </Tooltip>
           <Popconfirm
-            title="确定删除此用例？"
+            title={t('msg.deleteCase')}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Tooltip title="删除">
+            <Tooltip title={t('common.delete')}>
               <Button size="small" danger icon={<DeleteOutlined />} />
             </Tooltip>
           </Popconfirm>
@@ -556,32 +556,28 @@ export default function TestCases() {
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message={`有 ${staleBindings} 个用例绑定了已不存在的设备`}
-          description="设备被删除后重新添加会得到新的 ID，而这些用例仍指向旧 ID：执行时会直接判定失败、不下发任何指令，因此通信窗口看不到任何消息。点击下方按钮可按节点命令推断出的协议重新绑定到当前设备。"
+                message={`${t('label.has')} ${staleBindings} ${t('col.case')}${t('msg.staleDeviceBound')} ${t('col.device')}`}
+          description={t('device.staleExplain')}
           action={
             <Button size="small" type="primary" icon={<ApartmentOutlined />}
-              loading={rebinding} onClick={handleRebind}>
-              重新绑定设备
-            </Button>
+              loading={rebinding} onClick={handleRebind}>{t('btn.rebind')}</Button>
           }
         />
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>{t('col.testCase')}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadTestCases}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadTestCases}>{t('common.refresh')}</Button>
           <Popconfirm
-            title={`确定清空全部 ${testCases.length} 个测试用例？`}
-            description="用例及其流程图会被永久删除，此操作不可恢复。"
-            okText="清空"
+            title={`${t('msg.clearAllConfirm')} ${testCases.length} ${t('msg.casesSuffix')}`}
+            description={t('msg.deleteCaseWarn')}
+            okText={t('common.clear')}
             okButtonProps={{ danger: true }}
-            cancelText="取消"
+            cancelText={t('common.cancel')}
             onConfirm={handleClearAll}
           >
-            <Tooltip title="一键清空整个测试用例列表">
-              <Button icon={<ClearOutlined />} danger loading={clearing}>
-                一键清空
-              </Button>
+            <Tooltip title={t('btn.clearAllCases')}>
+              <Button icon={<ClearOutlined />} danger loading={clearing}>{t('btn.clearAll')}</Button>
             </Tooltip>
           </Popconfirm>
           <Button
@@ -591,9 +587,7 @@ export default function TestCases() {
               setModalVisible(true)
               form.resetFields()
             }}
-          >
-            创建用例
-          </Button>
+          >{t('btn.createCase')}</Button>
         </Space>
       </div>
 
@@ -622,27 +616,27 @@ export default function TestCases() {
         width={600}
       >
         <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item name="name" label="用例名称" rules={[{ required: true }]}>
-            <Input placeholder="输入测试用例名称" />
+          <Form.Item name="name" label={t('col.caseName')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.caseName')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={3} placeholder="输入测试用例描述" />
+          <Form.Item name="description" label={t('col.description')}>
+            <Input.TextArea rows={3} placeholder={t('ph.caseDesc')} />
           </Form.Item>
-          <Form.Item name="tags" label="标签">
-            <Select mode="tags" placeholder="输入标签后回车" />
+          <Form.Item name="tags" label={t('col.tags')}>
+            <Select mode="tags" placeholder={t('ph.tagEnter')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* ---- rename ---- */}
       <Modal
-        title="重命名测试用例"
+        title={t('btn.renameCase')}
         open={renameOpen}
         onCancel={() => setRenameOpen(false)}
         onOk={handleRename}
         confirmLoading={renamingSaving}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
       >
         <Form
           form={renameForm}
@@ -657,15 +651,15 @@ export default function TestCases() {
         >
           <Form.Item
             name="name"
-            label="用例名称"
-            rules={[{ required: true, message: '请输入用例名称' }]}
+            label={t('col.caseName')}
+            rules={[{ required: true, message: t('msg.enterCaseName') }]}
           >
-            <Input placeholder="输入新的用例名称" />
+            <Input placeholder={t('ph.newCaseName')} />
           </Form.Item>
         </Form>
         {renaming && (
           <div style={{ color: 'var(--app-fg-muted)', fontSize: 12 }}>
-            当前名称：{renaming.name}（ID {renaming.id}）
+            t('label.currentName'){renaming.name}（ID {renaming.id}）
           </div>
         )}
       </Modal>
@@ -683,29 +677,29 @@ export default function TestCases() {
         />
       )}
 
-      {/* 切换设备：按设备ID号重新绑定，并重新生成代码 */}
+            {/* Switch device: re-bind by device ID and regenerate the code */}
       <Modal
         title={t('btn.switchDevice')}
         open={switchOpen}
         onOk={handleSwitchDevice}
         confirmLoading={switchSaving}
         onCancel={() => setSwitchOpen(false)}
-        okText="切换并重新生成代码"
-        cancelText="取消"
+        okText={t('btn.switchAndRegen')}
+        cancelText={t('common.cancel')}
         width={560}
       >
         <Alert
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="用例通过「设备ID号」关联设备"
-          description="更换硬件时，把同一个设备ID号赋给新设备，或直接把用例切换到另一个设备ID号。切换后会自动按新设备重新生成代码。"
+          message={t('label.caseBindsById')}
+          description={t('device.switchExplain')}
         />
         <Form form={switchForm} layout="vertical">
           <Form.Item
             name="to_device_key"
-            label="切换到（目标设备ID号）"
-            rules={[{ required: true, message: '请选择目标设备' }]}
+            label={t('ph.switchTarget')}
+                  rules={[{ required: true, message: `${t('msg.pickTarget')}${t('col.device')}` }]}
           >
             <Select
               placeholder={t('btn.selectDevice')}
@@ -717,12 +711,12 @@ export default function TestCases() {
           </Form.Item>
           <Form.Item
             name="from_device_key"
-            label="仅切换当前绑定（可选）"
-            extra="留空表示切换本用例所有已绑定设备的步骤"
+            label={t('label.onlyCurrentBinding')}
+            extra={t('label.blankAllDevices')}
           >
             <Select
               allowClear
-              placeholder="全部（默认）"
+              placeholder={t('label.allDefault')}
               options={devices.map((d) => ({
                 value: d.device_key,
                 label: `${d.device_key}　${d.name}`,
@@ -733,12 +727,12 @@ export default function TestCases() {
 
         {switchResult && (
           <div style={{ marginTop: 8 }}>
-            <Text strong>切换结果</Text>
+            <Text strong>{t('label.switchResult')}</Text>
             <div style={{ marginTop: 6 }}>
               <Tag color="green">
-                已切换 {switchResult.changed_count} 个步骤 → {switchResult.device?.device_key}
+                t('msg.switched') {switchResult.changed_count} t('unit.steps') → {switchResult.device?.device_key}
               </Tag>
-              <Tag color="blue">已重新生成代码（{switchResult.code?.length ?? 0} 字符）</Tag>
+              <Tag color="blue">t('msg.regenerated'){switchResult.code?.length ?? 0} {t('label.chars')}</Tag>
             </div>
           </div>
         )}

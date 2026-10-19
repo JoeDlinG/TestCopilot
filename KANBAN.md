@@ -126,6 +126,27 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.2.0 — 英文界面补全：逐页治理 + 复查（2026-10-19，分支 `feature/flow-enhancements`）
+
+- [x] **界面中文（排除注释）858 → 0**；接入 i18n 的页面 2/16 → **16/16**
+- [x] **词条分层**：`messages.ts` 只留手写 115 条；批量词条拆到
+      `extraKeys.ts`(181) + `extraKeys4~12.ts`(855)，模块加载时合并进 zh/en（幂等）
+      总计 **115 手写 + 1036 批量，en-US 缺失 0**
+- [x] **逐页推进 16 页**：Logs → Dashboard → DebugTerminal → Reports → CustomDashboard →
+      SkillEditor → Plugins → ModelConfig → Devices → ExecutionPlanner → TestCases →
+      AIChat → Executions → ProjectManager → TestFlowEditor → PluginEditor，每页翻译后单独编译
+- [x] **工程性处理**：模块级常量改工厂（Plugins.columns / TestFlowEditor.PALETTE·VALUE_TYPE_OPTIONS /
+      ProjectManager.WIDGET_TYPE_LABEL·ON_ERROR_LABEL / PluginEditor.TEMPLATE_TYPE_LABEL /
+      SkillEditor.SKILL_SCAFFOLD / AIChat.BUILTIN_SKILLS）；非组件函数加 `t` 形参
+      （DebugTerminal.createWebSocket / AIChat.readFileAsBase64）；9 个子组件补 hook；
+      PluginEditor 模板回调 `t` 改名 `tpl` 避免遮蔽
+- [x] **误替换防护**：JSON 键名负向预查 `(?!\s*:)`；混合串转模板字符串；
+      每批替换后统一归一 `attr=t('k')` → `attr={t('k')}`；修复 6 处未闭合模板字符串
+- [x] 验证：界面中文 0；`tsc` + `build` 通过；dev 编译 5/5 `200`；反引号配对全偶数；
+      `Test/` 7 个 + `test_blocking` 6 项全 PASS；端点 **16/16**；用例 89 条；
+      PeakCAN 与 MG100 均 connected
+- [x] **第二遍复查已执行**：排除注释后界面中文 **0**，各页均为 0
+
 ### v2.1.0 — 执行管理器完善 + 自定义仪表盘优化（2026-10-18，分支 `feature/flow-enhancements`）
 
 **执行管理器**

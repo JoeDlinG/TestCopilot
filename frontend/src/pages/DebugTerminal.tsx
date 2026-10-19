@@ -58,7 +58,7 @@ function formatTimestamp(isoStr?: string): string {
 // Module-level WebSocket factory. Uses the global store directly so that
 // message handling keeps working even after the React component unmounts
 // (e.g. when navigating to another page and back).
-function createWebSocket(deviceId: string): WebSocket {
+function createWebSocket(deviceId: string, t: (k: string) => string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.hostname || 'localhost'
   const wsUrl = `${protocol}//${host}:8000/ws/devices/${deviceId}`
@@ -71,7 +71,7 @@ function createWebSocket(deviceId: string): WebSocket {
       id: nextMsgId(),
       timestamp: formatTime(),
       type: 'system',
-      content: 'WebSocket 已连接',
+      content: `WebSocket ${t('status.connected')}`,
     })
   }
 
@@ -86,7 +86,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: msg.message || '已连接到设备',
+            content: msg.message || t('term.connectedTo'),
           })
           break
         case 'command_sent':
@@ -138,7 +138,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: `开始监听设备数据 (间隔: ${msg.interval_ms}ms)`,
+            content: `${t('term.startListenAt')} ${msg.interval_ms}ms)`,
           })
           store.setListening(deviceId, true)
           break
@@ -147,7 +147,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: '已停止监听',
+            content: t('term.stoppedListen'),
           })
           store.setListening(deviceId, false)
           break
@@ -156,7 +156,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'error',
-            content: `接收错误: ${msg.error}`,
+            content: `${t('term.recvError')} ${msg.error}`,
           })
           break
         case 'device_disconnected':
@@ -164,7 +164,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'error',
-            content: `设备已断开: ${msg.message}`,
+            content: `${t('term.disconnectedColon')} ${msg.message}`,
           })
           store.setListening(deviceId, false)
           break
@@ -194,13 +194,13 @@ function createWebSocket(deviceId: string): WebSocket {
       id: nextMsgId(),
       timestamp: formatTime(),
       type: 'system',
-      content: 'WebSocket 已断开，将在 3s 后重连...',
+      content: `WebSocket ${t('term.reconnectIn3s')}...`,
     })
 
     // Reconnect with exponential backoff
     const delay = Math.min(1000 * Math.pow(2, Math.min(attempts, 5)), 30000)
     setTimeout(() => {
-      const newWs = createWebSocket(deviceId)
+      const newWs = createWebSocket(deviceId, t)
       useTerminalStore.getState().setWs(deviceId, newWs)
     }, delay)
   }
@@ -245,7 +245,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         id: nextMsgId(),
         timestamp: formatTime(),
         type: 'error',
-        content: 'WebSocket 未连接，无法发送命令',
+        content: `WebSocket ${t('term.notConnected')}`,
       })
       return
     }
@@ -328,11 +328,11 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
             {tab.deviceName}
           </Text>
           <Tag color={isOpen ? 'green' : 'red'}>
-            {isOpen ? '已连接' : '未连接'}
+            {isOpen ? t('status.connected') : t('status.disconnected')}
           </Tag>
         </Space>
         <Space>
-          <Tooltip title={tab.listening ? t('btn.stopListen') : '开始监听实时数据'}>
+          <Tooltip title={tab.listening ? t('btn.stopListen') : t('term.startLive')}>
             <Button
               size="small"
               type={tab.listening ? 'primary' : 'default'}
@@ -341,7 +341,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
               onClick={toggleListening}
               disabled={!isOpen}
             >
-              {tab.listening ? t('btn.stopListen') : '开始监听'}
+              {tab.listening ? t('btn.stopListen') : t('btn.startListen')}
             </Button>
           </Tooltip>
           <Tooltip title={t('btn.clearLogs')}>
@@ -374,7 +374,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
             textAlign: 'center',
             paddingTop: 40,
           }}>
-            等待设备数据... 在下方输入框发送命令
+            t('term.waiting')... {t('term.sendBelow')}
           </div>
         ) : (
           tab.messages.map(msg => (
@@ -402,7 +402,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
           value={commandInput}
           onChange={(e) => setCommandInput(deviceId, e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入命令，Enter 发送，Shift+Enter 换行，↑↓ 历史命令..."
+          placeholder={t('term.inputFull')}
           style={{
             background: 'var(--term-input-bg)',
             border: '1px solid var(--term-input-border)',
@@ -415,9 +415,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
           icon={<SendOutlined />}
           onClick={sendCommand}
           disabled={!isOpen}
-        >
-          发送
-        </Button>
+        >{t('btn.send')}</Button>
       </div>
     </div>
   )
@@ -508,7 +506,7 @@ export default function DebugTerminal() {
     const store = useTerminalStore.getState()
     Object.values(store.tabs).forEach((tab) => {
       if (!tab.ws || tab.ws.readyState === WebSocket.CLOSED) {
-        const ws = createWebSocket(tab.deviceId)
+        const ws = createWebSocket(tab.deviceId, t)
         store.setWs(tab.deviceId, ws)
       }
     })
@@ -521,7 +519,7 @@ export default function DebugTerminal() {
       store.setActiveTab(deviceId)
       return
     }
-    const ws = createWebSocket(deviceId)
+    const ws = createWebSocket(deviceId, t)
     openTerminalAction(deviceId, device.name, ws)
   }
 
@@ -600,7 +598,7 @@ export default function DebugTerminal() {
           justifyContent: 'space-between',
           alignItems: 'center',
         }}>
-          <Title level={5} style={{ margin: 0 }}>已连接设备</Title>
+          <Title level={5} style={{ margin: 0 }}>{t('card.connectedDevices')}</Title>
           <Button size="small" icon={<ReloadOutlined />} onClick={loadDevices} />
         </div>
 
@@ -611,13 +609,9 @@ export default function DebugTerminal() {
             </div>
           ) : connectedDevices.length === 0 ? (
             <Card size="small" style={{ margin: 8, textAlign: 'center' }}>
-              <Text type="secondary" style={{ fontSize: 13 }}>
-                没有已连接的设备
-              </Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>{t('term.noDevices')}</Text>
               <div style={{ marginTop: 8 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  请先在设备管理页面连接设备
-                </Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('term.connectFirst')}</Text>
               </div>
             </Card>
           ) : (
@@ -653,7 +647,7 @@ export default function DebugTerminal() {
                         {device.name}
                       </Text>
                     </Space>
-                    <Tag color="green" style={{ fontSize: 11, margin: 0 }}>已连接</Tag>
+                    <Tag color="green" style={{ fontSize: 11, margin: 0 }}>{t('status.connected')}</Tag>
                   </div>
                   <div style={{ marginTop: 4 }}>
                     <Text type="secondary" style={{ fontSize: 11 }}>
@@ -682,11 +676,8 @@ export default function DebugTerminal() {
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
-                <span style={{ color: 'var(--term-fg-muted)' }}>
-                  选择一个已连接的设备打开调试终端<br />
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    支持同时打开多个设备的终端窗口
-                  </Text>
+                <span style={{ color: 'var(--term-fg-muted)' }}>{t('term.selectDevice')}<br />
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('term.multiTab')}</Text>
                 </span>
               }
             />
@@ -705,9 +696,7 @@ export default function DebugTerminal() {
                   justifyContent: 'center',
                   background: 'var(--term-bg)',
                   color: 'var(--term-fg-subtle)',
-                }}>
-                  选择一个终端窗口
-                </div>
+                }}>{t('term.selectTab')}</div>
               )}
             </div>
           </>
@@ -715,7 +704,7 @@ export default function DebugTerminal() {
       </div>
 
       {/* Third column — command history (issue #21).
-          Previously the terminal was only 设备列表 | 收发窗口; recalling an
+      Previously the terminal was only a device list plus a traffic pane; recalling an
           earlier command meant retyping it, so the per-device history now has
           its own column and inserts straight into the input box. */}
       <div style={{
@@ -735,12 +724,10 @@ export default function DebugTerminal() {
         </div>
         <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
           {activeHistory.length === 0 ? (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              暂无历史指令（发送过的命令会按设备记录在此）
-            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('term.noHistory')}</Text>
           ) : (
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>点击填入输入框：</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('term.clickToFill')}</Text>
               {[...activeHistory].reverse().slice(0, 40).map((cmd, i) => (
                 <Button
                   key={i}

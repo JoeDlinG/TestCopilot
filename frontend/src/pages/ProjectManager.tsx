@@ -39,10 +39,11 @@ const HIDDEN_KEYS = new Set([
 ])
 
 function Cell({ value }: { value: any }) {
+  const { t } = useI18n()
   if (value === null || value === undefined || value === '') {
     return <Text type="secondary">-</Text>
   }
-  if (typeof value === 'boolean') return <span>{value ? '是' : '否'}</span>
+  if (typeof value === 'boolean') return <span>{value ? t('common.yes') : t('common.no')}</span>
   const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
   const shown = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
   return <span title={raw} style={{ fontSize: 12 }}>{shown}</span>
@@ -108,14 +109,14 @@ function parseTreeKey(key: string): { name: string; section: string | null } {
 // 仪表盘：渲染 layout 缩略图，而不是摊开一堆参数
 // --------------------------------------------------------------------------- //
 
-const WIDGET_TYPE_LABEL: Record<string, string> = {
-  parsed_value: '解析值',
-  trend_chart: '趋势图',
-  judge_summary: '判定汇总',
-  execution_stats: '执行统计',
-  device_status: '设备状态',
-  comm_log: '通信日志',
-}
+const WIDGET_TYPE_LABEL = (tr: (k: string) => string): Record<string, string> => ({
+  parsed_value: tr('label.parsedValue'),
+  trend_chart: tr('label.trendChart'),
+  judge_summary: tr('label.judgeSummary'),
+  execution_stats: tr('card.execStats'),
+  device_status: tr('card.deviceStatus'),
+  comm_log: tr('label.commLog'),
+})
 
 /** Grid row height in px for the miniature — small enough to scan, big enough to read. */
 const LAYOUT_UNIT = 26
@@ -130,6 +131,7 @@ const LAYOUT_COLS = 12
  * for anyone who does need the numbers.
  */
 function DashboardPreview({ dashboard }: { dashboard: any }) {
+  const { t } = useI18n()
   const layout: any[] = dashboard?.layout || []
   const widgets: any[] = dashboard?.widgets || []
   const byId = new Map(widgets.map((w) => [w.id, w]))
@@ -138,7 +140,7 @@ function DashboardPreview({ dashboard }: { dashboard: any }) {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="该仪表盘没有布局数据"
+        description={t('msg.noLayout')}
         style={{ padding: '12px 0', margin: 0 }}
       />
     )
@@ -186,7 +188,7 @@ function DashboardPreview({ dashboard }: { dashboard: any }) {
                 {w?.title || l.i}
               </Text>
               <Text style={{ fontSize: 10, opacity: 0.75, lineHeight: 1.2 }} ellipsis>
-                {WIDGET_TYPE_LABEL[w?.type] || w?.type || '挂件'}
+                {WIDGET_TYPE_LABEL(t)[w?.type] || w?.type || t('label.widget')}
               </Text>
             </div>
           )
@@ -197,7 +199,7 @@ function DashboardPreview({ dashboard }: { dashboard: any }) {
         size="small"
         items={[{
           key: 'raw',
-          label: <Text type="secondary" style={{ fontSize: 12 }}>查看原始参数</Text>,
+          label: <Text type="secondary" style={{ fontSize: 12 }}>{t('btn.viewRawParams')}</Text>,
           children: (
             <pre style={{
               margin: 0, fontSize: 11, maxHeight: 220, overflow: 'auto',
@@ -217,11 +219,11 @@ function DashboardPreview({ dashboard }: { dashboard: any }) {
 // 执行管理器：展开计划项并显示其测试用例
 // --------------------------------------------------------------------------- //
 
-const ON_ERROR_LABEL: Record<string, string> = {
-  abort_all: '中止全部',
-  continue: '继续',
-  skip_group: '跳过本组',
-}
+const ON_ERROR_LABEL = (tr: (k: string) => string): Record<string, string> => ({
+  abort_all: tr('onError.abortAll'),
+  continue: tr('onError.continue'),
+  skip_group: tr('onError.abortGroup'),
+})
 
 /**
  * A plan row on its own only says "循环 1 次、最大并行 4" — the useful part is
@@ -268,7 +270,7 @@ function PlanPreview({
     {
       title: t('col.device'), dataIndex: 'resolved_device_ids', key: 'resolved_device_ids', width: 180,
       render: (ids: string[]) => {
-        if (!ids || ids.length === 0) return <Text type="secondary">自动推断</Text>
+        if (!ids || ids.length === 0) return <Text type="secondary">{t('label.autoResolve')}</Text>
         return (
           <span title={ids.join(', ')}>
             {ids.map((d) => deviceNames[d] || d).join('、')}
@@ -284,15 +286,15 @@ function PlanPreview({
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
       <Space size={[6, 4]} wrap>
-        <Tag color="processing">整体循环 {plan?.plan_loop_count ?? 1} 次</Tag>
-        <Tag>最大并行 {plan?.max_parallel ?? '-'}</Tag>
-        <Tag>出错时：{ON_ERROR_LABEL[plan?.on_error] || plan?.on_error || '-'}</Tag>
-        <Tag>计划项 {items.length}</Tag>
+        <Tag color="processing">t('label.planLoopShort') {plan?.plan_loop_count ?? 1} {t('label.times')}</Tag>
+        <Tag>t('label.maxParallel') {plan?.max_parallel ?? '-'}</Tag>
+        <Tag>t('label.onErrorColon'){ON_ERROR_LABEL(t)[plan?.on_error] || plan?.on_error || '-'}</Tag>
+        <Tag>t('label.planItems') {items.length}</Tag>
       </Space>
       {items.length === 0 ? (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="该计划还没有计划项"
+          description={t('msg.noPlanItems')}
           style={{ padding: '12px 0', margin: 0 }}
         />
       ) : (
@@ -347,7 +349,7 @@ export default function ProjectManager() {
       const res = await projectAPI.list()
       setProjects(extractData(res, []))
     } catch (err) {
-      handleApiError(err, '加载工程列表失败')
+      handleApiError(err, t('msg.loadProjectsFailed'))
     } finally {
       setLoading(false)
     }
@@ -381,7 +383,7 @@ export default function ProjectManager() {
       const res = await projectAPI.exportBundle({ sections: sectionArg() })
       const bundle: any = extractData(res, null) || {}
       download(`Project_${bundle.project_name || 'export'}.json`, bundle)
-      message.success('已导出当前配置')
+      message.success(t('msg.exportedCurrent'))
     } catch (err) {
       handleApiError(err, t('msg.exportFailed'))
     } finally {
@@ -401,12 +403,12 @@ export default function ProjectManager() {
     setBusy('save')
     try {
       await projectAPI.save(name, sectionArg())
-      message.success(`已保存为工程「${name}」`)
+      message.success(`${t('msg.savedAsPrefix')}${name}」`)
       setSaveOpen(false)
       saveForm.resetFields()
       load()
     } catch (err) {
-      handleApiError(err, '另存为失败')
+      handleApiError(err, t('msg.saveAsFailed'))
     } finally {
       setBusy('')
     }
@@ -420,7 +422,7 @@ export default function ProjectManager() {
       const res = await projectAPI.importBundle(bundle, sectionArg(), mode)
       const data: any = res.data?.data || res.data
       setImportResult({ ...data, from })
-      message.success(`已从「${from}」导入配置`)
+      message.success(`${t('msg.fromPrefix')}${from}」${t('btn.importConfig')}`)
       load()
     } catch (err) {
       const detail = _errorMessage(err, t('msg.importFailed'))
@@ -438,7 +440,7 @@ export default function ProjectManager() {
         const bundle = JSON.parse(String(reader.result))
         applyBundle(bundle, file.name)
       } catch {
-        message.error('文件不是合法的 JSON')
+        message.error(t('msg.notValidJson'))
       }
     }
     reader.onerror = () => message.error(t('msg.readFileFailed'))
@@ -451,7 +453,7 @@ export default function ProjectManager() {
       const res = await projectAPI.get(row.name)
       applyBundle(extractData(res, null), row.name)
     } catch (err) {
-      handleApiError(err, '读取工程文件失败')
+      handleApiError(err, t('msg.readProjectFailed'))
     }
   }
 
@@ -460,7 +462,7 @@ export default function ProjectManager() {
       const res = await projectAPI.get(row.name)
       download(row.file_name, extractData(res, null))
     } catch (err) {
-      handleApiError(err, '下载失败')
+      handleApiError(err, t('msg.downloadFailed'))
     }
   }
 
@@ -500,11 +502,11 @@ export default function ProjectManager() {
     setBusy('wizard')
     try {
       await projectAPI.save(name, wizardSections)
-      message.success(`工程「${name}」已创建（${wizardSections.length} 个配置段）`)
+      message.success(`${t('label.projectPrefix')}${name}」t('msg.createdParen')}${wizardSections.length} ${t('unit.sectionsParen')}`)
       setWizardOpen(false)
       load()
     } catch (err) {
-      handleApiError(err, '创建工程失败')
+      handleApiError(err, t('msg.createProjectFailed'))
     } finally {
       setBusy('')
     }
@@ -518,11 +520,11 @@ export default function ProjectManager() {
       const res = await projectAPI.newProject(undefined, keepModels)
       const data: any = res.data?.data || res.data
       setNewResult(data)
-      message.success(`已清空 ${data.total_cleared} 项配置，可以开始新项目`)
+      message.success(`${t('msg.cleared')} ${data.total_cleared} ${t('msg.clearedReady')}`)
       setNewOpen(false)
       load()
     } catch (err) {
-      handleApiError(err, '新建项目失败')
+      handleApiError(err, t('msg.newProjectFailed'))
     } finally {
       setBusy('')
     }
@@ -532,10 +534,10 @@ export default function ProjectManager() {
     setBusy('sync:' + row.name)
     try {
       await projectAPI.sync(row.name, sectionArg())
-      message.success(`已用当前配置覆盖「${row.name}」`)
+      message.success(`${t('msg.overwrotePrefix')}${row.name}」`)
       load()
     } catch (err) {
-      handleApiError(err, '同步失败')
+      handleApiError(err, t('msg.syncFailed'))
     } finally {
       setBusy('')
     }
@@ -565,7 +567,7 @@ export default function ProjectManager() {
       const res = await projectAPI.get(name)
       setDetail(extractData(res, null))
     } catch (err) {
-      handleApiError(err, '读取工程失败')
+      handleApiError(err, t('msg.readProjectError'))
       setDetail(null)
     } finally {
       setDetailLoading(false)
@@ -611,8 +613,8 @@ export default function ProjectManager() {
           <FileTextOutlined />
           <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
           {p.app_version && <Tag color="processing" style={{ fontSize: 10 }}>v{p.app_version}</Tag>}
-          {p.error && <Tag color="red">损坏</Tag>}
-          <Text type="secondary" style={{ fontSize: 11 }}>{total} 项</Text>
+          {p.error && <Tag color="red">{t('label.corrupted')}</Tag>}
+          <Text type="secondary" style={{ fontSize: 11 }}>{total} {t('label.items')}</Text>
         </Space>
       ),
       children: PROJECT_SECTIONS.map((s) => {
@@ -644,8 +646,8 @@ export default function ProjectManager() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="工程文件把插件、Skill、测试用例、执行管理器、设备、仪表盘与模型配置打包成一个 JSON 文件"
-        description="AI 模型的 api_key 属于敏感信息，始终不会写入工程文件；导入时也不会覆盖已有的密钥。"
+        message={t('project.bundleDesc')}
+        description={t('project.keyFull')}
       />
 
       <Card title={t('common.actions')} style={{ marginBottom: 16 }}>
@@ -673,10 +675,8 @@ export default function ProjectManager() {
             <Button danger icon={<FileAddOutlined />} onClick={() => setNewOpen(true)}>
               {t('project.new')}
             </Button>
-            <Tooltip title="分步引导：选配置段 → 命名 → 生成工程">
-              <Button icon={<ThunderboltOutlined />} onClick={openWizard}>
-                项目向导
-              </Button>
+            <Tooltip title={t('tip.wizardFull')}>
+              <Button icon={<ThunderboltOutlined />} onClick={openWizard}>{t('btn.wizard')}</Button>
             </Tooltip>
             <Upload
               beforeUpload={handleUpload}
@@ -693,8 +693,8 @@ export default function ProjectManager() {
             </Radio.Group>
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            合并导入：按 ID / 名称匹配，已存在则更新、不存在则新建（重复导入不会产生重复数据）。
-            替换导入：先清空该配置段再写入，会删除该段现有数据。
+            {t('project.mergeDesc')}
+            {t('project.replaceDesc')}
           </Text>
         </Space>
       </Card>
@@ -705,7 +705,7 @@ export default function ProjectManager() {
             <Alert type="error" showIcon message={importResult.error} />
           ) : (
             <Space direction="vertical" size={4}>
-              <Text>来源：{importResult.from}　模式：{importResult.mode}</Text>
+              <Text>t('label.sourceColon'){importResult.from}　t('label.modeColon'){importResult.mode}</Text>
               <Space size={[6, 6]} wrap>
                 {Object.entries(importResult.sections || {}).map(([key, v]: any) => (
                   <Tag
@@ -713,8 +713,8 @@ export default function ProjectManager() {
                     color={v.created > 0 ? 'green' : 'blue'}
                   >
                     {PROJECT_SECTIONS.find((s) => s.key === key)?.label || key}
-                    ：新建 {v.created} / 更新 {v.updated}
-                    {v.skipped > 0 && ` / 跳过 ${v.skipped}`}
+                    ：t('common.create') {v.created} / t('label.updated') {v.updated}
+                    {v.skipped > 0 && ` / ${t('status.skip')} ${v.skipped}`}
                   </Tag>
                 ))}
               </Space>
@@ -737,14 +737,14 @@ export default function ProjectManager() {
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('project.kept')}{(newResult.kept || [])
                 .map((k: string) => PROJECT_SECTIONS.find((s) => s.key === k)?.label || k)
-                .join('、') || '无'}
+                .join('、') || t('label.none')}
             </Text>
           </Space>
         </Card>
       )}
 
-      {/* ---- 工程树（左） + 工程配置（右） ----
-           点工程名 → 主页面展示该工程全部配置；展开后可点单个配置段只看该段。 */}
+      {/* ---- Project tree (left) + project configuration (right) ----
+          expand a project to view a single section. */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <Card
           title={t('project.saved')}
@@ -755,10 +755,10 @@ export default function ProjectManager() {
           {projects.length === 0 ? (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="还没有保存的工程文件"
+              description={t('msg.noProjects')}
               style={{ padding: '16px 0' }}
             >
-              <Button type="primary" onClick={() => setSaveOpen(true)}>另存为工程</Button>
+              <Button type="primary" onClick={() => setSaveOpen(true)}>{t('btn.saveAsProject')}</Button>
             </Empty>
           ) : (
             <Tree
@@ -817,9 +817,7 @@ export default function ProjectManager() {
                     size="small" icon={<SyncOutlined />}
                     loading={busy === 'sync:' + activeRow.name}
                     onClick={() => handleSync(activeRow)}
-                  >
-                    覆盖同步
-                  </Button>
+                  >{t('btn.overwriteSync')}</Button>
                   <Button
                     size="small" icon={<EditOutlined />}
                     onClick={() => {
@@ -830,7 +828,7 @@ export default function ProjectManager() {
                     {t('common.rename')}
                   </Button>
                   <Popconfirm
-                    title={`删除工程「${activeRow.name}」？`}
+                    title={`${t('msg.deleteProjectPrefix')}${activeRow.name}」？`}
                     onConfirm={() => handleDelete(activeRow)}
                   >
                     <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
@@ -842,7 +840,7 @@ export default function ProjectManager() {
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {activeRow.file_name} · {(activeRow.size / 1024).toFixed(1)} KB
                   {activeRow.exported_at
-                    && ` · 导出于 ${new Date(activeRow.exported_at).toLocaleString('zh-CN')}`}
+                    && ` · ${t('label.exportedAt')} ${new Date(activeRow.exported_at).toLocaleString('zh-CN')}`}
                 </Text>
                 {activeRow.error && <Alert type="error" showIcon message={activeRow.error} />}
               </Space>
@@ -879,13 +877,13 @@ export default function ProjectManager() {
                       title={`${s.label}（${rows.length}）`}
                       style={{ marginBottom: 12 }}
                     >
-                      {/* 仪表盘摊开参数没人看得懂，直接画 layout 缩略图 */}
+          {/* Dashboards are unreadable as raw parameters — draw the layout instead */}
                       {s.key === 'dashboards' ? (
                         <Space direction="vertical" size={16} style={{ width: '100%' }}>
                           {rows.map((d: any) => (
                             <div key={d.id}>
                               <Text strong style={{ fontSize: 13 }}>{d.name}</Text>
-                              {d.is_default && <Tag color="processing" style={{ marginLeft: 6 }}>默认</Tag>}
+                              {d.is_default && <Tag color="processing" style={{ marginLeft: 6 }}>{t('status.default')}</Tag>}
                               {d.description && (
                                 <div>
                                   <Text type="secondary" style={{ fontSize: 12 }}>{d.description}</Text>
@@ -934,7 +932,7 @@ export default function ProjectManager() {
                 !detailLoading && (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description="无法读取该工程的配置"
+                    description={t('msg.cannotReadProject')}
                   />
                 )
               )}
@@ -943,7 +941,7 @@ export default function ProjectManager() {
             <Card size="small">
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="从左侧选择一个工程，查看它的全部配置"
+                description={t('msg.pickProject')}
               />
             </Card>
           )}
@@ -962,35 +960,29 @@ export default function ProjectManager() {
         <Form form={saveForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
             name="name"
-            label="工程名称"
+            label={t('label.projectName')}
             rules={[{ required: true, message: t('msg.enterProjectName') }]}
-            extra={`将保存为 Project_名称.json（当前包含 ${sections.length} 个配置段）`}
+            extra={`${t('ph.savedAsProject')}_${t('col.name')}.json（${t('label.currentlyContains')} ${sections.length} ${t('unit.section')}${t('common.configure')}）`}
           >
-            <Input placeholder="例如：CAN 联调测试" autoFocus />
+            <Input placeholder={t('ph.projectExampleCan')} autoFocus />
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* 项目向导：选段 → 命名 → 生成 */}
+      {/* Project wizard: pick sections → name → generate */}
       <Modal
-        title="项目向导"
+        title={t('btn.wizard')}
         open={wizardOpen}
         onCancel={() => setWizardOpen(false)}
         width={620}
         footer={[
           <Button key="back" disabled={wizardStep === 0}
-            onClick={() => setWizardStep((s) => s - 1)}>
-            上一步
-          </Button>,
+            onClick={() => setWizardStep((s) => s - 1)}>{t('btn.prev')}</Button>,
           wizardStep < 2 ? (
-            <Button key="next" type="primary" onClick={() => setWizardStep((s) => s + 1)}>
-              下一步
-            </Button>
+            <Button key="next" type="primary" onClick={() => setWizardStep((s) => s + 1)}>{t('btn.next')}</Button>
           ) : (
             <Button key="done" type="primary" loading={busy === 'wizard'}
-              onClick={handleWizardFinish}>
-              生成工程
-            </Button>
+              onClick={handleWizardFinish}>{t('btn.generateProject')}</Button>
           ),
         ]}
       >
@@ -1001,7 +993,7 @@ export default function ProjectManager() {
 
         {wizardStep === 0 && (
           <div>
-            <Text type="secondary">勾选要打包进工程的配置段：</Text>
+            <Text type="secondary">{t('wizard.pickSections')}</Text>
             <div style={{ marginTop: 10 }}>
               <Checkbox.Group
                 options={PROJECT_SECTIONS.map((s) => ({ label: s.label, value: s.key }))}
@@ -1014,12 +1006,12 @@ export default function ProjectManager() {
 
         {wizardStep === 1 && (
           <div>
-            <Text type="secondary">给工程起一个名字（将保存为 Project_&lt;名称&gt;.json）：</Text>
+            <Text type="secondary">t('ph.nameProject')_&lt;t('col.name')&gt;.json）：</Text>
             <Input
               style={{ marginTop: 10 }}
               value={wizardName}
               onChange={(e) => setWizardName(e.target.value)}
-              placeholder="例如：CAN联调基线"
+              placeholder={t('ph.wizardExample')}
               onPressEnter={() => setWizardStep(2)}
             />
           </div>
@@ -1027,13 +1019,13 @@ export default function ProjectManager() {
 
         {wizardStep === 2 && (
           <div>
-            <Text strong>即将创建：</Text>
+            <Text strong>{t('label.aboutToCreateColon')}</Text>
             <div style={{ marginTop: 8 }}>
-              <div>工程文件：<Text code>Project_{wizardName.trim() || '（未命名）'}.json</Text></div>
+              <div>{t('label.projectFileColon')}<Text code>Project_{wizardName.trim() || `（${t('label.unnamed')}`}.json</Text></div>
               <div style={{ marginTop: 6 }}>
-                包含配置段：
+                {t('label.sectionsColon')}
                 {wizardSections.length === 0
-                  ? <Text type="danger"> 未选择任何配置段</Text>
+                  ? <Text type="danger">{t('msg.noSectionSelected')}</Text>
                   : wizardSections.map((k) => (
                       <Tag key={k} color="blue">
                         {PROJECT_SECTIONS.find((s) => s.key === k)?.label || k}
@@ -1043,8 +1035,8 @@ export default function ProjectManager() {
             </div>
             <Alert
               type="info" showIcon style={{ marginTop: 12 }}
-              message="创建工程不会影响当前系统配置"
-              description="向导只是把当前配置保存成一份工程文件；如需清空工作区重新开始，请使用「新建项目工程」。"
+              message={t('project.createNoSideEffect')}
+              description={t('project.wizardNote')}
             />
           </div>
         )}
@@ -1065,28 +1057,26 @@ export default function ProjectManager() {
           type="error"
           showIcon
           style={{ marginBottom: 16 }}
-          message="此操作会清空当前工作区的配置，且无法撤销"
-          description="执行历史与通信日志不会被删除，但设备、插件、Skill、测试用例（含流程图）、执行计划、仪表盘会被全部移除。"
+          message={t('project.clearWarn')}
+          description={t('project.newWarn')}
         />
         <Checkbox
           checked={keepModels}
           onChange={(e) => setKeepModels(e.target.checked)}
-        >
-          保留 AI 模型配置（推荐）
-        </Checkbox>
+        >{t('label.keepModels')}</Checkbox>
         <div style={{ marginTop: 8 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            AI 模型的接口地址与 API Key 属于环境配置而非项目数据，
-            取消勾选后需要重新填写才能继续使用 AI 功能。
+            AI {t('project.envNote')}
+            {t('skill.disableNote')}
           </Text>
         </div>
         <div style={{ marginTop: 12 }}>
-          <Text strong>将被清空：</Text>
+          <Text strong>{t('label.willBeClearedColon')}</Text>
           <div style={{ marginTop: 6 }}>
             {PROJECT_SECTIONS.filter((s) => s.key !== 'models').map((s) => (
               <Tag key={s.key} color="red">{s.label}</Tag>
             ))}
-            {!keepModels && <Tag color="red">模型配置</Tag>}
+            {!keepModels && <Tag color="red">{t('page.modelConfig')}</Tag>}
           </div>
         </div>
       </Modal>
@@ -1102,8 +1092,8 @@ export default function ProjectManager() {
         <Form form={renameForm} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
             name="new_name"
-            label="新名称"
-            rules={[{ required: true, message: '请输入新名称' }]}
+            label={t('label.newName')}
+            rules={[{ required: true, message: t('msg.enterNewName') }]}
           >
             <Input autoFocus />
           </Form.Item>
