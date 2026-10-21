@@ -15,7 +15,6 @@ POST   /api/dashboards/{id}/set-default - Mark as the default dashboard
 POST   /api/dashboards/import         - Import a dashboard from JSON
 """
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,6 +22,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.timeutils import parse_iso_utc
 from app.models.models import Dashboard, Device, TestExecution, TestCase
 from app.schemas.schemas import DashboardCreate, DashboardUpdate
 from app.services.trend_service import collect_parsed_series, summarise_judgement
@@ -165,9 +165,12 @@ async def dashboard_snapshot(
     """
     since_dt = None
     if since:
-        try:
-            since_dt = datetime.fromisoformat(since)
-        except ValueError:
+        # ``parse_iso_utc`` normalises the trailing ``Z`` that
+        # ``Date.toISOString()`` produces. Plain ``datetime.fromisoformat()``
+        # rejects that suffix on Python < 3.11, so every dashboard that had a
+        # 起始时间 set got a 400 and silently rendered no data at all.
+        since_dt = parse_iso_utc(since)
+        if since_dt is None:
             raise HTTPException(
                 status_code=400,
                 detail={

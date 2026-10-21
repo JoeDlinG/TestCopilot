@@ -19,6 +19,7 @@ import type {
   CustomDashboard, DashboardWidget, DashboardLayoutItem, DashboardSnapshot, WidgetType,
 } from '../types'
 import { useI18n } from '../i18n'
+import { handleApiError } from '../services/apiHelper'
 import { WIDGET_LIST, newWidget, STATUS_COLOR } from '../components/dashboard/registry'
 import { WidgetBody } from '../components/dashboard/widgets'
 import WidgetConfigDrawer from '../components/dashboard/WidgetConfigDrawer'
@@ -96,8 +97,11 @@ export default function CustomDashboard() {
         d?.data_source?.since || null,
       )
       setSnapshot(res.data?.data || null)
-    } catch {
-      /* keep last snapshot on transient errors */
+    } catch (e) {
+      // Keep the last snapshot on transient errors, but DO surface the failure:
+      // silently swallowing it left every widget showing "pick a test case"
+      // while the real cause was a rejected request (see issue: `since` 400).
+      handleApiError(e, t('msg.loadSnapshotFailed'))
     }
   }, [])
 

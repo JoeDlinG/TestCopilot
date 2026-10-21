@@ -60,6 +60,7 @@ export const EXTRA6: Record<string, [string, string]> = {
   '确定删除该模型？': ['msg.deleteModel', 'Delete this model?'],
   下载功能开发中: ['msg.downloadTodo', 'Download is not implemented yet'],
   加载仪表盘失败: ['msg.loadDashboardsFailed', 'Failed to load dashboards'],
+  读取看板数据失败: ['msg.loadSnapshotFailed', 'Failed to load dashboard data'],
   未绑定测试用例: ['label.noCaseBound', 'No test case bound'],
   '请先选择或粘贴': ['msg.pickOrPaste', 'Pick a file or paste the content first'],
   '已存在则覆盖。': ['label.overwriteExisting', 'Existing entries are overwritten.'],

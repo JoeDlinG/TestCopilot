@@ -126,6 +126,22 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.2.1 — 修复自定义仪表盘不显示数据：`since` 参数 400（2026-10-21，分支 `feature/flow-enhancements`）
+
+- [x] **根因定位**：`dashboards.py` 用裸 `datetime.fromisoformat(since)`，而前端起始时间由
+      `Date.toISOString()` 写入、带 `Z` 后缀；Python 3.8 的 `fromisoformat` 不支持 `Z`
+      （3.11 才支持）→ **设置过起始时间的仪表盘 snapshot 恒定 400**；
+      前端 `catch` 又静默吞错 → 组件一律显示「请先选择测试用例」，数据其实一直都在
+- [x] **后端修复**：改用项目已有的 `app.core.timeutils.parse_iso_utc()`
+      （`Z` 归一为 `+00:00`，兼容 naive / 带偏移），与 `logs.py` 保持一致；
+      非法输入仍返回 400，不静默忽略
+- [x] **前端修复**：`loadSnapshot` 失败改用 `handleApiError` 弹出提示，不再静默吞掉
+- [x] **新增回归测试 `Test/test_dash_since.py`**：10/10 通过（`Z`/naive/`+00:00`/非UTC偏移/
+      仅日期 均接受；非法值仍 400；未来时间过滤为 0 条；两个既有仪表盘均 200）
+- [x] **无头浏览器实测**：4 个组件全部出数（byte1 PASS·2·采样20 / 趋势曲线 / 判定汇总
+      byte0~byte2 全 PASS / 执行统计 36·26·10·72.2%）；控制台 400 消失，Empty 提示 0 个
+- [x] 回归：`Test/` 7 个全 PASS；端点 **16/16**；用例 89 条；DEV-002 / DEV-004 仍 connected
+
 ### v2.2.0 — 英文界面补全：逐页治理 + 复查（2026-10-19，分支 `feature/flow-enhancements`）
 
 - [x] **界面中文（排除注释）858 → 0**；接入 i18n 的页面 2/16 → **16/16**
