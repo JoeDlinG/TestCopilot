@@ -4,6 +4,85 @@
 
 ---
 
+## 2026-10-22: 品牌标识、帮助中心、首次引导 + Issue #25 / #26（v2.3.0）
+
+### 1. 替换 Logo
+
+源文件 `logo/TestCopilot logo设计.jpeg`（2048×2048，白底）。直接拿来用有两个坑：
+
+1. **白底不能整体透明化** —— 剪贴板内部本身就是白色，全局「白→透明」会把它镂空。
+   改为**从画布边缘做洪水填充**，只去掉与外界连通的白。
+2. **图标不是一个干净的矩形** —— 勾的笔画伸进了文字的 x 范围，纸飞机三角形又压着字母 T，
+   所以按 x 裁切不是切掉勾就是留下半个 T。改用**连通域分析**：剔掉 JPEG 噪点（<8px）
+   与字母字形，剩下的（剪贴板 + 勾 + 纸飞机）才是图标。
+
+产物落在 `frontend/public/`：`logo-full.png`（760×223 字标）、`logo-mark.png`（图标，折叠态用）、
+`logo-32/64/180.png`、`apple-touch-icon.png`。接入位置：侧栏品牌位（展开用字标、折叠用图标）、
+浏览器标签图标与标题、关于弹窗。顺带把界面上的品牌文案统一为 TestCopilot。
+
+> 备注：JS 里 `split()` 在 PixelAccess 写入后返回的是旧 alpha 通道，导致裁切框一直是全幅。
+> 最终改用 `ImageChops.multiply` 构造显式掩膜解决。
+
+### 2. 帮助菜单（含帮助文件）
+
+顶栏新增**帮助**菜单，六个入口：重新观看导航 / 使用文档 / 快捷键 / 检查更新 / 问题反馈 / 关于。
+
+- **帮助文档走后端**（`GET /api/help/docs`），前端不内嵌副本 —— `docs/` 始终是唯一数据源，
+  不会因为改了手册忘了同步而漂移。只暴露白名单三篇（使用手册 + 两个插件手册），
+  内部的 PRD / 架构 / DB 设计文档不外露。
+- markdown 表格：`react-markdown` 不认 GFM 管道表，`remark-gfm` 在本机 node_modules 下装不上，
+  改为**零依赖方案** —— 把文档切成文本段与表格块，表格交给 AntD `Table` 渲染（手册里 29 张表全部正常）。
+
+### 3. 首次运行引导
+
+用 AntD `Tour`（5.29 自带，省掉自绘遮罩）。8 步走完三区：左侧配置 → 顶栏观察 → 搜索/帮助 → 右侧输出。
+
+- 只跑一次：`testcopilot.onboarding.v1` 写在 localStorage，**跳过和走完都会记标记**
+- 帮助 ▸ 重新观看导航 可随时重放（不影响标记）
+- 各区域用 `data-tour` 锚点（logo / nav / topmenus / search / help / dock）
+
+### 4. Issue #25 —— 远程更新服务
+
+| 子任务 | 落地 |
+|---|---|
+| U1 版本来源 | `version.json` 清单 或 `gh:owner/repo`（GitHub Releases），`UPDATE_FEED_URL` / `SystemConfig` 配置 |
+| U2 比对与时机 | 语义化比较（release > 同号 pre-release）；启动检查 + 手动检查；网络异常静默降级 |
+| U3 提示 UI | 启动用**非阻塞 notification**，手动用对话框；带「立即更新 / 稍后 / 不再提示此版本」 |
+| U4 下载校验 | 后台线程流式下载到 `tempfile.gettempdir()`（不用 `/tmp`），**必须 SHA256 校验**，不过就删文件 |
+| U5 应用更新 | 新增 `update_helper.py`（detached）：等父进程退出 → 备份 → 替换（NSIS `/S` 或 zip 目录交换）→ 重启 → 健康检查 → 失败回滚 |
+| U6 回滚 | 更新后 60s 内轮询 `/api/health`，不通则回滚备份并重启 |
+| U7 设置项 | 自动检查（默认开）、自动下载（默认关）、更新源、已忽略版本 |
+
+**安全设计**：客户端不传 URL、不传文件路径。下载由服务端选定资源，安装只接受服务端
+为该次已校验下载签发的 token —— 伪造 token 一律 400。且**必须两次确认**：下载一次、安装一次。
+
+### 5. Issue #26 —— 问题提交功能
+
+| 子任务 | 落地 |
+|---|---|
+| F1 存储 | 新增 `feedback_reports` 表（kind / signature / occurrences / github_issue_number / status…） |
+| F2 接收 | `POST /api/feedback`，含限流（60s / 20 次） |
+| F3 转发去重 | GitHub Token 走环境变量（**绝不下发前端**）；崩溃按 `hash(类型+归一化栈顶N帧+版本)` 去重，新签名开 Issue，已知签名只累加次数 |
+| F4 管理视图 | `GET /api/feedback` 列表 |
+| F5 后端捕获 | 补**通用 FastAPI 异常处理器**（顺带关闭 #13 的缺口）+ `sys.excepthook` + `threading.excepthook` → 落 spool，下次启动补发 |
+| F6 前端捕获 | `ErrorBoundary`（只包路由页，外壳仍在）+ `window.onerror` + `unhandledrejection`，带去重与自上报循环防护 |
+| F7 异常退出检测 | `testcopilot_lastrun.json` 运行标记，干净退出置 true，下次启动发现 false → 记录「上次异常退出」并附日志尾部 |
+| F8–F10 UI | 帮助 ▸ 问题反馈；表单含类型/标题/描述/邮箱(可选)/附日志/崩溃自动上报开关 |
+| F11 脱敏 | API Key、Token、密码、Bearer、JWT、用户主目录路径全部剔除 |
+| F12 离线队列 | 无 Token 或转发失败 → `status=pending`，下次启动 `retry_pending` 补发 |
+
+### 验证
+
+- 新增 `Test/test_update_service.py` **10 项全 PASS**：版本比较 7 例、无源降级、检测、平台选包、
+  下载 + SHA256 一致、伪造 token 被拒 400、**校验失败即删文件**、忽略版本、helper dry-run 不改文件
+- 新增 `Test/test_feedback.py` **10 项全 PASS**：想法提交、**密钥被剔除**、重复崩溃合并为一条且 occ=2、
+  关闭自动上报后崩溃被抑制而手动反馈仍可用、空标题 400
+- 浏览器实测：帮助菜单 6 项；手册 29 张表渲染正常；引导首次弹出、二次加载不再出现；
+  更新提示「发现新版本 — 99.9.0」+ 对话框；手动反馈与崩溃自动上报均 POST 到 `/api/feedback` 并入库
+- `Test/` 7 个脚本全 PASS；端点 16/16；`tsc` + `build` 通过
+
+---
+
 ## 2026-10-21: 修复自定义仪表盘不显示数据 —— `since` 参数 400（v2.2.1）
 
 ### 现象

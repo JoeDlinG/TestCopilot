@@ -22,7 +22,7 @@ def _bundled_dir(name: str) -> str:
 
 class Settings(BaseSettings):
     APP_NAME: str = "AITestLab"
-    APP_VERSION: str = "2.2.1"
+    APP_VERSION: str = "2.3.0"
     DEBUG: bool = True
 
     # Database
@@ -44,6 +44,20 @@ class Settings(BaseSettings):
 
     # Built frontend (served by the backend in standalone/packaged mode)
     STATIC_DIR: str = _bundled_dir("static")
+
+    # Markdown manuals shown by the in-app 帮助 centre. Bundled next to the
+    # static frontend; the API also probes ./docs and ../docs for a repo run.
+    HELP_DIR: str = _bundled_dir("docs")
+
+    # Remote update feed (issue #25). Either a URL to a version.json manifest or
+    # "gh:owner/repo" to read GitHub Releases. Empty disables update checks.
+    UPDATE_FEED_URL: str = ""
+
+    # Feedback centre (issue #26). The token is read **server side only** and is
+    # never sent to the browser. Without a token, reports are stored locally and
+    # marked pending.
+    GITHUB_TOKEN: str = ""
+    GITHUB_REPO: str = "JoeDlinG/TestCopilot"
 
     # AI Model defaults
     DEFAULT_AI_PROVIDER: str = "openai"

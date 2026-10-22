@@ -126,6 +126,25 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.3.0 — Logo / 帮助中心 / 首次引导 + Issue #25 #26（2026-10-22，分支 `feature/flow-enhancements`）
+
+- [x] **替换 Logo**：白底用边缘洪水填充去除（保住剪贴板内部白）；图标靠**连通域**分离
+      （勾的笔画与字母 T 在 x 上交错，矩形裁切做不到）；产出 full/mark/32/64/180 + 触屏图标；
+      接入侧栏（展开字标·折叠图标）、标签图标、标题、关于页；品牌文案统一为 TestCopilot
+- [x] **帮助菜单**：重新观看导航 / 使用文档 / 快捷键 / 检查更新 / 问题反馈 / 关于
+- [x] **帮助文档走后端** `GET /api/help/docs`，`docs/` 为唯一数据源；只暴露白名单 3 篇；
+      markdown 表格用零依赖方案（文本段 + AntD Table），29 张表渲染正常
+- [x] **首次运行引导**：AntD Tour 8 步，只跑一次（跳过也记标记），帮助菜单可重放
+- [x] **#25 远程更新**：清单/GitHub 双来源；语义化比对；启动非阻塞提示 + 对话框；
+      后台下载 + **强制 SHA256 校验**；`update_helper.py` 备份→替换→重启→健康检查→回滚；
+      客户端不传 URL/路径，安装只认服务端签发的 token；**需两次确认**
+- [x] **#26 问题提交**：`feedback_reports` 表；通用异常处理器（顺带关 #13）+ excepthook；
+      崩溃按签名去重；前端 ErrorBoundary + onerror + unhandledrejection；异常退出标记；
+      反馈表单；自动脱敏；无 Token 时本地留存 + 下次启动补发
+- [x] 验证：新增 `Test/test_update_service.py`(10) 与 `Test/test_feedback.py`(10) 全 PASS；
+      浏览器实测 6 项功能；`Test/` 7 个全 PASS；端点 16/16；`tsc`+`build` 通过
+- [x] **Issue #20 已关闭**（其余验收项此前已交付）
+
 ### v2.2.1 — 修复自定义仪表盘不显示数据：`since` 参数 400（2026-10-21，分支 `feature/flow-enhancements`）
 
 - [x] **根因定位**：`dashboards.py` 用裸 `datetime.fromisoformat(since)`，而前端起始时间由

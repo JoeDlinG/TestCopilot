@@ -289,6 +289,31 @@ export const projectAPI = {
     api.post('/projects/new', { sections, keep_models: keepModels, confirm: true }),
 }
 
+export const feedbackAPI = {
+  submit: (data: any) => api.post('/feedback', data),
+  list: (limit = 50) => api.get('/feedback', { params: { limit } }),
+  getSettings: () => api.get('/feedback/settings'),
+  putSettings: (data: any) => api.put('/feedback/settings', data),
+}
+
+export const updateAPI = {
+  check: () => api.get('/update/check'),
+  status: () => api.get('/update/status'),
+  /** The server decides *what* to download; the client only says "go". */
+  download: () => api.post('/update/download', {}),
+  /** Only the token issued by a verified download can be applied. */
+  apply: (token: string) => api.post('/update/apply', { token }),
+  ignore: (version: string) => api.post('/update/ignore', { version }),
+  getSettings: () => api.get('/update/settings'),
+  putSettings: (data: any) => api.put('/update/settings', data),
+}
+
+export const helpAPI = {
+  /** Manuals bundled with the backend (``docs/*.md``), served as markdown. */
+  listDocs: () => api.get('/help/docs'),
+  getDoc: (id: string) => api.get(`/help/docs/${id}`),
+}
+
 export const PROJECT_SECTIONS = [
   { key: 'models', label: '模型配置' },
   { key: 'devices', label: '设备配置' },

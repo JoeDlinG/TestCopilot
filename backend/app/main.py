@@ -8,6 +8,7 @@ import asyncio
 import logging
 import tempfile
 import subprocess
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
@@ -20,7 +21,8 @@ from app.core.database import init_db
 from app.core.exceptions import AITestLabException
 from app.api import (
     devices, ai, testcases, executions, logs, reports, plugins,
-    plugin_editor, dashboards, websocket, plans, memory, projects,
+    plugin_editor, dashboards, websocket, plans, memory, projects, help as help_api,
+    update as update_api, feedback as feedback_api,
 )
 
 logging.basicConfig(
@@ -55,6 +57,14 @@ async def lifespan(app: FastAPI):
     install_program_logging()
     logger.info("Program logging installed (logs/program, 10MB rotation)")
 
+    # Crash capture is armed before anything else can throw (issue #26 / F5).
+    try:
+        from app.core.crash_trap import install_hooks
+
+        install_hooks()
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning(f"crash hooks not installed: {exc}")
+
     await init_db()
     _mark("database initialized")
 
@@ -75,10 +85,41 @@ async def lifespan(app: FastAPI):
         await plan_runner.reset_stale_runs(db)
     _mark("stale state reset")
 
+    # Feedback centre (issue #26): file crashes spooled by a previous run, note
+    # an abnormal exit, and flush reports that could not be forwarded earlier.
+    async with async_session() as db:
+        try:
+            from app.core.crash_trap import drain_spool, report_abnormal_exit
+
+            filed = await drain_spool(db)
+            abnormal = await report_abnormal_exit(db)
+            if filed or abnormal:
+                logger.info(
+                    f"feedback centre: {filed} spooled crash(es), abnormal_exit={abnormal}"
+                )
+        except Exception as exc:
+            logger.warning(f"feedback startup check failed: {exc}")
+        try:
+            from app.services.feedback_service import retry_pending
+
+            sent = await retry_pending(db)
+            if sent:
+                logger.info(f"feedback centre: forwarded {sent} queued report(s)")
+        except Exception as exc:
+            logger.warning(f"feedback flush failed: {exc}")
+    _mark("feedback centre ready")
+
     yield
 
-    # Shutdown
+    # Shutdown — mark the exit as clean so the next start can tell a restart
+    # apart from a crash.
     logger.info(f"Shutting down {settings.APP_NAME}")
+    try:
+        from app.core.crash_trap import mark_clean_exit
+
+        mark_clean_exit()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -111,6 +152,35 @@ async def aitestlab_exception_handler(request: Request, exc: AITestLabException)
     )
 
 
+# Catch-all handler (issue #13 / issue #26 F5). Until now only
+# AITestLabException was handled, so every other unhandled error escaped as a
+# bare traceback and neither the UI nor we ever learned about it.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    try:
+        from app.core.database import async_session
+        from app.services import feedback_service as svc
+
+        async with async_session() as db:
+            report = await svc.create_report(
+                db,
+                kind="crash",
+                title=f"[crash] {type(exc).__name__}: {exc}"[:200],
+                body=f"{request.method} {request.url.path}",
+                stack=traceback.format_exc(),
+                route=f"{request.method} {request.url.path}",
+                consent=True,
+                attach_logs=True,
+            )
+            await svc.forward_report(db, report)
+    except Exception:
+        pass  # reporting must never change the response
+    return JSONResponse(
+        status_code=500,
+        content={"code": 50000, "message": "服务器内部错误", "detail": str(exc)},
+    )
+
+
 # Register API routers
 app.include_router(devices.router)
 app.include_router(ai.router)
@@ -125,6 +195,9 @@ app.include_router(plugin_editor.router)
 app.include_router(dashboards.router)
 app.include_router(plans.plans_router)
 app.include_router(plans.runs_router)
+app.include_router(help_api.router)
+app.include_router(update_api.router)
+app.include_router(feedback_api.router)
 
 # Register WebSocket router
 app.include_router(websocket.router)

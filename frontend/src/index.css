@@ -42,6 +42,21 @@ body {
   letter-spacing: -0.5px;
 }
 
+/* 品牌标识（Issue: 替换 logo）。图片本身带透明通道，深浅主题下都能贴合底色。 */
+.logo-box {
+  padding: 0 8px;
+  border-radius: 6px;
+  outline-offset: 2px;
+}
+.logo-box:hover {
+  background: var(--app-surface-muted);
+}
+.logo-img {
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 .page-container {
   padding: 24px;
   max-width: 1400px;
@@ -154,3 +169,61 @@ body {
   background: var(--flow-handle-active);
   box-shadow: 0 0 0 2px var(--flow-selected);
 }
+
+/* ============ 帮助中心的 markdown 正文 ============ */
+/* react-markdown 只产出语义标签，表格/代码块等需要显式样式，
+   否则 47 KB 的使用手册会挤成一坨纯文本。 */
+.md-body {
+  font-size: 13px;
+  line-height: 1.72;
+  color: var(--app-fg);
+  word-wrap: break-word;
+}
+.md-body h1 { font-size: 22px; margin: 8px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--app-border); }
+.md-body h2 { font-size: 17px; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--app-border); }
+.md-body h3 { font-size: 14.5px; margin: 18px 0 8px; }
+.md-body h4 { font-size: 13.5px; margin: 14px 0 6px; }
+.md-body p { margin: 8px 0; }
+.md-body ul, .md-body ol { margin: 8px 0; padding-left: 22px; }
+.md-body li { margin: 3px 0; }
+.md-body a { color: var(--b-600, #2296c4); }
+.md-body code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+}
+.md-body pre {
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+.md-body pre code { border: 0; padding: 0; background: none; font-size: 12px; }
+.md-body blockquote {
+  margin: 10px 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--b-500, #2296c4);
+  background: var(--app-surface-muted);
+  color: var(--app-fg-muted);
+}
+.md-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--app-border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-body th { background: var(--app-surface-muted); font-weight: 600; white-space: nowrap; }
+.md-body hr { border: 0; border-top: 1px solid var(--app-border); margin: 20px 0; }
+.md-body img { max-width: 100%; }

@@ -512,6 +512,49 @@ class SystemConfig(Base):
 
 
 # ====================================================================== #
+# Feedback centre — crash reports and user feedback (issue #26)
+# ====================================================================== #
+class FeedbackReport(Base):
+    """One submitted report.
+
+    ``kind``
+        ``crash`` — captured automatically (never carries PII);
+        ``idea`` / ``issue`` — typed in by the user.
+
+    ``signature``
+        ``hash(type + normalised stack frames + version)``. Crashes are grouped
+        by it so a bug that fires a thousand times opens **one** GitHub issue
+        instead of a thousand.
+
+    ``status``
+        ``pending``   — queued locally (offline, or no token configured);
+        ``forwarded`` — an issue was opened;
+        ``deduped``   — matched a known signature, only the counter moved;
+        ``failed``    — forwarding errored; retried on the next startup.
+    """
+
+    __tablename__ = "feedback_reports"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("fb"))
+    kind = Column(String(20), nullable=False, default="issue")
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=True)
+    app_version = Column(String(40), nullable=True)
+    os = Column(String(160), nullable=True)
+    arch = Column(String(80), nullable=True)
+    route = Column(String(240), nullable=True)
+    stack = Column(Text, nullable=True)
+    log_tail = Column(Text, nullable=True)
+    signature = Column(String(80), nullable=True, index=True)
+    github_issue_number = Column(Integer, nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    consent = Column(Boolean, nullable=False, default=True)
+    occurrences = Column(Integer, nullable=False, default=1)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
+# ====================================================================== #
 # Execution manager — batch plans, plan items and batch runs
 # ====================================================================== #
 

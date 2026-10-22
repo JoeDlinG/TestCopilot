@@ -17,6 +17,7 @@ import { EXTRA9 } from './extraKeys9'
 import { EXTRA10 } from './extraKeys10'
 import { EXTRA11 } from './extraKeys11'
 import { EXTRA12 } from './extraKeys12'
+import { HELP_KEYS } from './extraKeys13'
 
 export const messages: Record<Locale, Record<string, string>> = {
   'zh-CN': {
@@ -302,7 +303,7 @@ export const messages: Record<Locale, Record<string, string>> = {
 
 // Bulk entries (table columns, tabs, statuses) live in ./extraKeys so the
 // hand-written catalogue above stays readable. Merged once at module load.
-for (const extra of [EXTRA, EXTRA2, EXTRA3, EXTRA4, EXTRA5, EXTRA6, EXTRA7, EXTRA8, EXTRA9, EXTRA10, EXTRA11, EXTRA12]) {
+for (const extra of [EXTRA, EXTRA2, EXTRA3, EXTRA4, EXTRA5, EXTRA6, EXTRA7, EXTRA8, EXTRA9, EXTRA10, EXTRA11, EXTRA12, HELP_KEYS]) {
   for (const [zh, [key, en]] of Object.entries(extra)) {
     messages['zh-CN'][key] = zh
     messages['en-US'][key] = en

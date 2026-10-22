@@ -95,6 +95,7 @@ export default function OutputDock() {
 
   return (
     <div
+      data-tour="dock"
       style={{
         width: isFull
           ? '100%'

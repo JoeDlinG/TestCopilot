@@ -180,7 +180,7 @@ export default function Dashboard() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 30, fontWeight: 700, letterSpacing: 1 }}>
-              AITestLab {t('dash.monitorTitle')}
+              TestCopilot {t('dash.monitorTitle')}
             </div>
             <div style={{ fontSize: 14, opacity: 0.6, marginTop: 4 }}>
             {t('dash.castNoPerm')} · {t('label.every')} {refreshSec} {t('dash.autoRefreshSuffix')}
@@ -303,7 +303,7 @@ export default function Dashboard() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 12, flexWrap: 'wrap' }}>
         <div>
           <Title level={3} style={{ margin: 0 }}>{t('page.dashboard')}</Title>
-          <p style={{ color: 'var(--app-fg-muted)', marginTop: 4 }}>AITestLab - AI {t('dash.tagline')}</p>
+          <p style={{ color: 'var(--app-fg-muted)', marginTop: 4 }}>TestCopilot - AI {t('dash.tagline')}</p>
         </div>
         <Tooltip title={t('dash.bigScreenHint')}>
           <Button type="primary" icon={<FullscreenOutlined />} onClick={enterBigScreen}>{t('btn.bigScreen')}</Button>

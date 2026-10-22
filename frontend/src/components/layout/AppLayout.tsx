@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Layout, Menu, Button, theme, message, Select, Tooltip, Dropdown, Space, Badge,
+  notification,
 } from 'antd'
 import {
   DashboardOutlined,
@@ -35,6 +36,13 @@ import { componentTokens } from '../../theme/tokens'
 import { NAV_GROUPS, TOP_MENUS } from '../../config/navigation'
 import OutputDock from './OutputDock'
 import CommandPalette from './CommandPalette'
+import HelpMenu from '../help/HelpMenu'
+import OnboardingTour, { hasSeenTour, markTourSeen } from '../help/OnboardingTour'
+import UpdateModal from '../update/UpdateModal'
+import FeedbackModal from '../feedback/FeedbackModal'
+import ErrorBoundary from '../feedback/ErrorBoundary'
+import { installCrashReporter } from '../feedback/crashReporter'
+import { updateAPI } from '../../services/api'
 
 const { Header, Sider, Content } = Layout
 
@@ -56,6 +64,9 @@ export default function AppLayout() {
   const { token } = theme.useToken()
   const [restarting, setRestarting] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
+  const [updateOpen, setUpdateOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const { t, locale, setLocale } = useI18n()
   const { mode, toggle: toggleTheme } = useTheme()
   const dockState = useOutputDock((s) => s.state)
@@ -75,6 +86,7 @@ export default function AppLayout() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
 
   // Global status bar data (cheap: one small request, refreshed slowly).
   const [connectedDevices, setConnectedDevices] = useState(0)
@@ -129,6 +141,68 @@ export default function AppLayout() {
   }, [isFlowRoute])
 
   const siderCollapsed = collapsed || immersive
+
+  // First launch: run the navigation tour exactly once (issue: 首次运行引导).
+  // The short delay lets the sider and the output dock finish laying out,
+  // otherwise the spotlight would point at a zero-sized element.
+  useEffect(() => {
+    if (hasSeenTour() || immersive) return
+    const id = window.setTimeout(() => setTourOpen(true), 900)
+    return () => window.clearTimeout(id)
+  }, [immersive])
+
+  const closeTour = () => {
+    setTourOpen(false)
+    markTourSeen()
+  }
+
+  // Crash capture (issue #26). ErrorBoundary covers render errors; this covers
+  // everything else (runtime errors, unhandled promise rejections).
+  useEffect(() => installCrashReporter(() => location.pathname), [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // Remote update (issue #25): check once on startup and offer it through a
+  // non-blocking notification — never a modal that hijacks the first paint.
+  // Silent on every failure: an update check must never get in the way.
+  useEffect(() => {
+    let cancelled = false
+    updateAPI
+      .check()
+      .then((res) => {
+        const d = res.data?.data
+        if (cancelled || !d?.available || d?.ignored || d?.auto_check === false) return
+        const key = 'update-available'
+        notification.open({
+          key,
+          message: `${t('update.available')} — ${d.latest}`,
+          description: `${t('update.current')} ${d.current}`,
+          duration: 0,
+          placement: 'bottomRight',
+          btn: (
+            <Space>
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => { notification.destroy(key); setUpdateOpen(true) }}
+              >
+                {t('update.now')}
+              </Button>
+              <Button
+                size="small"
+                type="text"
+                onClick={() => notification.destroy(key)}
+              >
+                {t('update.later')}
+              </Button>
+            </Space>
+          ),
+        })
+      })
+      .catch(() => { /* offline / no feed — stay quiet */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const selectedKey = '/' + location.pathname.split('/')[1]
 
   const menuItems = NAV_GROUPS.map((group) => ({
@@ -164,9 +238,34 @@ export default function AppLayout() {
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <span className="logo-text">{collapsed ? 'ATL' : 'AITestLab'}</span>
+          {/* Brand mark. The full lockup (icon + wordmark) replaces the old
+              text logo; the collapsed 56 px rail falls back to the icon-only
+              mark so nothing is squashed. Both are transparent PNGs. */}
+          <div
+            className="logo-box"
+            data-tour="logo"
+            role="button"
+            tabIndex={0}
+            title="TestCopilot"
+            onClick={() => navigate('/')}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate('/') }}
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <img
+              className="logo-img"
+              src={siderCollapsed ? '/logo-mark.png' : '/logo-full.png'}
+              alt="TestCopilot"
+              style={{
+                height: siderCollapsed ? 26 : 36,
+                width: siderCollapsed ? 26 : 'auto',
+                maxWidth: siderCollapsed ? 30 : 180,
+                objectFit: 'contain',
+              }}
+            />
+          </div>
         </div>
         <Menu
+          data-tour="nav"
           mode="inline"
           selectedKeys={[selectedKey]}
           items={menuItems}
@@ -208,33 +307,44 @@ export default function AppLayout() {
                 </Button>
               </Tooltip>
             )}
-            {TOP_MENUS.map((menu) => (
-              <Dropdown
-                key={menu.key}
-                menu={{
-                  items: menu.items.map((item) => ({
-                    key: item.key,
-                    icon: item.icon,
-                    label: t(item.labelKey),
-                  })),
-                  onClick: ({ key }) => navigate(key),
-                }}
-              >
-                <Button type="text">
-                  <Space size={4}>
-                    {t(menu.labelKey)}
-                    <DownOutlined style={{ fontSize: 10 }} />
-                  </Space>
-                </Button>
-              </Dropdown>
-            ))}
-            <Tooltip title="全局搜索 / 跳转（⌘K / Ctrl+K）">
-              <Button
-                type="text"
-                icon={<SearchOutlined />}
-                onClick={() => setPaletteOpen(true)}
+            <span data-tour="topmenus" style={{ display: 'inline-flex', gap: 4 }}>
+              {TOP_MENUS.map((menu) => (
+                <Dropdown
+                  key={menu.key}
+                  menu={{
+                    items: menu.items.map((item) => ({
+                      key: item.key,
+                      icon: item.icon,
+                      label: t(item.labelKey),
+                    })),
+                    onClick: ({ key }) => navigate(key),
+                  }}
+                >
+                  <Button type="text">
+                    <Space size={4}>
+                      {t(menu.labelKey)}
+                      <DownOutlined style={{ fontSize: 10 }} />
+                    </Space>
+                  </Button>
+                </Dropdown>
+              ))}
+            </span>
+            <span data-tour="search" style={{ display: 'inline-flex' }}>
+              <Tooltip title="全局搜索 / 跳转（⌘K / Ctrl+K）">
+                <Button
+                  type="text"
+                  icon={<SearchOutlined />}
+                  onClick={() => setPaletteOpen(true)}
+                />
+              </Tooltip>
+            </span>
+            <span data-tour="help" style={{ display: 'inline-flex' }}>
+              <HelpMenu
+                onStartTour={() => setTourOpen(true)}
+                onOpenUpdate={() => setUpdateOpen(true)}
+                onOpenFeedback={() => setFeedbackOpen(true)}
               />
-            </Tooltip>
+            </span>
           </Space>
 
           <Space size={8}>
@@ -283,17 +393,29 @@ export default function AppLayout() {
           <span>
             <PlayCircleOutlined /> {t('status.running')}: {runningCount}
           </span>
-          <span style={{ marginLeft: 'auto', opacity: 0.6 }}>AITestLab</span>
+          <span style={{ marginLeft: 'auto', opacity: 0.6 }}>TestCopilot</span>
         </div>
 
         <Content style={{ display: 'flex', minHeight: 0, minWidth: 0, background: token.colorBgLayout }}>
           {/* NOTE: no `page-container` class here — pages apply it themselves,
               and doubling it would double the padding and nest the max-width. */}
           <div style={{ flex: 1, minWidth: 0, overflow: 'auto', padding: 20 }}>
-            <Outlet />
+            {/* A crashing page must not take the shell with it: the sidebar and
+                the help menu stay usable, so the user can navigate away or file
+                a report (issue #26). */}
+            <ErrorBoundary route={location.pathname} onOpenFeedback={() => setFeedbackOpen(true)}>
+              <Outlet />
+            </ErrorBoundary>
           </div>
           {!dockIsRoute && !immersive && <OutputDock />}
           <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+          <OnboardingTour open={tourOpen} onClose={closeTour} />
+          <UpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} />
+          <FeedbackModal
+            open={feedbackOpen}
+            onClose={() => setFeedbackOpen(false)}
+            route={location.pathname}
+          />
         </Content>
       </Layout>
     </Layout>
