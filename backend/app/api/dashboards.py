@@ -15,7 +15,6 @@ POST   /api/dashboards/{id}/set-default - Mark as the default dashboard
 POST   /api/dashboards/import         - Import a dashboard from JSON
 """
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,6 +22,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.timeutils import parse_iso_utc
 from app.models.models import Dashboard, Device, TestExecution, TestCase
 from app.schemas.schemas import DashboardCreate, DashboardUpdate
 from app.services.trend_service import collect_parsed_series, summarise_judgement
@@ -150,12 +150,35 @@ async def list_dashboards(db: AsyncSession = Depends(get_db)):
 async def dashboard_snapshot(
     test_case_id: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
+    since: Optional[str] = Query(
+        None,
+        description="ISO-8601 lower bound for executions (dashboard 起始时间).",
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """One request that feeds every widget.
 
     Keeps a dashboard with N widgets at a single poll instead of N requests.
+
+    ``since`` lets the 执行统计 widget report a window instead of all history
+    ("清零" sets it to *now*, so the counters start from zero again).
     """
+    since_dt = None
+    if since:
+        # ``parse_iso_utc`` normalises the trailing ``Z`` that
+        # ``Date.toISOString()`` produces. Plain ``datetime.fromisoformat()``
+        # rejects that suffix on Python < 3.11, so every dashboard that had a
+        # 起始时间 set got a 400 and silently rendered no data at all.
+        since_dt = parse_iso_utc(since)
+        if since_dt is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": 40017,
+                    "message": "起始时间格式无效",
+                    "detail": f"Expected ISO-8601, got {since!r}",
+                },
+            )
     # ---- devices ----
     dev_rows = await db.execute(select(Device).order_by(Device.name.asc()))
     devices = list(dev_rows.scalars().all())
@@ -174,14 +197,17 @@ async def dashboard_snapshot(
     } for d in devices]
 
     # ---- executions ----
+    exec_query = select(
+        TestExecution.id, TestExecution.testcase_id, TestExecution.status,
+        TestExecution.result, TestExecution.total_steps,
+        TestExecution.passed_steps, TestExecution.failed_steps,
+        TestExecution.duration_ms, TestExecution.created_at,
+        TestExecution.completed_at, TestExecution.error_message,
+    )
+    if since_dt is not None:
+        exec_query = exec_query.where(TestExecution.created_at >= since_dt)
     ex_rows = await db.execute(
-        select(
-            TestExecution.id, TestExecution.testcase_id, TestExecution.status,
-            TestExecution.result, TestExecution.total_steps,
-            TestExecution.passed_steps, TestExecution.failed_steps,
-            TestExecution.duration_ms, TestExecution.created_at,
-            TestExecution.completed_at, TestExecution.error_message,
-        ).order_by(desc(TestExecution.created_at)).limit(200)
+        exec_query.order_by(desc(TestExecution.created_at)).limit(200)
     )
     execs = list(ex_rows.all())
     total_exec = len(execs)

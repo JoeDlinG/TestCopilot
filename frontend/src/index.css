@@ -22,24 +22,39 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--app-border);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--app-fg-subtle);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: var(--app-fg-muted);
 }
 
 .logo-text {
   font-size: 18px;
   font-weight: 700;
-  color: #1677ff;
+  color: var(--app-accent);
   letter-spacing: -0.5px;
+}
+
+/* 品牌标识（Issue: 替换 logo）。图片本身带透明通道，深浅主题下都能贴合底色。 */
+.logo-box {
+  padding: 0 8px;
+  border-radius: 6px;
+  outline-offset: 2px;
+}
+.logo-box:hover {
+  background: var(--app-surface-muted);
+}
+.logo-img {
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .page-container {
@@ -55,22 +70,160 @@ body {
 }
 
 /* ============ 自定义仪表盘 ============ */
-/* 大屏模式：antd 组件默认深色文字在深色投屏背景上不可读，整体提亮 */
+/* 大屏模式：antd 组件默认深色文字在深色投屏背景上不可读，整体提亮。
+   通过**提高选择器特异性**覆盖 antd 默认色，而不是 !important —— 后者会阻断
+   主题切换并让后续覆盖只能继续堆 !important（issue #20 验收项）。 */
 .big-dash .ant-typography {
   color: rgba(255, 255, 255, 0.9);
 }
-.big-dash .ant-statistic-title {
-  color: rgba(255, 255, 255, 0.7) !important;
+.big-dash .ant-statistic .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.7);
 }
-.big-dash .ant-statistic-content {
-  color: #fff !important;
+.big-dash .ant-statistic .ant-statistic-content {
+  color: var(--app-on-dark);
 }
-.big-dash .ant-progress-text {
-  color: rgba(255, 255, 255, 0.85) !important;
+.big-dash .ant-progress .ant-progress-text {
+  color: rgba(255, 255, 255, 0.85);
 }
-.big-dash .ant-empty-description {
-  color: rgba(255, 255, 255, 0.6) !important;
+.big-dash .ant-empty .ant-empty-description {
+  color: rgba(255, 255, 255, 0.6);
 }
 .big-dash .ant-progress-inner:not(.ant-progress-circle) {
   background: rgba(255, 255, 255, 0.14);
 }
+
+/* ============ 无障碍（issue #20 / #21 验收项） ============ */
+/* 可交互元素必须有可见焦点环，且仅在键盘聚焦时出现（不干扰鼠标操作） */
+:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* 移除鼠标点击时浏览器默认的焦点框，保留键盘的 :focus-visible */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* 尊重系统的"减弱动效"设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============ 流程图编辑器（issue #22） ============ */
+/* 运行中态：琥珀脉冲光晕 —— 与「循环」节点的静态琥珀描边走不同形态通道，
+   动态 vs 静止，因此不会被误读成同一件事。 */
+@keyframes flow-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}
+.flow-pulse {
+  animation: flow-pulse 1.4s ease-in-out infinite;
+}
+
+/* 节点面板拖拽块：hover 抬升 + 手型反馈 */
+.flow-palette-chip {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.flow-palette-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+.flow-palette-chip:active {
+  cursor: grabbing;
+}
+
+/* 连接点（Handle）：统一仪器蓝，hover / 选中时高亮。
+   用 .react-flow 前缀提高选择器权重以覆盖 reactflow 自带样式，无需 !important。 */
+.react-flow .react-flow__handle.flow-handle {
+  width: 9px;
+  height: 9px;
+  background: var(--flow-handle);
+  border: 1px solid var(--flow-handle);
+}
+.react-flow .react-flow__handle.flow-handle:hover,
+.react-flow .react-flow__node.selected .react-flow__handle.flow-handle {
+  background: var(--flow-handle-active);
+  border-color: var(--flow-handle-active);
+  box-shadow: 0 0 0 3px var(--flow-handle-halo);
+}
+.react-flow .react-flow__handle.flow-handle-muted {
+  opacity: 0.75;
+}
+
+/* 连接点：统一仪器蓝 + 轮廓线；选中时高亮。
+   选择器加 .react-flow 提升优先级，避免被 reactflow 自带样式覆盖。 */
+.react-flow .react-flow__handle {
+  background: var(--flow-handle-bg);
+  border: 1px solid var(--flow-handle-border);
+  width: 9px;
+  height: 9px;
+}
+.react-flow .react-flow__node.selected .react-flow__handle {
+  background: var(--flow-handle-active);
+  box-shadow: 0 0 0 2px var(--flow-selected);
+}
+
+/* ============ 帮助中心的 markdown 正文 ============ */
+/* react-markdown 只产出语义标签，表格/代码块等需要显式样式，
+   否则 47 KB 的使用手册会挤成一坨纯文本。 */
+.md-body {
+  font-size: 13px;
+  line-height: 1.72;
+  color: var(--app-fg);
+  word-wrap: break-word;
+}
+.md-body h1 { font-size: 22px; margin: 8px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--app-border); }
+.md-body h2 { font-size: 17px; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--app-border); }
+.md-body h3 { font-size: 14.5px; margin: 18px 0 8px; }
+.md-body h4 { font-size: 13.5px; margin: 14px 0 6px; }
+.md-body p { margin: 8px 0; }
+.md-body ul, .md-body ol { margin: 8px 0; padding-left: 22px; }
+.md-body li { margin: 3px 0; }
+.md-body a { color: var(--b-600, #2296c4); }
+.md-body code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+}
+.md-body pre {
+  background: var(--app-surface-muted);
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+.md-body pre code { border: 0; padding: 0; background: none; font-size: 12px; }
+.md-body blockquote {
+  margin: 10px 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--b-500, #2296c4);
+  background: var(--app-surface-muted);
+  color: var(--app-fg-muted);
+}
+.md-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+.md-body th, .md-body td {
+  border: 1px solid var(--app-border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-body th { background: var(--app-surface-muted); font-weight: 600; white-space: nowrap; }
+.md-body hr { border: 0; border-top: 1px solid var(--app-border); margin: 20px 0; }
+.md-body img { max-width: 100%; }

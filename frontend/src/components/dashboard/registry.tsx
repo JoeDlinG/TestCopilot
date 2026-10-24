@@ -109,14 +109,14 @@ export function newWidget(type: WidgetType): DashboardWidget {
 
 /** judgment colours — FAIL is a *judgement result*, not a system alarm. */
 export const STATUS_COLOR: Record<string, string> = {
-  ok: '#52c41a',
-  fail: '#ff4d4f',
-  unknown: '#8c8c8c',
-  error: '#fa8c16',
-  passed: '#52c41a',
-  failed: '#ff4d4f',
-  connected: '#52c41a',
-  disconnected: '#8c8c8c',
+  ok: 'var(--app-pass)',
+  fail: 'var(--app-fail)',
+  unknown: 'var(--app-fg-subtle)',
+  error: 'var(--app-warn)',
+  passed: 'var(--app-pass)',
+  failed: 'var(--app-fail)',
+  connected: 'var(--app-pass)',
+  disconnected: 'var(--app-fg-subtle)',
 }
 
 export const STATUS_LABEL: Record<string, string> = {

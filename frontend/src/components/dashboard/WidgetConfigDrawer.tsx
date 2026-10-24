@@ -39,6 +39,7 @@ export default function WidgetConfigDrawer({
         </Form.Item>
 
         {widget.type === 'parsed_value' && (
+          <>
           <Form.Item
             label="解析字段"
             extra="来自该用例步骤的结果解析配置；需要先在顶部数据源选中用例"
@@ -58,6 +59,25 @@ export default function WidgetConfigDrawer({
               />
             )}
           </Form.Item>
+          {/* 限值用琥珀显示（红色留给 FAIL 判定），见 Issue 反馈 */}
+          <Form.Item label="限值下限（可选）"
+            extra="卡片上以琥珀色标出，超出范围属「需注意」，不等同于 FAIL">
+            <InputNumber
+              value={widget.config?.min_value ?? undefined}
+              onChange={(v) => setCfg({ min_value: v })}
+              style={{ width: '100%' }}
+              placeholder="例如 4.5"
+            />
+          </Form.Item>
+          <Form.Item label="限值上限（可选）">
+            <InputNumber
+              value={widget.config?.max_value ?? undefined}
+              onChange={(v) => setCfg({ max_value: v })}
+              style={{ width: '100%' }}
+              placeholder="例如 5.5"
+            />
+          </Form.Item>
+          </>
         )}
 
         {widget.type === 'trend_chart' && (
@@ -87,20 +107,21 @@ export default function WidgetConfigDrawer({
                 onChange={(v) => setCfg({ show_fail_dots: v })}
               />
             </Form.Item>
-            <Form.Item label="参考下限（可选）">
+            {/* 限值线走琥珀色：红色专属于 FAIL，用来画阈值会让人误读 */}
+            <Form.Item label="限值下限（可选）">
               <InputNumber
                 value={widget.config?.min_value ?? undefined}
                 onChange={(v) => setCfg({ min_value: v })}
                 style={{ width: '100%' }}
-                placeholder="画一条下限参考线"
+                placeholder="画一条琥珀色下限线"
               />
             </Form.Item>
-            <Form.Item label="参考上限（可选）">
+            <Form.Item label="限值上限（可选）">
               <InputNumber
                 value={widget.config?.max_value ?? undefined}
                 onChange={(v) => setCfg({ max_value: v })}
                 style={{ width: '100%' }}
-                placeholder="画一条上限参考线"
+                placeholder="画一条琥珀色上限线"
               />
             </Form.Item>
           </>

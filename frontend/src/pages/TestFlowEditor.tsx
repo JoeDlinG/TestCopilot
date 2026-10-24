@@ -29,10 +29,14 @@ import {
   DeleteOutlined, DatabaseOutlined, ImportOutlined, ExportOutlined,
   CopyOutlined, SnippetsOutlined, DiffOutlined, ClockCircleOutlined,
   FullscreenOutlined, FullscreenExitOutlined,
+  // Native undo/redo: 返回 and 撤销 both used ArrowLeftOutlined, and redo was
+  // that same arrow mirrored horizontally. Both now have their own glyph.
+  UndoOutlined, RedoOutlined, StopOutlined,
 } from '@ant-design/icons'
 import { testCaseAPI, deviceAPI } from '../services/api'
 import { extractData, extractItems, handleApiError, _errorMessage } from '../services/apiHelper'
 import type { TestCase } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -45,96 +49,203 @@ interface FlowNode extends Node {
 // Custom node components
 // ---------------------------------------------------------------------------
 
+/**
+ * Node type encoding (issue #22, 方案 A).
+ *
+ * Every type is distinguished by **shape / icon / fill mode** — never by a
+ * dedicated hue. Amber is the single exception and is reserved for 循环, whose
+ * iteration boundary is the thing engineers most need to spot.
+ *
+ *   开始   描边空心        初始化 低饱和蓝底     操作   石墨实心
+ *   判断   菱形（形状编码） 循环   琥珀描边+左色条  延时   虚线边框
+ *   结束   弱化深底
+ *
+ * Colours come from CSS variables emitted from ``src/theme/tokens.ts``, so the
+ * whole canvas follows the light/dark switch with no hard-coded hex here.
+ */
+type NodeKind = 'outline' | 'tint' | 'solid' | 'diamond' | 'loop' | 'dashed' | 'dim'
+
+const NODE_BASE: React.CSSProperties = {
+  padding: '10px 18px',
+  // The old start/end pills used 20px; the system caps radii at 6px.
+  borderRadius: 6,
+  fontWeight: 600,
+  fontSize: 12,
+  minWidth: 140,
+  textAlign: 'center',
+  wordBreak: 'break-word',
+}
+
+function nodeSurface(kind: NodeKind): React.CSSProperties {
+  const v = (name: string) => `var(--flow-node-${name})`
+  switch (kind) {
+    case 'outline': // start — deep Morandi blue
+      return {
+        background: v('start-bg'), color: v('start-fg'),
+        border: `1px solid ${v('start-border')}`,
+      }
+    case 'tint': // init — blue grey
+      return {
+        background: v('init-bg'), color: v('init-fg'),
+        border: `1px solid ${v('init-border')}`,
+      }
+    case 'solid': // action — graphite (deliberately not near-black)
+      return {
+        background: v('action-bg'), color: v('action-fg'),
+        border: `1px solid ${v('action-border')}`,
+      }
+    case 'diamond': // condition — instrument blue (lighter)
+      return {
+        background: v('cond-bg'), color: v('cond-fg'),
+        border: `1px solid ${v('cond-border')}`,
+      }
+    case 'loop': // loop — light amber fill + dark amber text + 3px left bar
+      return {
+        background: v('loop-bg'), color: v('loop-fg'),
+        border: `1px solid ${v('loop-border')}`,
+        borderLeft: `3px solid ${v('loop-bar')}`,
+      }
+    case 'dashed': // delay — mid grey + dashed border
+      return {
+        background: v('delay-bg'), color: v('delay-fg'),
+        border: `1px dashed ${v('delay-border')}`,
+      }
+    case 'dim': // end — dark grey (never red: red belongs to FAIL/ERROR)
+      return {
+        background: v('end-bg'), color: v('end-fg'),
+        border: `1px solid ${v('end-border')}`,
+      }
+    default:
+      return { background: v('action-bg'), color: v('action-fg') }
+  }
+}
+
+/**
+ * Runtime state is a *separate layer* from node type (issue #22).
+ *
+ * - 运行中 = amber **pulsing halo** + spinning corner badge → dynamic
+ * - 失败   = red ring → static
+ *
+ * Because it is a halo rather than a fill, it never competes with the static
+ * amber border of a 循环 node.
+ */
+function NodeRuntimeRing({ data, children }: { data: any; children: React.ReactNode }) {
+  const state = data?.runtimeState
+  if (!state) return <>{children}</>
+  const color = state === 'failed' ? 'var(--flow-failed)' : 'var(--flow-running)'
+  return (
+    <div style={{ position: 'relative' }}>
+      {children}
+      <span
+        className={state === 'running' ? 'flow-pulse' : undefined}
+        style={{
+          position: 'absolute', inset: -5, borderRadius: 8,
+          boxShadow: `0 0 0 2px ${color}`, pointerEvents: 'none',
+        }}
+      />
+      {state === 'running' && (
+        <SyncOutlined
+          spin
+          style={{
+            position: 'absolute', top: -9, right: -9, fontSize: 13, color,
+            background: 'var(--flow-node-solid-bg)', borderRadius: '50%', padding: 2,
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
 function StartNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '8px 20px', borderRadius: 20,
-      background: '#52c41a', color: '#fff', fontWeight: 600,
-      fontSize: 13, minWidth: 100, textAlign: 'center', border: '2px solid #389e0d',
-    }}>
-      {data.label}
-      <Handle type="source" position={Position.Bottom} style={{ background: '#389e0d' }} />
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('outline'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+        <PlayCircleOutlined style={{ fontSize: 14 }} />
+        {data.label}
+        <Handle type="source" position={Position.Bottom} />
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function EndNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '8px 20px', borderRadius: 20,
-      background: '#ff4d4f', color: '#fff', fontWeight: 600,
-      fontSize: 13, minWidth: 100, textAlign: 'center', border: '2px solid #cf1322',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#cf1322' }} />
-      {data.label}
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('dim'), display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+        <Handle type="target" position={Position.Top} />
+        <StopOutlined style={{ fontSize: 14 }} />
+        {data.label}
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function ActionNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: '#1677ff', color: '#fff', fontWeight: 500,
-      fontSize: 12, minWidth: 140, textAlign: 'center',
-      border: '2px solid #0958d9', wordBreak: 'break-word',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: '#0958d9' }} />
-      {data.label}
-      <NodeIoBadges data={data} />
-      <Handle type="source" position={Position.Bottom} style={{ background: '#0958d9' }} />
-    </div>
+    <NodeRuntimeRing data={data}>
+      <div style={{ ...NODE_BASE, ...nodeSurface('solid') }}>
+        <Handle type="target" position={Position.Top} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+          <ThunderboltOutlined style={{ fontSize: 14 }} />
+          {data.label}
+        </div>
+        <NodeIoBadges data={data} />
+        <Handle type="source" position={Position.Bottom} />
+      </div>
+    </NodeRuntimeRing>
   )
 }
 
 function ConditionNode({ data, selected }: NodeProps) {
+  // 判断 is encoded purely by shape: the diamond carries no hue at all, so it
+  // remains unambiguous in a greyscale screenshot.
   return (
-    <div style={{
-      width: 140, height: 70, position: 'relative',
-    }}>
-      {/* Diamond shape */}
-      <svg width="140" height="70" style={{ position: 'absolute', top: 0, left: 0 }}>
-        <polygon
-          points="70,2 138,35 70,68 2,35"
-          fill={selected ? '#faad14' : '#ffc53d'}
-          stroke="#d48806" strokeWidth="2"
-        />
-      </svg>
-      <div style={{
-        position: 'relative', zIndex: 2, width: 140, height: 70,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, fontWeight: 600, color: '#333', textAlign: 'center',
-        padding: '0 30px', lineHeight: 1.3,
-      }}>
-        {data.label}
+    <NodeRuntimeRing data={data}>
+      <div style={{ width: 140, height: 70, position: 'relative' }}>
+        <svg width="140" height="70" style={{ position: 'absolute', top: 0, left: 0 }}>
+          <polygon
+            points="70,2 138,35 70,68 2,35"
+            fill="var(--flow-node-cond-bg)"
+            stroke="var(--flow-node-cond-border)"
+            strokeWidth={selected ? 2 : 1}
+          />
+        </svg>
+        <div style={{
+          position: 'relative', zIndex: 2, width: 140, height: 70,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 600, color: 'var(--flow-node-cond-fg)',
+          textAlign: 'center', padding: '0 30px', lineHeight: 1.3,
+        }}>
+          {data.label}
+        </div>
+        <Handle type="target" position={Position.Top}
+          style={{ top: 0, left: '50%' }} />
+        {/* True / false exits differ by lightness only — never green/red. */}
+        <Handle type="source" position={Position.Bottom} id="s-true"
+          style={{ background: 'var(--flow-handle-true)', bottom: -2, left: '30%' }} />
+        <Handle type="source" position={Position.Bottom} id="s-false"
+          style={{ background: 'var(--flow-handle-false)', bottom: -2, left: '70%' }} />
       </div>
-      <Handle type="target" position={Position.Top}
-        style={{ background: '#d48806', top: 0, left: '50%' }} />
-      <Handle type="source" position={Position.Bottom} id="s-true"
-        style={{ background: '#52c41a', bottom: -2, left: '30%' }} />
-      <Handle type="source" position={Position.Bottom} id="s-false"
-        style={{ background: '#ff4d4f', bottom: -2, left: '70%' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
-function LoopNode({ data, selected }: NodeProps) {
+function LoopNode({ data }: NodeProps) {
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#722ed1' : '#9254de',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #531dab',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <SyncOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#531dab' }} />
-      <div>
-        {data.label}
-        <NodeIoBadges data={data} />
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('loop'),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <SyncOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} />
+        <div>
+          {data.label}
+          <NodeIoBadges data={data} />
+        </div>
+        <Handle type="source" position={Position.Bottom} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#531dab' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -142,17 +253,15 @@ function LoopNode({ data, selected }: NodeProps) {
 function InitNode({ data, selected }: NodeProps) {
   const vars: any[] = (data as any)?.variables || []
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#08979c' : '#13c2c2',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #006d75',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <DatabaseOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#006d75' }} />
-      <div>
-        <div>{data.label}</div>
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('tint'), ...(selected ? { outline: '2px solid var(--flow-selected)' } : null),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <DatabaseOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} />
+        <div>
+          <div>{data.label}</div>
         {vars.length > 0 && (
           <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
             {vars.slice(0, 3).map((v: any, i: number) => (
@@ -161,10 +270,11 @@ function InitNode({ data, selected }: NodeProps) {
             {vars.length > 3 ? ` +${vars.length - 3}` : ''}
           </div>
         )}
-        <NodeIoBadges data={data} />
+          <NodeIoBadges data={data} />
+        </div>
+        <Handle type="source" position={Position.Bottom} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#006d75' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -172,24 +282,23 @@ function InitNode({ data, selected }: NodeProps) {
 function DelayNode({ data, selected }: NodeProps) {
   const ms = (data as any)?.duration
   return (
-    <div style={{
-      padding: '10px 18px', borderRadius: 6,
-      background: selected ? '#d46b08' : '#fa8c16',
-      color: '#fff', fontWeight: 600, fontSize: 12, minWidth: 140,
-      textAlign: 'center', border: '2px solid #ad4e00',
-      display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
-    }}>
-      <ClockCircleOutlined style={{ fontSize: 14 }} />
-      <Handle type="target" position={Position.Top} style={{ background: '#ad4e00' }} />
-      <div>
-        <div>{data.label}</div>
-        <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
-          延时 {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+    <NodeRuntimeRing data={data}>
+      <div style={{
+        ...NODE_BASE, ...nodeSurface('dashed'), ...(selected ? { outline: '2px solid var(--flow-selected)' } : null),
+        display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+      }}>
+        <ClockCircleOutlined style={{ fontSize: 14 }} />
+        <Handle type="target" position={Position.Top} />
+        <div>
+          <div>{data.label}</div>
+          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
+            t('node.delay') {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+          </div>
+          <NodeIoBadges data={data} />
         </div>
-        <NodeIoBadges data={data} />
+        <Handle type="source" position={Position.Bottom} />
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: '#ad4e00' }} />
-    </div>
+    </NodeRuntimeRing>
   )
 }
 
@@ -198,29 +307,31 @@ function DelayNode({ data, selected }: NodeProps) {
  * 让用户在画布上一眼看出哪些节点会产生可被后续引用的数据。
  */
 function NodeIoBadges({ data }: { data: any }) {
+  const { t } = useI18n()
   const inputs: any[] = data?.inputs || []
   const outputs: any[] = data?.outputs || []
   if (inputs.length === 0 && outputs.length === 0) return null
+  // A translucent white badge was invisible on the light surfaces (开始 / 初始化)
+  // and unusable in dark mode; the neutral is now derived from the canvas.
+  const badge: React.CSSProperties = {
+    fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 4,
+    background: 'var(--flow-badge-bg)', color: 'var(--flow-badge-fg)',
+    border: '1px solid var(--flow-badge-border)',
+  }
   return (
     <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 3 }}>
       {inputs.length > 0 && (
         <span
-          title={`输入参数：${inputs.map((i) => i?.name).join(', ')}`}
-          style={{
-            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
-            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
-          }}
+          title={`${t('label.inputsColon')}${inputs.map((i) => i?.name).join(', ')}`}
+          style={badge}
         >
           <ImportOutlined /> {inputs.length}
         </span>
       )}
       {outputs.length > 0 && (
         <span
-          title={`输出返回值：${outputs.map((o) => o?.name).join(', ')}`}
-          style={{
-            fontSize: 9, lineHeight: '14px', padding: '0 4px', borderRadius: 7,
-            background: 'rgba(255,255,255,0.28)', border: '1px solid rgba(255,255,255,0.5)',
-          }}
+          title={`${t('label.outputsColon')}${outputs.map((o) => o?.name).join(', ')}`}
+          style={badge}
         >
           <ExportOutlined /> {outputs.length}
         </span>
@@ -254,28 +365,41 @@ const nodeTypes = {
 interface PaletteItem {
   type: string
   label: string
-  color: string
+  /** Which surface encoding this type uses (see :func:`nodeSurface`). */
+  kind: NodeKind
   icon: React.ReactNode
 }
 
 /** 输入参数 / 输出返回值支持的值类型（与后端 flow_context.VALUE_TYPES 对应） */
-const VALUE_TYPE_OPTIONS = [
-  { label: '字符串', value: 'string' },
-  { label: '整数', value: 'int' },
-  { label: '浮点', value: 'float' },
-  { label: '布尔', value: 'bool' },
-  { label: '十六进制', value: 'hex' },
-  { label: '任意', value: 'any' },
+const VALUE_TYPE_OPTIONS = (t: (k: string) => string) => [
+  { label: t('dtype.string'), value: 'string' },
+  { label: t('dtype.int'), value: 'int' },
+  { label: t('dtype.float'), value: 'float' },
+  { label: t('dtype.bool'), value: 'bool' },
+  { label: t('dtype.hex'), value: 'hex' },
+  { label: t('dtype.any'), value: 'any' },
 ]
 
-const PALETTE: PaletteItem[] = [
-  { type: 'init', label: '初始化', color: '#13c2c2', icon: <DatabaseOutlined /> },
-  { type: 'action', label: '操作', color: '#1677ff', icon: <ThunderboltOutlined /> },
-  { type: 'condition', label: '判断', color: '#faad14', icon: <BranchesOutlined /> },
-  { type: 'loop', label: '循环', color: '#9254de', icon: <SyncOutlined /> },
-  { type: 'delay', label: '延时', color: '#fa8c16', icon: <ClockCircleOutlined /> },
-  { type: 'end', label: '结束', color: '#ff4d4f', icon: <PlayCircleOutlined /> },
+const PALETTE = (t: (k: string) => string): PaletteItem[] => [
+  { type: 'init', label: t('node.init'), kind: 'tint', icon: <DatabaseOutlined /> },
+  { type: 'action', label: t('col.actions'), kind: 'solid', icon: <ThunderboltOutlined /> },
+  { type: 'condition', label: t('node.condition'), kind: 'diamond', icon: <BranchesOutlined /> },
+  { type: 'loop', label: t('col.loop'), kind: 'loop', icon: <SyncOutlined /> },
+  { type: 'delay', label: t('node.delay'), kind: 'dashed', icon: <ClockCircleOutlined /> },
+  { type: 'end', label: t('node.end'), kind: 'dim', icon: <StopOutlined /> },
 ]
+
+/** Diamond palette chips read as a lozenge glyph rather than a filled block. */
+/**
+ * Palette chips use the exact same surface as the node they create, so what you
+ * drag out is what you see. 判断 was previously a `clip-path` diamond with a
+ * transparent fill — it read as "nothing there". The diamond is now a small
+ * rotated-square marker *inside* a filled chip, which keeps the border visible
+ * (clip-path would have cut it off) and the label legible.
+ */
+function paletteChipStyle(kind: NodeKind): React.CSSProperties {
+  return nodeSurface(kind)
+}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -308,6 +432,7 @@ function collectFlowVariables(nds: Node[], stopBeforeId?: string) {
 }
 
 export default function TestFlowEditor() {
+  const { t } = useI18n()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
@@ -347,7 +472,8 @@ export default function TestFlowEditor() {
           zIndex: 10,
           style: {
             ...(n.style || {}),
-            boxShadow: '0 0 0 3px rgba(22,119,255,0.45)',
+            // State layer: blue ring, independent of the node's type colour.
+            boxShadow: '0 0 0 3px var(--flow-selected)',
             borderRadius: 8,
           },
         }
@@ -360,9 +486,9 @@ export default function TestFlowEditor() {
           ...e,
           zIndex: 10,
           animated: true,
-          style: { ...(e.style || {}), stroke: '#1677ff', strokeWidth: 3 },
-          labelStyle: { ...(e.labelStyle || {}), fill: '#1677ff', fontWeight: 600 },
-          labelBgStyle: { ...(e.labelBgStyle || {}), fill: '#e6f4ff' },
+          style: { ...(e.style || {}), stroke: 'var(--b-500)', strokeWidth: 3 },
+          labelStyle: { ...(e.labelStyle || {}), fill: 'var(--b-500)', fontWeight: 600 },
+          labelBgStyle: { ...(e.labelBgStyle || {}), fill: 'var(--flow-canvas-bg)' },
         }
       : { ...e, style: { strokeWidth: 2, ...(e.style || {}) } }
   )), [edges])
@@ -463,12 +589,12 @@ export default function TestFlowEditor() {
       } catch { /* no flow yet — use default */ }
       // Default empty flow
       setNodes([
-        { id: 'start', type: 'start', data: { label: '开始' }, position: { x: 400, y: 0 } },
-        { id: 'end', type: 'end', data: { label: '结束' }, position: { x: 400, y: 400 } },
+        { id: 'start', type: 'start', data: { label: t('node.start') }, position: { x: 400, y: 0 } },
+        { id: 'end', type: 'end', data: { label: t('node.end') }, position: { x: 400, y: 400 } },
       ])
       setEdges([])
     } catch (err) {
-      handleApiError(err, '加载测试用例失败')
+      handleApiError(err, t('msg.loadCasesFailed'))
     } finally {
       setLoading(false)
     }
@@ -587,7 +713,7 @@ export default function TestFlowEditor() {
       return updated
     }))
     setEditOpen(false)
-    message.success('节点已更新')
+    message.success(t('msg.nodeUpdated'))
   }
 
   // ---- Delete selected nodes/edges ----
@@ -595,7 +721,7 @@ export default function TestFlowEditor() {
     const selectedNodes = nodes.filter((n) => n.selected && n.type !== 'start' && n.type !== 'end' && n.type !== 'input' && n.type !== 'output')
     const selectedEdges = edges.filter((e) => e.selected)
     if (selectedNodes.length === 0 && selectedEdges.length === 0) {
-      message.info('选中节点或边后按 Delete 删除（开始/结束节点不可删）')
+      message.info(t('flow.deleteHint'))
       return
     }
     // Save snapshot before mutation
@@ -604,7 +730,7 @@ export default function TestFlowEditor() {
     setNodes((nds) => nds.filter((n) => !nodeIds.has(n.id)))
     // FIXED: was e.selected (kept selected edges), now !e.selected (removes selected edges)
     setEdges((eds) => eds.filter((e) => !e.selected && !nodeIds.has(e.source) && !nodeIds.has(e.target)))
-    message.success(`已删除 ${selectedNodes.length} 节点, ${selectedEdges.length} 边`)
+    message.success(`${t('msg.deleted')} ${selectedNodes.length} t('label.node')}, ${selectedEdges.length} ${t('label.edge')}`)
   }, [nodes, edges, setNodes, setEdges])
 
   // ---- Drag-over from palette ----
@@ -624,8 +750,8 @@ export default function TestFlowEditor() {
       })
       const nid = newNodeId()
       const labelMap: Record<string, string> = {
-        init: '初始化', action: '新操作', condition: '判断条件',
-        loop: '循环', delay: '延时', end: '结束',
+        init: t('node.init'), action: t('label.newAction'), condition: t('label.judgeCondition'),
+        loop: t('col.loop'), delay: t('node.delay'), end: t('node.end'),
       }
       const defaultDuration = 1000
       const newNode = {
@@ -639,7 +765,7 @@ export default function TestFlowEditor() {
         },
         position,
         config: paletteType === 'condition'
-          ? { condition: 'True', true_label: '是', false_label: '否' }
+          ? { condition: 'True', true_label: t('common.yes'), false_label: t('common.no') }
           : paletteType === 'loop'
             ? { loop_type: 'for', variable: 'i', condition: '3' }
             : paletteType === 'delay'
@@ -648,7 +774,7 @@ export default function TestFlowEditor() {
       } as FlowNode
       pushHistory()
       setNodes((nds) => [...nds, newNode])
-      message.info(`已添加「${labelMap[paletteType] || paletteType}」节点`)
+        message.info(`${t('msg.addedPrefix')}${labelMap[paletteType] || paletteType}」${t('unit.nodeShort')}`)
     },
     [setNodes, pushHistory],
   )
@@ -672,18 +798,18 @@ export default function TestFlowEditor() {
         try {
           await testCaseAPI.createFlow(id, { nodes, edges })
         } catch (err2) {
-          handleApiError(err2, '保存失败')
+          handleApiError(err2, t('msg.saveFailed'))
           return false
         }
       } else {
         // 400 (validation) / 409 / 5xx: a genuine failure.  Treating it as
         // "flow missing" and falling back to create() used to mask the error
         // and leave the old revision in place.
-        handleApiError(err, '保存失败')
+        handleApiError(err, t('msg.saveFailed'))
         return false
       }
     }
-    message.success('流程图已保存')
+    message.success(t('msg.flowSaved'))
     return true
   }
 
@@ -698,8 +824,8 @@ export default function TestFlowEditor() {
     const saved = await handleSaveFlow()
     if (!saved) {
       setCodeText(
-        '# 代码生成已中止：流程图保存失败。\n'
-        + '# 请先修正上方报错（例如：解析项名称为空 / 重复），再重新点击「生成代码」。',
+        `# ${t('msg.genAborted')}\n`
+        + `# ${t('flow.fixErrorsFirst')}`,
       )
       setCodeLoading(false)
       return
@@ -709,7 +835,7 @@ export default function TestFlowEditor() {
       const data: any = res.data?.data || res.data
       setCodeText(data?.code || '// No code generated')
     } catch (err) {
-      setCodeText(`# Error generating code:\n# ${_errorMessage(err, '生成代码失败')}`)
+      setCodeText(`# Error generating code:\n# ${_errorMessage(err, t('msg.generateCodeFailed'))}`)
     } finally {
       setCodeLoading(false)
     }
@@ -717,7 +843,7 @@ export default function TestFlowEditor() {
 
   // ---- Edge label editing on double-click ----
   const onEdgeDoubleClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-    const label = prompt('输入边的标签（如 true / false / exit）：', edge.label as string || '')
+    const label = prompt(t('ph.edgeLabel'), edge.label as string || '')
     if (label !== null) {
       pushHistory()
       setEdges((eds) => eds.map((e) => (e.id === edge.id ? { ...e, label } : e)))
@@ -762,40 +888,40 @@ export default function TestFlowEditor() {
   const handleCopy = useCallback(() => {
     const { picked, inner } = selectedCopyable()
     if (picked.length === 0) {
-      message.info('请先选中要复制的节点（开始/结束节点不可复制）')
+      message.info(t('msg.pickNodeToCopy'))
       return
     }
     clipboardRef.current = {
       nodes: JSON.parse(JSON.stringify(picked)),
       edges: JSON.parse(JSON.stringify(inner)),
     }
-    message.success(`已复制 ${picked.length} 个节点`)
+    message.success(`${t('msg.copied')} ${picked.length} ${t('unit.nodes')}`)
   }, [selectedCopyable])
 
   const handlePaste = useCallback(() => {
     const clip = clipboardRef.current
     if (!clip || clip.nodes.length === 0) {
-      message.info('剪贴板为空，请先复制节点')
+      message.info(t('msg.clipboardEmpty'))
       return
     }
     pushHistory()
     const { copies, newEdges } = cloneSelection(clip.nodes, clip.edges)
     setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...copies])
     setEdges((eds) => [...eds, ...newEdges])
-    message.success(`已粘贴 ${copies.length} 个节点`)
+    message.success(`${t('msg.pasted')} ${copies.length} t('label.count')}${t('label.node')}`)
   }, [cloneSelection, pushHistory, setNodes, setEdges])
 
   const handleDuplicate = useCallback(() => {
     const { picked, inner } = selectedCopyable()
     if (picked.length === 0) {
-      message.info('请先选中要创建副本的节点')
+      message.info(t('msg.pickNodeToDuplicate'))
       return
     }
     pushHistory()
     const { copies, newEdges } = cloneSelection(picked, inner)
     setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...copies])
     setEdges((eds) => [...eds, ...newEdges])
-    message.success(`已创建 ${copies.length} 个副本`)
+    message.success(`${t('msg.created')} ${copies.length} ${t('unit.copies')}`)
   }, [cloneSelection, selectedCopyable, pushHistory, setNodes, setEdges])
 
   // ---- Keyboard shortcuts ----
@@ -839,8 +965,10 @@ export default function TestFlowEditor() {
     <div
       className="page-container"
       style={fullscreen ? {
-        // 全屏：脱离页面布局铺满视口，Esc 退出
-        position: 'fixed', inset: 0, zIndex: 1200, background: '#fff',
+        // 全屏：脱离页面布局铺满视口，Esc 退出。
+        // Background follows the theme — a hard-coded white became a white
+        // island the moment dark mode landed (issue #22).
+        position: 'fixed', inset: 0, zIndex: 1200, background: 'var(--flow-canvas-bg)',
         padding: 16, display: 'flex', flexDirection: 'column',
       } : {
         height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column',
@@ -848,72 +976,78 @@ export default function TestFlowEditor() {
     >
       <Breadcrumb
         items={[
-          { title: <a onClick={() => navigate('/')}><HomeOutlined /> 首页</a> },
-          { title: <a onClick={() => navigate('/testcases')}>测试用例</a> },
-          { title: testCase?.name || '流程图编辑' },
+          { title: <a onClick={() => navigate('/')}><HomeOutlined />{t('nav.home')}</a> },
+          { title: <a onClick={() => navigate('/testcases')}>{t('col.testCase')}</a> },
+          { title: testCase?.name || t('page.flowEditor') },
         ]}
         style={{ marginBottom: 8 }}
       />
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/testcases')}>返回</Button>
-          <Title level={4} style={{ margin: 0 }}>{testCase?.name || '流程图编辑'}</Title>
-          <Tag color="blue">{nodes.length} 节点</Tag>
-          <Tag color="green">{edges.length} 边</Tag>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/testcases')}>{t('common.back')}</Button>
+          <Title level={4} style={{ margin: 0 }}>{testCase?.name || t('page.flowEditor')}</Title>
+          <Tag color="processing">{nodes.length} {t('unit.nodeShort')}</Tag>
+          <Tag>{edges.length} {t('label.edge')}</Tag>
         </Space>
         <Space wrap>
-          <Tooltip title="撤销 Ctrl+Z">
-            <Button icon={<ArrowLeftOutlined />} disabled={!canUndo} onClick={undo}>撤销</Button>
+          {/* ① t('group.history') */}
+          <Tooltip title={t('tip.undo')}>
+            <Button icon={<UndoOutlined />} disabled={!canUndo} onClick={undo}>{t('common.undo')}</Button>
           </Tooltip>
-          <Tooltip title="重做 Ctrl+Y">
-            <Button icon={<ArrowLeftOutlined style={{ display: 'inline-block', transform: 'scaleX(-1)' }} />} disabled={!canRedo} onClick={redo}>重做</Button>
-          </Tooltip>
-          <Divider type="vertical" />
-          <Tooltip title="复制选中节点及其内部连线 Ctrl+C">
-            <Button icon={<CopyOutlined />} onClick={handleCopy}>复制</Button>
-          </Tooltip>
-          <Tooltip title="粘贴已复制的节点 Ctrl+V">
-            <Button icon={<SnippetsOutlined />} onClick={handlePaste}>粘贴</Button>
-          </Tooltip>
-          <Tooltip title="原地创建选中节点的副本 Ctrl+D">
-            <Button icon={<DiffOutlined />} onClick={handleDuplicate}>创建副本</Button>
+          <Tooltip title={t('tip.redo')}>
+            <Button icon={<RedoOutlined />} disabled={!canRedo} onClick={redo}>{t('common.redo')}</Button>
           </Tooltip>
           <Divider type="vertical" />
-          <Tooltip title="选中节点或边后点击删除（开始/结束不可删）">
-            <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>删除选中</Button>
+          {/* ② Edit */}
+          <Tooltip title={t('tip.copyNode')}>
+            <Button icon={<CopyOutlined />} onClick={handleCopy}>{t('common.copy')}</Button>
           </Tooltip>
-          <Tooltip title={fullscreen ? '退出全屏 Esc' : '全屏编辑（画布铺满窗口）'}>
+          <Tooltip title={t('tip.pasteNode')}>
+            <Button icon={<SnippetsOutlined />} onClick={handlePaste}>{t('common.paste')}</Button>
+          </Tooltip>
+          <Tooltip title={t('tip.duplicateNode')}>
+            <Button icon={<DiffOutlined />} onClick={handleDuplicate}>{t('btn.duplicate')}</Button>
+          </Tooltip>
+          <Divider type="vertical" />
+          {/* ③ Destructive — isolated so it can never be hit by accident */}
+          <Tooltip title={t('btn.deleteSelectedShort')}>
+            <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>{t('btn.deleteSelected')}</Button>
+          </Tooltip>
+          <Divider type="vertical" />
+          {/* ④ t('group.view') */}
+          <Tooltip title={fullscreen ? t('tip.exitFullscreen') : t('tip.fullscreen')}>
             <Button
               icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
               onClick={() => setFullscreen(v => !v)}
             >
-              {fullscreen ? '退出全屏' : '全屏'}
+              {fullscreen ? t('btn.exitFullscreen') : t('btn.fullscreen')}
             </Button>
           </Tooltip>
-          <Button icon={<SaveOutlined />} type="primary" onClick={handleSaveFlow}>保存流程图</Button>
+          <Divider type="vertical" />
+          {/* ⑤ Commit — save / generate code. "Generate code" used to be purple,
+              a hue the palette does not define; both now share the primary colour. */}
+          <Button icon={<SaveOutlined />} type="primary" onClick={handleSaveFlow}>{t('btn.saveFlow')}</Button>
           <Button
             icon={<CodeOutlined />}
-            type="primary"
-            style={{ background: '#722ed1', borderColor: '#722ed1' }}
             onClick={handleGenerateCode}
             loading={codeLoading}
-          >
-            生成代码
-          </Button>
+          >{t('btn.generateCode')}</Button>
         </Space>
       </div>
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 0 }}>
         {/* ---- Node palette sidebar ---- */}
         <div style={{
-          width: 120, minWidth: 120, background: '#fafafa',
-          borderRight: '2px solid #e8e8e8', padding: 12,
+          // 120 was too narrow for the icon + label; 148 also gives the drag
+          // chips room to breathe (issue #22).
+          width: 148, minWidth: 148, background: 'var(--flow-panel-bg)',
+          borderRight: '1px solid var(--flow-panel-border)', padding: 12,
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          <Text strong style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>节点面板</Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>拖拽到画布</Text>
-          {PALETTE.map((item) => (
+          <Text strong style={{ fontSize: 12, color: 'var(--flow-panel-fg)', marginBottom: 4 }}>{t('card.nodePalette')}</Text>
+          <Text type="secondary" style={{ fontSize: 11 }}>{t('tip.dragToCanvas')}</Text>
+          {PALETTE(t).map((item) => (
             <div
               key={item.type}
               draggable
@@ -921,14 +1055,25 @@ export default function TestFlowEditor() {
                 e.dataTransfer.setData('application/reactflow-type', item.type)
                 e.dataTransfer.effectAllowed = 'move'
               }}
+              className="flow-palette-chip"
               style={{
-                padding: '8px 10px', borderRadius: 6,
-                background: item.color, color: '#fff',
+                padding: '8px 10px',
+                ...paletteChipStyle(item.kind),
                 cursor: 'grab', fontSize: 12, fontWeight: 500,
-                display: 'flex', alignItems: 'center', gap: 6,
-                userSelect: 'none', opacity: 0.9,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                userSelect: 'none',
               }}
             >
+              {item.kind === 'diamond' && (
+                <span
+                  aria-hidden
+                  style={{
+                    width: 9, height: 9, flex: '0 0 9px',
+                    background: 'currentColor', opacity: 0.85,
+                    transform: 'rotate(45deg)', borderRadius: 1,
+                  }}
+                />
+              )}
               {item.icon} {item.label}
             </div>
           ))}
@@ -956,88 +1101,86 @@ export default function TestFlowEditor() {
           >
             <Controls />
             <MiniMap />
-            <Background gap={20} color="#f0f0f0" />
+            <Background gap={20} color="var(--flow-grid)" />
           </ReactFlow>
         </Card>
       </div>
 
       {/* ---- Node edit modal ---- */}
       <Modal
-        title={editNode ? `编辑 ${(editNode as any)?.data?.label || '节点'}` : '编辑节点'}
+        title={editNode ? `${t('common.edit')} ${(editNode as any)?.data?.label || t('label.node')}` : t('dlg.editNode')}
         open={editOpen}
         onCancel={() => setEditOpen(false)}
         onOk={handleEditSave}
         width={760}
       >
         <Form form={editForm} layout="vertical">
-          <Form.Item name="label" label="节点名称">
+          <Form.Item name="label" label={t('label.nodeName')}>
             <Input />
           </Form.Item>
-          <Form.Item name="node_type" label="节点类型"
-            extra="可就地切换类型；不兼容的字段会保留在配置中，切回后可恢复">
+          <Form.Item name="node_type" label={t('label.nodeType')}
+            extra={t('flow.switchTypeNote')}>
             <Select options={[
-              { label: '操作（下发命令）', value: 'action' },
-              { label: '判断（条件分支）', value: 'condition' },
-              { label: '循环（for / while）', value: 'loop' },
-              { label: '初始化（变量声明）', value: 'init' },
-              { label: '延时（等待毫秒）', value: 'delay' },
-              { label: '结束', value: 'end' },
+              { label: t('node.actionLong'), value: 'action' },
+              { label: t('node.conditionLong'), value: 'condition' },
+              { label: t('node.loopLong'), value: 'loop' },
+              { label: t('node.initLong'), value: 'init' },
+              { label: t('node.delayLong'), value: 'delay' },
+              { label: t('node.end'), value: 'end' },
             ]} />
           </Form.Item>
           {['action', 'loop', 'delay'].includes(nodeType) && (
-            <Form.Item name="device_id" label="执行设备"
-              extra="把这一步绑定到指定设备；留空则执行时自动选择已连接设备。「测试执行」页会按设备把步骤分列显示（并行流程各一列）">
-              <Select allowClear placeholder="自动选择"
+            <Form.Item name="device_id" label={t('label.execDevice')}
+              extra={t('flow.pinDeviceHint')}>
+              <Select allowClear placeholder={t('label.autoSelect')}
                 options={devices.map((d: any) => ({ value: d.id, label: `${d.name} (${d.protocol})` }))} />
             </Form.Item>
           )}
           {nodeType === 'delay' && (
-            <Form.Item name="duration" label="延时时长"
-              extra="单位：毫秒（ms）。填 1000 即等待 1 秒；需要变量化时长时可在代码里改成 {变量名}">
+            <Form.Item name="duration" label={t('label.delayDuration')}
+              extra={t('flow.delayFull')}>
               <InputNumber min={0} step={100} style={{ width: '100%' }} addonAfter="ms" />
             </Form.Item>
           )}
           {nodeType === 'init' && (
-            <Form.Item label="变量定义"
-              extra="流程开始时集中声明变量；生成代码后可供后续节点的命令与条件表达式引用">
+            <Form.Item label={t('label.variableDefs')}
+              extra={t('flow.initDesc')}>
               <Form.List name="variables">
                 {(fields, { add, remove, move }) => (
                   <>
                     {fields.map((field) => (
                       <Space key={field.key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} wrap>
                         <Form.Item {...field} name={[field.name, 'name']}
-                          rules={[{ required: true, message: '变量名必填' }]}>
-                          <Input placeholder="变量名" style={{ width: 110 }} />
+                          rules={[{ required: true, message: t('msg.varNameRequired') }]}>
+                          <Input placeholder={t('label.varName')} style={{ width: 110 }} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'type']} initialValue="int">
                           <Select style={{ width: 92 }} options={[
-                            { label: '整数', value: 'int' },
-                            { label: '浮点', value: 'float' },
-                            { label: '字符串', value: 'string' },
-                            { label: '布尔', value: 'bool' },
-                            { label: '十六进制', value: 'hex' },
+                            { label: t('dtype.int'), value: 'int' },
+                            { label: t('dtype.float'), value: 'float' },
+                            { label: t('dtype.string'), value: 'string' },
+                            { label: t('dtype.bool'), value: 'bool' },
+                            { label: t('dtype.hex'), value: 'hex' },
                           ]} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'value']}>
-                          <Input placeholder="初始值" style={{ width: 110 }} />
+                          <Input placeholder={t('label.initialValue')} style={{ width: 110 }} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'desc']}>
-                          <Input placeholder="说明(可选)" style={{ width: 120 }} />
+                          <Input placeholder={t('label.notesOptional')} style={{ width: 120 }} />
                         </Form.Item>
-                        <Tooltip title="上移">
+                        <Tooltip title={t('common.moveUp')}>
                           <Button size="small" type="text" onClick={() => move(field.name, field.name - 1)}
                             disabled={field.name === 0}>↑</Button>
                         </Tooltip>
-                        <Tooltip title="删除">
+                        <Tooltip title={t('common.delete')}>
                           <Button size="small" type="text" icon={<DeleteOutlined />}
                             onClick={() => remove(field.name)} />
                         </Tooltip>
                       </Space>
                     ))}
                     <Button type="dashed" block icon={<PlusOutlined />}
-                      onClick={() => add({ name: '', type: 'int', value: '', desc: '' })}>
-                      添加变量
-                    </Button>
+                      onClick={() => add({ name: '', type: 'int', value: '', desc: '' })}>{t('btn.addVariable')}</Button>
                   </>
                 )}
               </Form.List>
@@ -1045,77 +1188,77 @@ export default function TestFlowEditor() {
           )}
           {nodeType === 'action' && (
             <>
-              <Form.Item name="command" label="执行命令">
-                <Input.TextArea rows={2} placeholder="发送到设备的命令" />
+              <Form.Item name="command" label={t('label.command')}>
+                <Input.TextArea rows={2} placeholder={t('label.commandSent')} />
               </Form.Item>
-              <Form.Item name="expected" label="预期结果">
-                <Input placeholder="预期返回值" />
+              <Form.Item name="expected" label={t('col.expected')}>
+                <Input placeholder={t('label.expectedReturn')} />
               </Form.Item>
             </>
           )}
           {nodeType === 'condition' && (
             <>
-              <Form.Item name="condition" label="条件表达式" rules={[{ required: true }]}
-                extra="Python 表达式，如 voltage > 10">
+              <Form.Item name="condition" label={t('label.conditionExpr')} rules={[{ required: true }]}
+                extra={t('flow.exprFull2')}>
                 <Input placeholder="voltage > 10" />
               </Form.Item>
-              <Form.Item name="true_label" label="True 分支标签">
-                <Input placeholder="是" />
+              <Form.Item name="true_label" label={t('label.trueBranch')}>
+                <Input placeholder={t('common.yes')} />
               </Form.Item>
-              <Form.Item name="false_label" label="False 分支标签">
-                <Input placeholder="否" />
+              <Form.Item name="false_label" label={t('label.falseBranch')}>
+                <Input placeholder={t('common.no')} />
               </Form.Item>
             </>
           )}
           {nodeType === 'loop' && (
             <>
-              <Form.Item name="loop_type" label="循环类型" rules={[{ required: true }]}>
-                <Select options={[{ label: 'for (固定次数)', value: 'for' }, { label: 'while (条件循环)', value: 'while' }]} />
+              <Form.Item name="loop_type" label={t('label.loopType')} rules={[{ required: true }]}>
+                <Select options={[{ label: t('loop.for'), value: 'for' }, { label: t('loop.while'), value: 'while' }]} />
               </Form.Item>
               {loopType !== 'while' && (
-                <Form.Item name="loop_variable" label="循环变量">
+                <Form.Item name="loop_variable" label={t('label.loopVar')}>
                   <Input placeholder="i" />
                 </Form.Item>
               )}
               <Form.Item
                 name="loop_expression"
-                label={loopType === 'while' ? '循环条件（每轮开始前判断）' : '循环次数/条件'}
+                label={loopType === 'while' ? t('label.loopCondition') : t('label.loopCountCondition')}
                 rules={[{ required: true }]}
                 extra={loopType === 'while'
-                  ? 'Python 条件表达式，每轮开始前判断；成立才继续下一轮。例：retry_count < 10'
-                  : 'for: 循环次数 (整数); while: Python 条件表达式'}
+                  ? `Python ${t('ph.loopCondition')}_count < 10`
+                  : `for: t('ph.loopCountOrWhile')}`}
               >
                 <Input placeholder={loopType === 'while' ? 'retry_count < 10' : '3'} />
               </Form.Item>
 
-              {/* 循环节点自身的执行命令 / 预期结果（与操作节点保持一致） */}
-              <Form.Item name="command" label="执行命令（每轮执行）"
-                extra="留空则循环体内不下发命令，仅执行循环体子节点">
-                <Input.TextArea rows={2} placeholder="发送到设备的命令，如 CAN1,SEND,0x850102" />
+          {/* The loop node's own command / expected result (same shape as an action node) */}
+              <Form.Item name="command" label={t('label.commandEachRound')}
+                extra={t('flow.loopEmptyHint')}>
+                <Input.TextArea rows={2} placeholder={t('flow.commandFull')} />
               </Form.Item>
-              <Form.Item name="expected" label="预期结果（可选）"
-                extra="填写后每轮对该命令的返回值做断言">
-                <Input placeholder="预期返回值" />
+              <Form.Item name="expected" label={t('label.expectedOptional')}
+                extra={t('flow.assertHint')}>
+                <Input placeholder={t('label.expectedReturn')} />
               </Form.Item>
 
               {loopType === 'while' && (
                 <>
-                  <Form.Item name="entry_condition" label="进入条件（可选，循环开始前判断一次）"
-                    extra="留空表示总是进入。例：device_ready == True">
+                  <Form.Item name="entry_condition" label={t('label.enterCondition')}
+                    extra={t('flow.alwaysEnterFull')}>
                     <Input placeholder="device_ready == True" />
                   </Form.Item>
-                  <Form.Item name="entry_fail_action" label="进入条件不满足时">
+                  <Form.Item name="entry_fail_action" label={t('label.entryFalse')}>
                     <Select options={[
-                      { label: '跳过整个循环（继续后续节点）', value: 'skip' },
-                      { label: '判定为失败（抛错终止）', value: 'fail' },
+                      { label: t('onError.skipLoop'), value: 'skip' },
+                      { label: t('onError.fail'), value: 'fail' },
                     ]} />
                   </Form.Item>
-                  <Form.Item name="break_condition" label="跳出条件（可选，每轮结束后判断）"
-                    extra="成立则提前 break 退出循环。例：response == 'OK'">
+                  <Form.Item name="break_condition" label={t('label.breakCondition')}
+                    extra="t('flow.breakFull')'">
                     <Input placeholder="response == 'OK'" />
                   </Form.Item>
-                  <Form.Item name="max_iterations" label="最大迭代次数（可选）"
-                    extra="防止条件恒真导致死循环；达到上限强制跳出并告警">
+                  <Form.Item name="max_iterations" label={t('label.maxIterations')}
+                    extra={t('flow.maxIterHint')}>
                     <Input placeholder="10" />
                   </Form.Item>
                 </>
@@ -1123,7 +1266,7 @@ export default function TestFlowEditor() {
             </>
           )}
 
-          {/* ---- Issue #4：输入参数 / 输出返回值（所有可编辑节点通用） ---- */}
+          {/* ---- Issue #4: inputs / outputs (shared by every editable node) ---- */}
           <Divider style={{ margin: '4px 0 8px' }} />
           <Collapse
             size="small"
@@ -1132,10 +1275,10 @@ export default function TestFlowEditor() {
               {
                 key: 'io',
                 label: <Text strong style={{ fontSize: 13 }}>
-                  输入参数 / 输出返回值
+                  {t('label.io')}
                   {((editNode as any)?.config?.inputs?.length ||
                     (editNode as any)?.config?.outputs?.length)
-                    ? <Tag color="cyan" style={{ marginLeft: 8 }}>
+                    ? <Tag style={{ marginLeft: 8 }}>
                         in {(editNode as any)?.config?.inputs?.length || 0} · out {(editNode as any)?.config?.outputs?.length || 0}
                       </Tag>
                     : null}
@@ -1143,22 +1286,17 @@ export default function TestFlowEditor() {
                 children: (
                   <>
                     <div style={{ marginBottom: 10 }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        可用变量（点标签可复制占位符）：
-                      </Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{t('label.availableVars')}</Text>
                       <div style={{ marginTop: 4 }}>
                         {flowVars.length === 0 ? (
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            暂无。在「初始化」节点声明变量，或给前序节点添加输出返回值
-                          </Text>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{t('flow.noVars')}</Text>
                         ) : flowVars.map((v) => (
                           <Tag
                             key={v.name}
-                            color="geekblue"
                             style={{ cursor: 'pointer', marginBottom: 4 }}
                             onClick={() => {
                               navigator.clipboard.writeText(`{${v.name}}`)
-                              message.success(`已复制 {${v.name}}`)
+      message.success(`${t('msg.copiedVar')} {${v.name}}`)
                             }}
                           >
                             {`{${v.name}}`} ← {v.source_label}
@@ -1167,8 +1305,8 @@ export default function TestFlowEditor() {
                       </div>
                     </div>
 
-                    <Form.Item label="输入参数"
-                      extra="同名优先取前序节点的输出；取不到时用默认值">
+                    <Form.Item label={t('label.inputs')}
+                      extra={t('flow.varResolveHint')}>
                       <Form.List name="inputs">
                         {(fields, { add, remove }) => (
                           <>
@@ -1176,35 +1314,33 @@ export default function TestFlowEditor() {
                               <Space key={field.key} align="baseline"
                                 style={{ display: 'flex', marginBottom: 4 }} wrap>
                                 <Form.Item {...field} name={[field.name, 'name']}
-                                  rules={[{ required: true, message: '参数名必填' }]}>
-                                  <Input placeholder="参数名" style={{ width: 110 }} />
+                                  rules={[{ required: true, message: t('msg.paramNameRequired') }]}>
+                                  <Input placeholder={t('label.paramName')} style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
-                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS(t)} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'default']}>
-                                  <Input placeholder="默认值" style={{ width: 110 }} />
+                                  <Input placeholder={t('label.defaultValue')} style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'desc']}>
-                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                  <Input placeholder={t('label.notesOptional')} style={{ width: 110 }} />
                                 </Form.Item>
-                                <Tooltip title="删除">
+                                <Tooltip title={t('common.delete')}>
                                   <Button size="small" type="text" icon={<DeleteOutlined />}
                                     onClick={() => remove(field.name)} />
                                 </Tooltip>
                               </Space>
                             ))}
                             <Button type="dashed" block size="small" icon={<PlusOutlined />}
-                              onClick={() => add({ name: '', type: 'string', default: '', desc: '' })}>
-                              添加输入参数
-                            </Button>
+                              onClick={() => add({ name: '', type: 'string', default: '', desc: '' })}>{t('btn.addInput')}</Button>
                           </>
                         )}
                       </Form.List>
                     </Form.Item>
 
-                    <Form.Item label="输出返回值"
-                      extra="表达式默认 response（本节点最后一次应答）；也可用 parsed_0 / 解析字段名">
+                    <Form.Item label={t('label.outputValue')}
+                      extra={t('flow.exprFull')}>
                       <Form.List name="outputs">
                         {(fields, { add, remove }) => (
                           <>
@@ -1212,36 +1348,33 @@ export default function TestFlowEditor() {
                               <Space key={field.key} align="baseline"
                                 style={{ display: 'flex', marginBottom: 4 }} wrap>
                                 <Form.Item {...field} name={[field.name, 'name']}
-                                  rules={[{ required: true, message: '输出名必填' }]}>
-                                  <Input placeholder="输出名" style={{ width: 110 }} />
+                                  rules={[{ required: true, message: t('msg.outputNameRequired') }]}>
+                                  <Input placeholder={t('label.outputName')} style={{ width: 110 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'type']} initialValue="string">
-                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS} />
+                                  <Select style={{ width: 92 }} options={VALUE_TYPE_OPTIONS(t)} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'value']}>
                                   <Input placeholder="response" style={{ width: 130 }} />
                                 </Form.Item>
                                 <Form.Item {...field} name={[field.name, 'desc']}>
-                                  <Input placeholder="说明(可选)" style={{ width: 110 }} />
+                                  <Input placeholder={t('label.notesOptional')} style={{ width: 110 }} />
                                 </Form.Item>
-                                <Tooltip title="删除">
+                                <Tooltip title={t('common.delete')}>
                                   <Button size="small" type="text" icon={<DeleteOutlined />}
                                     onClick={() => remove(field.name)} />
                                 </Tooltip>
                               </Space>
                             ))}
                             <Button type="dashed" block size="small" icon={<PlusOutlined />}
-                              onClick={() => add({ name: '', type: 'string', value: 'response', desc: '' })}>
-                              添加输出返回值
-                            </Button>
+                              onClick={() => add({ name: '', type: 'string', value: 'response', desc: '' })}>{t('btn.addOutput')}</Button>
                           </>
                         )}
                       </Form.List>
                     </Form.Item>
 
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      提示：后续节点的「执行命令 / 预期结果 / 条件表达式」中写 <code>{'{变量名}'}</code> 即可引用；
-                      生成代码与运行时执行使用同一套解析规则。
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('flow.refHint')}<code>{`t('label.varName')}`}</code> {t('label.thenReference')}
+                      {t('parser.sameRules')}
                     </Text>
                   </>
                 ),
@@ -1253,7 +1386,16 @@ export default function TestFlowEditor() {
 
       {/* ---- Code generation drawer ---- */}
       <Drawer
-        title={<>生成的 Python 测试代码 <Tag color="purple">{codeLoading ? '生成中...' : '就绪'}</Tag></>}
+        title={(
+          <>
+            t('dlg.generatedCode'){' '}
+            {/* 生成中 = 运行中（琥珀）；就绪 = 中性。紫/青/蓝等 AntD 预设色
+                不受主题控制，已全部移除。 */}
+            {codeLoading
+              ? <Tag style={{ color: 'var(--a-fg)', borderColor: 'var(--a-fg)', background: 'transparent' }}>t('label.generating')...</Tag>
+              : <Tag>{t('label.ready')}</Tag>}
+          </>
+        )}
         open={codeDrawerOpen}
         onClose={() => setCodeDrawerOpen(false)}
         width={640}
@@ -1263,24 +1405,23 @@ export default function TestFlowEditor() {
             icon={<CodeOutlined />}
             onClick={() => {
               navigator.clipboard.writeText(codeText)
-              message.success('代码已复制到剪贴板')
+              message.success(t('msg.codeCopied'))
             }}
-          >
-            复制代码
-          </Button>
+          >{t('btn.copyCode')}</Button>
         }
       >
         <Text type="secondary" style={{ marginBottom: 8, display: 'block' }}>
-          测试用例：{testCase?.name} &nbsp;|&nbsp; {nodes.length} 节点, {edges.length} 边
+          {t('label.testCaseColon')}{testCase?.name} &nbsp;|&nbsp; {nodes.length} {t('label.node')}, {edges.length} {t('label.edge')}
         </Text>
         <Divider style={{ margin: '8px 0' }} />
         <pre style={{
-          background: '#1e1e1e', color: '#d4d4d4', padding: 16,
+          // 曾写死 VSCode 深色，浅色主题下很突兀；现跟随主题t('label.variable')。
+          background: 'var(--flow-code-bg)', color: 'var(--flow-code-fg)', padding: 16,
           borderRadius: 6, fontSize: 13, fontFamily: 'Consolas, Monaco, monospace',
           overflow: 'auto', maxHeight: 'calc(100vh - 220px)', lineHeight: 1.6,
           whiteSpace: 'pre-wrap',
         }}>
-          {codeText || '// 点击「生成代码」按钮生成...'}
+            {codeText || `// 点击「${t('btn.generateCode')}」按钮${t('btn.generate')}...`}
         </pre>
       </Drawer>
     </div>

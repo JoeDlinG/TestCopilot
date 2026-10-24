@@ -50,6 +50,8 @@ class ProtocolType(str, enum.Enum):
     SERIAL = "serial"
     ETHERNET = "ethernet"
     GPIB = "gpib"
+    PCIE = "pcie"
+    PXI = "pxi"
     CUSTOM = "custom"
 
 
@@ -59,6 +61,8 @@ class ConnectionType(str, enum.Enum):
     GPIB = "gpib"
     SERIAL = "serial"
     CAN = "can"
+    PCIE = "pcie"
+    PXI = "pxi"
 
 
 class DeviceStatus(str, enum.Enum):
@@ -165,6 +169,14 @@ class Device(Base):
     __tablename__ = "devices"
 
     id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dev"))
+    # Stable, user-facing device identifier (e.g. "DEV-001").
+    #
+    # ``id`` above is a system-generated primary key: deleting and re-adding a
+    # device hands out a NEW one, which silently orphaned every test flow that
+    # pinned it. Flows therefore bind to ``device_key`` instead — it survives a
+    # hardware swap because the user simply assigns the same key to the
+    # replacement device.
+    device_key = Column(String(64), nullable=True, index=True, unique=True)
     name = Column(String(200), nullable=False)
     type = Column(String(50), nullable=False, index=True)
     protocol = Column(String(20), nullable=False, index=True)
@@ -187,6 +199,7 @@ class Device(Base):
         Index("idx_devices_status", "status"),
         Index("idx_devices_type", "type"),
         Index("idx_devices_protocol", "protocol"),
+        Index("idx_devices_key", "device_key", unique=True),
     )
 
     # Relationships
@@ -340,9 +353,13 @@ class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
     id = Column(String(20), primary_key=True, default=lambda: generate_short_id("log"))
-    timestamp = Column(UTCDateTime, nullable=False, default=utc_now, index=True)
-    device_id = Column(String(20), ForeignKey("devices.id"), nullable=False, index=True)
-    execution_id = Column(String(20), ForeignKey("test_executions.id"), nullable=True, index=True)
+    # NOTE: no ``index=True`` here — ``__table_args__`` below already declares
+    # idx_logs_* on the same columns. Having both silently created a second,
+    # byte-identical ix_communication_logs_* index, doubling the index
+    # maintenance cost on every logged frame (this is the hottest write path).
+    timestamp = Column(UTCDateTime, nullable=False, default=utc_now)
+    device_id = Column(String(20), ForeignKey("devices.id"), nullable=False)
+    execution_id = Column(String(20), ForeignKey("test_executions.id"), nullable=True)
     step_result_id = Column(String(20), ForeignKey("test_step_results.id"), nullable=True)
     direction = Column(String(10), nullable=False)  # sent / received
     protocol = Column(String(20), nullable=False)
@@ -491,6 +508,49 @@ class SystemConfig(Base):
     key = Column(String(100), nullable=False, unique=True, index=True)
     value = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
+    updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
+# ====================================================================== #
+# Feedback centre — crash reports and user feedback (issue #26)
+# ====================================================================== #
+class FeedbackReport(Base):
+    """One submitted report.
+
+    ``kind``
+        ``crash`` — captured automatically (never carries PII);
+        ``idea`` / ``issue`` — typed in by the user.
+
+    ``signature``
+        ``hash(type + normalised stack frames + version)``. Crashes are grouped
+        by it so a bug that fires a thousand times opens **one** GitHub issue
+        instead of a thousand.
+
+    ``status``
+        ``pending``   — queued locally (offline, or no token configured);
+        ``forwarded`` — an issue was opened;
+        ``deduped``   — matched a known signature, only the counter moved;
+        ``failed``    — forwarding errored; retried on the next startup.
+    """
+
+    __tablename__ = "feedback_reports"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("fb"))
+    kind = Column(String(20), nullable=False, default="issue")
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=True)
+    app_version = Column(String(40), nullable=True)
+    os = Column(String(160), nullable=True)
+    arch = Column(String(80), nullable=True)
+    route = Column(String(240), nullable=True)
+    stack = Column(Text, nullable=True)
+    log_tail = Column(Text, nullable=True)
+    signature = Column(String(80), nullable=True, index=True)
+    github_issue_number = Column(Integer, nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    consent = Column(Boolean, nullable=False, default=True)
+    occurrences = Column(Integer, nullable=False, default=1)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
     updated_at = Column(UTCDateTime, nullable=False, default=utc_now, onupdate=utc_now)
 
 

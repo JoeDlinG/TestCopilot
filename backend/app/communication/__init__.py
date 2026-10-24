@@ -5,25 +5,21 @@ with real hardware or mock backends for development/testing.
 """
 from __future__ import annotations
 import asyncio
-import concurrent.futures
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 
+from app.core.blocking import run_blocking
+
 logger = logging.getLogger(__name__)
-
-# Thread pool for running blocking I/O operations (Python 3.8 compatible
-# replacement for asyncio.to_thread which was added in Python 3.9).
-_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-
 
 async def _run_in_thread(func, *args):
     """Run a blocking function in a thread pool and await its result.
 
-    This is a backport of asyncio.to_thread() for Python 3.8.
+    Delegates to :mod:`app.core.blocking` so the whole process shares one pool
+    instead of creating a second one here.
     """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_thread_pool, func, *args)
+    return await run_blocking(func, *args)
 
 
 class CommunicationInterface(ABC):
@@ -456,8 +452,28 @@ class EthernetInterface(CommunicationInterface):
         self._reader = None
         self._writer = None
         self._protocol = config.get("protocol", "tcp") if config else "tcp"
+        # Mock mode is opt-in. It used to be the automatic failure fallback,
+        # which meant an unreachable device still reported itself "connected"
+        # and then answered with invented data.
+        self._simulated = bool(
+            (config or {}).get("simulate", False) or (config or {}).get("mock", False)
+        )
 
     async def connect(self) -> None:
+        if self._simulated:
+            logger.warning(
+                "Ethernet interface running in SIMULATED mode (%s:%s) — no real traffic",
+                self.host, self.port,
+            )
+            self._is_connected = True
+            return
+        allowed = ("tcp", "udp")
+        if self._protocol not in allowed:
+            raise ValueError(
+                f"不支持的以太网协议 '{self._protocol}'，可选：{' / '.join(allowed)}"
+            )
+        if not self.host:
+            raise ValueError("以太网连接缺少 IP 地址")
         try:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
@@ -465,9 +481,15 @@ class EthernetInterface(CommunicationInterface):
             )
             self._is_connected = True
             logger.info(f"Ethernet connected: {self.host}:{self.port}")
-        except Exception as e:
-            logger.error(f"Ethernet connection failed: {e}")
-            self._is_connected = True  # Allow mock fallback
+        except asyncio.TimeoutError as e:
+            raise ConnectionError(
+                f"以太网连接超时（{self.host}:{self.port}）。"
+                "请确认设备已上电、IP 可达，且端口未被防火墙拦截。"
+            ) from e
+        except OSError as e:
+            raise ConnectionError(
+                f"无法通过以太网连接 {self.host}:{self.port}：{e}"
+            ) from e
 
     async def disconnect(self) -> None:
         if self._writer:
@@ -479,8 +501,8 @@ class EthernetInterface(CommunicationInterface):
         self._is_connected = False
 
     async def send(self, data: str) -> str:
-        if self._writer is None:
-            return f"[Mock Ethernet] {data}"
+        if self._simulated or self._writer is None:
+            return f"[Simulated Ethernet] {data}"
         self._writer.write((data + "\n").encode())
         await self._writer.drain()
         if self._reader:
@@ -492,10 +514,59 @@ class EthernetInterface(CommunicationInterface):
         return ""
 
     async def receive(self, timeout: float = 5.0) -> str:
-        if self._reader is None:
-            return "[Mock Ethernet Data]"
+        if self._simulated or self._reader is None:
+            return "[Simulated Ethernet Data]"
         data = await asyncio.wait_for(self._reader.readline(), timeout=timeout)
         return data.decode(errors="replace").strip()
+
+
+class BusInstrumentInterface(CommunicationInterface):
+    """Shared behaviour for PCIe / PXI instruments.
+
+    AITestLab has no kernel-level driver integration for these buses yet, so
+    they run in **simulated** mode: connecting always succeeds (which lets the
+    rest of the platform — flows, executions, dashboards — be exercised end to
+    end) but every exchange is explicitly tagged as simulated, and this fact is
+    reported through :attr:`simulated` so the UI can badge it.
+    """
+
+    bus_name = "PCIe"
+
+    def __init__(self, address: str = "", config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.address = address or ""
+
+    @property
+    def simulated(self) -> bool:
+        return True
+
+    async def connect(self) -> None:
+        logger.warning(
+            "%s interface (%s) runs in SIMULATED mode — no driver integration yet",
+            self.bus_name, self.address or "(no address)",
+        )
+        self._is_connected = True
+
+    async def disconnect(self) -> None:
+        self._is_connected = False
+
+    async def send(self, data: str) -> str:
+        return f"[Simulated {self.bus_name}:{self.address}] {data}"
+
+    async def receive(self, timeout: float = 5.0) -> str:
+        return f"[Simulated {self.bus_name} Data]"
+
+
+class PCIeInterface(BusInstrumentInterface):
+    """PCIe instrument addressed by its BDF (e.g. ``0000:01:00.0``)."""
+
+    bus_name = "PCIe"
+
+
+class PXIInterface(BusInstrumentInterface):
+    """PXI/PXIe module addressed as chassis/slot (e.g. ``0/2``)."""
+
+    bus_name = "PXI"
 
 
 def create_interface(
@@ -512,6 +583,8 @@ def create_interface(
         "ethernet": lambda: EthernetInterface(
             host=address, port=port or 5025, config=config
         ),
+        "pcie": lambda: PCIeInterface(address=address, config=config),
+        "pxi": lambda: PXIInterface(address=address, config=config),
         "gpib": lambda: SCPIInterface(visa_address=address, config=config),
         "usb": lambda: USBInterface(
             vid=config.get("vid", "") if config else "",

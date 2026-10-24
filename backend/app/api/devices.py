@@ -10,12 +10,22 @@ POST   /api/devices/connect   - Connect to device
 POST   /api/devices/{id}/disconnect - Disconnect device
 POST   /api/devices/{id}/command    - Send command to device
 """
-from typing import Optional
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.exceptions import DeviceNotFoundError, DeviceConnectionError
+from app.core.timeutils import utc_now
+from app.core.interfaces import (
+    INTERFACE_SPECS,
+    clear_other_columns,
+    foreign_config_keys,
+    get_interface_spec,
+    split_params,
+)
 from app.schemas.schemas import (
     DeviceCreate, DeviceResponse, DeviceUpdate,
     DeviceConnectRequest, DeviceCommandRequest, DeviceCommandResponse,
@@ -23,6 +33,122 @@ from app.schemas.schemas import (
 from app.services.device_service import device_service
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
+
+
+class DeviceInterfaceIn(BaseModel):
+    """Payload for re-configuring how a device is physically attached."""
+
+    connection_type: str
+    protocol: Optional[str] = None
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.get("/interfaces")
+async def list_interface_specs():
+    """Parameter schema for every supported physical interface (drives the UI)."""
+    return {"code": 0, "message": "success", "data": INTERFACE_SPECS}
+
+
+@router.get("/{device_id}/interface")
+async def get_device_interface(device_id: str, db: AsyncSession = Depends(get_db)):
+    """Current interface settings of one device, ready to populate the form."""
+    device = await device_service.get_device(db, device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail={
+            "code": 40001, "message": "Device not found",
+            "detail": f"No device with id={device_id}",
+        })
+    try:
+        spec = get_interface_spec(device.connection_type)
+    except KeyError:
+        spec = None
+
+    stored = device_service._parse_json_field(device.config) or {}
+    params: Dict[str, Any] = {}
+    if spec:
+        for f in spec["fields"]:
+            key = f["key"]
+            if f["store"] == "column":
+                params[key] = getattr(device, key, None)
+            else:
+                params[key] = stored.get(key, f.get("default"))
+    return {
+        "code": 0, "message": "success",
+        "data": {
+            "connection_type": device.connection_type,
+            "protocol": device.protocol,
+            "spec": spec,
+            "params": params,
+        },
+    }
+
+
+@router.put("/{device_id}/interface")
+async def update_device_interface(
+    device_id: str, data: DeviceInterfaceIn, db: AsyncSession = Depends(get_db),
+):
+    """Re-configure how a device is attached (interface type + its parameters).
+
+    Address columns owned by the *previous* interface are cleared, otherwise a
+    stale ``serial_port`` would keep showing up in the device list and in the
+    execution-manager resource keys after switching to Ethernet.
+    """
+    device = await device_service.get_device(db, device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail={
+            "code": 40001, "message": "Device not found",
+            "detail": f"No device with id={device_id}",
+        })
+    try:
+        spec = get_interface_spec(data.connection_type)
+    except KeyError:
+        raise HTTPException(status_code=400, detail={
+            "code": 40015,
+            "message": "不支持的接口类型",
+            "detail": f"Unknown connection_type '{data.connection_type}'",
+        })
+
+    params = dict(data.params or {})
+
+    # Reject blank mandatory values early with a precise message.
+    missing = [
+        f["label"] for f in spec["fields"]
+        if f.get("required") and not str(params.get(f["key"]) or "").strip()
+    ]
+    if missing:
+        raise HTTPException(status_code=400, detail={
+            "code": 40016,
+            "message": f"缺少必填项：{ '、'.join(missing) }",
+        })
+
+    columns, config = split_params(data.connection_type, params)
+
+    # Drop stale address columns, then apply the new ones.
+    for col, value in clear_other_columns(data.connection_type).items():
+        setattr(device, col, value)
+    for col, value in columns.items():
+        setattr(device, col, value)
+
+    stored = device_service._parse_json_field(device.config) or {}
+    for key in foreign_config_keys(data.connection_type, set(config)):
+        stored.pop(key, None)
+    stored.update(config)
+
+    # ``port`` is an integer column; an empty string must not be written.
+    if device.port == "":
+        device.port = None
+
+    device.config = device_service._to_json_field(stored)
+    device.connection_type = data.connection_type
+    device.protocol = data.protocol or spec.get("protocol") or device.protocol
+    device.updated_at = utc_now()
+    await db.commit()
+    await db.refresh(device)
+
+    return {
+        "code": 0, "message": "success",
+        "data": device_service._model_to_response(device),
+    }
 
 
 @router.get("/discover")
@@ -230,7 +356,13 @@ async def list_devices(
 
 @router.post("/", status_code=201)
 async def create_device(data: DeviceCreate, db: AsyncSession = Depends(get_db)):
-    device = await device_service.create_device(db, data)
+    try:
+        device = await device_service.create_device(db, data)
+    except ValueError as e:
+        # Raised when the requested 设备ID号 is already taken.
+        raise HTTPException(status_code=409, detail={
+            "code": 40018, "message": "设备ID号冲突", "detail": str(e),
+        })
     return {
         "code": 0,
         "message": "success",
@@ -255,6 +387,15 @@ async def get_device(device_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/{device_id}")
 async def update_device(device_id: str, data: DeviceUpdate, db: AsyncSession = Depends(get_db)):
+    # A duplicate 设备ID号 would silently make existing bindings ambiguous.
+    if (data.device_key or "").strip():
+        clash = await device_service.get_by_key(db, data.device_key.strip())
+        if clash and clash.id != device_id:
+            raise HTTPException(status_code=409, detail={
+                "code": 40018,
+                "message": "设备ID号冲突",
+                "detail": f"设备ID号「{data.device_key.strip()}」已被其它设备占用",
+            })
     device = await device_service.update_device(db, device_id, data)
     if not device:
         raise HTTPException(status_code=404, detail={

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Button, Space, Select, Drawer, Card, Typography, message, Spin, Empty,
   InputNumber, Popconfirm, Upload, Tag, Divider,
@@ -17,6 +18,8 @@ import { dashboardAPI, testCaseAPI, logAPI } from '../services/api'
 import type {
   CustomDashboard, DashboardWidget, DashboardLayoutItem, DashboardSnapshot, WidgetType,
 } from '../types'
+import { useI18n } from '../i18n'
+import { handleApiError } from '../services/apiHelper'
 import { WIDGET_LIST, newWidget, STATUS_COLOR } from '../components/dashboard/registry'
 import { WidgetBody } from '../components/dashboard/widgets'
 import WidgetConfigDrawer from '../components/dashboard/WidgetConfigDrawer'
@@ -28,6 +31,7 @@ const GRID_COLS = 12
 const ROW_HEIGHT = 40
 
 export default function CustomDashboard() {
+  const { t } = useI18n()
   const [loading, setLoading] = useState(true)
   const [dashboards, setDashboards] = useState<CustomDashboard[]>([])
   const [current, setCurrent] = useState<CustomDashboard | null>(null)
@@ -70,7 +74,7 @@ export default function CustomDashboard() {
       setCurrent(next)
       setDirty(false)
     } catch (e) {
-      message.error('加载仪表盘失败')
+      message.error(t('msg.loadDashboardsFailed'))
     } finally {
       setLoading(false)
     }
@@ -90,10 +94,14 @@ export default function CustomDashboard() {
       const res = await dashboardAPI.snapshot(
         d?.data_source?.test_case_id || null,
         Number(d?.data_source?.limit) || 50,
+        d?.data_source?.since || null,
       )
       setSnapshot(res.data?.data || null)
-    } catch {
-      /* keep last snapshot on transient errors */
+    } catch (e) {
+      // Keep the last snapshot on transient errors, but DO surface the failure:
+      // silently swallowing it left every widget showing "pick a test case"
+      // while the real cause was a rejected request (see issue: `since` 400).
+      handleApiError(e, t('msg.loadSnapshotFailed'))
     }
   }, [])
 
@@ -122,18 +130,15 @@ export default function CustomDashboard() {
     if (!current) return
     loadSnapshot()
     loadLogs()
-  }, [current?.id, current?.data_source?.test_case_id, current?.data_source?.limit, loadSnapshot, loadLogs])
+  }, [current?.id, current?.data_source?.test_case_id, current?.data_source?.limit,
+      current?.data_source?.since, loadSnapshot, loadLogs])
 
   // auto refresh
   const refreshSec = Number(current?.data_source?.refresh_sec) || 10
-  useEffect(() => {
-    if (!current) return
-    const timer = window.setInterval(() => {
-      loadSnapshot()
-      loadLogs()
-    }, Math.max(2, refreshSec) * 1000)
-    return () => window.clearInterval(timer)
-  }, [current?.id, refreshSec, loadSnapshot, loadLogs])
+  usePolling(() => {
+    loadSnapshot()
+    loadLogs()
+  }, Math.max(2, refreshSec) * 1000, !!current)
 
   // ---- real-time: subscribe to running executions via WebSocket ----
   const liveRefresh = useCallback(() => {
@@ -212,7 +217,7 @@ export default function CustomDashboard() {
     }
     patchCurrent({ widgets: [...widgetsOf, w], layout: [...layoutOf, item] })
     setLibOpen(false)
-    message.success('已添加组件，记得点「保存」')
+    message.success(t('msg.widgetAdded'))
   }
 
   const updateWidget = (w: DashboardWidget) => {
@@ -233,7 +238,7 @@ export default function CustomDashboard() {
     const copy: DashboardWidget = {
       ...src,
       id: `w_${Math.random().toString(36).slice(2, 9)}`,
-      title: `${src.title} 副本`,
+      title: `${src.title} ${t('label.copySuffix')}`,
       config: { ...src.config },
     }
     const item: DashboardLayoutItem = {
@@ -272,17 +277,43 @@ export default function CustomDashboard() {
       const res = await dashboardAPI.update(current.id, payload)
       setCurrent(res.data?.data || current)
       setDirty(false)
-      message.success('已保存')
+      message.success(t('msg.saved'))
       await loadDashboards()
     } catch {
-      message.error('保存失败')
+      message.error(t('msg.saveFailed'))
     } finally {
       setSaving(false)
     }
   }
 
+  /**
+   * 执行统计组件的「起始时间 / 清零」。
+   * Persisted on the dashboard's data source so the window survives a reload —
+   * and pushed straight to the backend because the counts are computed there.
+   */
+  const updateSince = async (iso: string | null) => {
+    if (!current) return
+    const next = {
+      ...current,
+      data_source: { ...current.data_source, since: iso },
+    }
+    setCurrent(next)
+    try {
+      await dashboardAPI.update(current.id, {
+        name: next.name,
+        description: next.description,
+        layout: next.layout,
+        widgets: next.widgets,
+        data_source: next.data_source,
+      })
+      loadSnapshot()
+    } catch {
+      message.error(t('msg.saveFailed'))
+    }
+  }
+
   const createDashboard = async () => {
-    const name = window.prompt('新仪表盘名称', '我的仪表盘')
+    const name = window.prompt(t('ph.dashboardName'), t('ph.myDashboard'))
     if (!name) return
     try {
       await dashboardAPI.create({
@@ -293,9 +324,9 @@ export default function CustomDashboard() {
       })
       await loadDashboards()
       setEditMode(true)
-      message.success('已创建，开始添加组件吧')
+      message.success(t('msg.dashCreated'))
     } catch {
-      message.error('创建失败')
+      message.error(t('msg.createFailed'))
     }
   }
 
@@ -325,8 +356,8 @@ export default function CustomDashboard() {
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
-          background: bigMode ? 'rgba(255,255,255,0.06)' : '#fff',
-          border: `1px solid ${bigMode ? 'rgba(255,255,255,0.12)' : (borderColor || '#f0f0f0')}`,
+          background: bigMode ? 'rgba(255,255,255,0.06)' : 'var(--app-surface)',
+          border: `1px solid ${bigMode ? 'rgba(255,255,255,0.12)' : (borderColor || 'var(--app-border)')}`,
           borderLeft: borderColor ? `4px solid ${borderColor}` : undefined,
           borderRadius: 8,
           overflow: 'hidden',
@@ -336,9 +367,9 @@ export default function CustomDashboard() {
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: bigMode ? '10px 16px' : '6px 10px',
-            borderBottom: `1px solid ${bigMode ? 'rgba(255,255,255,0.10)' : '#f0f0f0'}`,
+            borderBottom: `1px solid ${bigMode ? 'rgba(255,255,255,0.10)' : 'var(--app-border)'}`,
             cursor: editMode && !bigMode ? 'move' : 'default',
-            background: bigMode ? 'rgba(255,255,255,0.04)' : '#fafafa',
+            background: bigMode ? 'rgba(255,255,255,0.04)' : 'var(--app-surface-muted)',
             flexShrink: 0,
           }}
         >
@@ -349,11 +380,11 @@ export default function CustomDashboard() {
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               fontWeight: 600, fontSize: bigMode ? 20 : 14,
-              color: bigMode ? '#fff' : undefined,
+              color: bigMode ? 'var(--app-surface)' : undefined,
               flex: 1, minWidth: 0,
             }}
           >
-            {editMode && !bigMode && <DragOutlined style={{ color: '#bfbfbf', flexShrink: 0 }} />}
+            {editMode && !bigMode && <DragOutlined style={{ color: 'var(--app-fg-subtle)', flexShrink: 0 }} />}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {w.title}
             </span>
@@ -364,19 +395,21 @@ export default function CustomDashboard() {
                 onClick={() => setCfgWidget(w)} />
               <Button size="small" type="text" icon={<CopyOutlined />}
                 onClick={() => duplicateWidget(cfgId)} />
-              <Popconfirm title="删除该组件？" onConfirm={() => removeWidget(cfgId)}>
+              <Popconfirm title={t('msg.deleteWidget')} onConfirm={() => removeWidget(cfgId)}>
                 <Button size="small" type="text" danger icon={<DeleteOutlined />} />
               </Popconfirm>
             </Space>
           )}
         </div>
-        <div style={{ flex: 1, minHeight: 0, padding: bigMode ? 16 : 10, overflow: 'auto', color: bigMode ? '#fff' : undefined }}>
+        <div style={{ flex: 1, minHeight: 0, padding: bigMode ? 16 : 10, overflow: 'auto', color: bigMode ? 'var(--app-surface)' : undefined }}>
           <WidgetBody
             widget={w}
             snapshot={snapshot}
             big={bigMode}
             logs={logs}
             logsLoading={logsLoading}
+            since={current?.data_source?.since || null}
+            onSinceChange={updateSince}
           />
         </div>
       </div>
@@ -390,31 +423,27 @@ export default function CustomDashboard() {
         className="big-dash"
         style={{
           position: 'fixed', inset: 0, zIndex: 1200,
-          background: '#0b1a2b', color: '#fff', padding: 24,
+          background: 'var(--app-bigscreen-bg)', color: 'var(--app-on-dark)', padding: 24,
           display: 'flex', flexDirection: 'column', overflow: 'auto',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
           <div>
             <div style={{ fontSize: 28, fontWeight: 700 }}>
-              {current?.name || '自定义仪表盘'}
+              {current?.name || t('page.customDashboard')}
             </div>
             <div style={{ fontSize: 14, opacity: 0.6, marginTop: 4 }}>
-              {snapshot?.test_case_name ? `数据源：${snapshot.test_case_name}` : '未绑定测试用例'}
-              {' · 每 '}{refreshSec} 秒自动刷新
+              {snapshot?.test_case_name ? `${t('label.dataSource')}${snapshot.test_case_name}` : t('label.noCaseBound')}
+              {' · '}{t('label.every')} {refreshSec} {t('dash.autoRefreshSuffix')}
             </div>
           </div>
           <Space>
-            <Button size="large" icon={<ReloadOutlined />} onClick={() => { loadSnapshot(); loadLogs() }}>
-              立即刷新
-            </Button>
-            <Button size="large" type="primary" icon={<FullscreenExitOutlined />} onClick={exitBig}>
-              退出大屏
-            </Button>
+            <Button size="large" icon={<ReloadOutlined />} onClick={() => { loadSnapshot(); loadLogs() }}>{t('btn.refreshNow')}</Button>
+            <Button size="large" type="primary" icon={<FullscreenExitOutlined />} onClick={exitBig}>{t('btn.exitBigScreen')}</Button>
           </Space>
         </div>
         {widgetsOf.length === 0 ? (
-          <Empty description="该仪表盘还没有组件" style={{ marginTop: 80, color: '#fff' }} />
+          <Empty description={t('dash.noWidgets')} style={{ marginTop: 80, color: 'var(--app-on-dark)' }} />
         ) : (
           <div style={{
             display: 'grid', gridTemplateColumns: `repeat(${GRID_COLS}, 1fr)`,
@@ -441,15 +470,15 @@ export default function CustomDashboard() {
     <div className="page-container">
       <style>{`
         .react-grid-item.react-grid-placeholder {
-          background: #1677ff; opacity: .18; border-radius: 8px;
+          background: var(--app-accent); opacity: .18; border-radius: 8px;
         }
         .widget-drag-handle { user-select: none; }
       `}</style>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>自定义仪表盘</Title>
-          <Text type="secondary">自己拼装要看的界面：解析数值、趋势曲线、判定汇总 …</Text>
+          <Title level={3} style={{ margin: 0 }}>{t('page.customDashboard')}</Title>
+          <Text type="secondary">{t('dash.composeDesc')}</Text>
         </div>
         <Space wrap>
           <Button
@@ -457,11 +486,9 @@ export default function CustomDashboard() {
             icon={editMode ? <UnlockOutlined /> : <LockOutlined />}
             onClick={() => setEditMode(!editMode)}
           >
-            {editMode ? '编辑中' : '已锁定'}
+            {editMode ? t('label.editing') : t('label.locked')}
           </Button>
-          <Button icon={<PlusOutlined />} onClick={() => setLibOpen(true)} disabled={!editMode}>
-            添加组件
-          </Button>
+          <Button icon={<PlusOutlined />} onClick={() => setLibOpen(true)} disabled={!editMode}>{t('btn.addWidget')}</Button>
           <Button
             type="primary"
             icon={<SaveOutlined />}
@@ -469,16 +496,16 @@ export default function CustomDashboard() {
             onClick={save}
             disabled={!dirty}
           >
-            保存{dirty ? '（有改动）' : ''}
+            {t('common.save')}{dirty ? `（${t('label.has')}${t('label.changes')}）` : ''}
           </Button>
-          <Button icon={<FullscreenOutlined />} onClick={enterBig}>大屏</Button>
+          <Button icon={<FullscreenOutlined />} onClick={enterBig}>{t('btn.bigScreenShort')}</Button>
         </Space>
       </div>
 
       <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap size="middle">
           <Space size={6}>
-            <Text strong>仪表盘</Text>
+            <Text strong>{t('page.dashboard')}</Text>
             <Select
               style={{ minWidth: 200 }}
               value={current?.id}
@@ -487,18 +514,18 @@ export default function CustomDashboard() {
                 if (d) { setCurrent(d); setDirty(false) }
               }}
               options={dashboards.map((d) => ({
-                label: d.is_default ? `${d.name}（默认）` : d.name,
+                label: d.is_default ? `${d.name}（${t('status.default')}）` : d.name,
                 value: d.id,
               }))}
             />
           </Space>
 
           <Space size={6}>
-            <Text strong>数据源用例</Text>
+            <Text strong>{t('label.sourceCase')}</Text>
             <Select
               allowClear
               style={{ minWidth: 260 }}
-              placeholder="选择用例以驱动解析类组件"
+              placeholder={t('label.pickCaseForParsers')}
               value={current?.data_source?.test_case_id || undefined}
               onChange={(v: any) => patchCurrent({
                 data_source: { ...current!.data_source, test_case_id: v || null },
@@ -510,7 +537,7 @@ export default function CustomDashboard() {
           </Space>
 
           <Space size={6}>
-            <Text strong>回看次数</Text>
+            <Text strong>{t('label.viewCount')}</Text>
             <InputNumber
               min={1} max={500} style={{ width: 90 }}
               value={Number(current?.data_source?.limit) || 50}
@@ -521,7 +548,7 @@ export default function CustomDashboard() {
           </Space>
 
           <Space size={6}>
-            <Text strong>刷新(秒)</Text>
+            <Text strong>{t('label.refreshSec')}</Text>
             <InputNumber
               min={2} max={600} style={{ width: 90 }}
               value={refreshSec}
@@ -532,21 +559,19 @@ export default function CustomDashboard() {
           </Space>
 
           <Divider type="vertical" />
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => { loadSnapshot(); loadLogs() }}>
-            刷新
-          </Button>
-          <Button size="small" icon={<PlusOutlined />} onClick={createDashboard}>新建</Button>
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => { loadSnapshot(); loadLogs() }}>{t('common.refresh')}</Button>
+          <Button size="small" icon={<PlusOutlined />} onClick={createDashboard}>{t('common.create')}</Button>
           <Popconfirm
-            title="复制当前仪表盘？"
+            title={t('msg.dupDashboard')}
             onConfirm={async () => {
               if (!current) return
               const res = await dashboardAPI.duplicate(current.id)
               await loadDashboards()
               setCurrent(res.data?.data || null)
-              message.success('已复制')
+              message.success(t('msg.copied'))
             }}
           >
-            <Button size="small" icon={<CopyOutlined />}>复制</Button>
+            <Button size="small" icon={<CopyOutlined />}>{t('common.copy')}</Button>
           </Popconfirm>
           <Button
             size="small"
@@ -554,11 +579,9 @@ export default function CustomDashboard() {
               if (!current) return
               await dashboardAPI.setDefault(current.id)
               await loadDashboards()
-              message.success('已设为默认')
+              message.success(t('msg.setDefault'))
             }}
-          >
-            设为默认
-          </Button>
+          >{t('btn.setDefault')}</Button>
           <Button
             size="small"
             icon={<ExportOutlined />}
@@ -571,9 +594,7 @@ export default function CustomDashboard() {
               a.click()
               URL.revokeObjectURL(a.href)
             }}
-          >
-            导出
-          </Button>
+          >{t('common.export')}</Button>
           <Upload
             accept=".json"
             showUploadList={false}
@@ -590,26 +611,26 @@ export default function CustomDashboard() {
                 })
                 await loadDashboards()
                 setCurrent(res.data?.data || null)
-                message.success('导入成功')
+                message.success(t('msg.importOk'))
               } catch {
-                message.error('导入失败：不是有效的仪表盘 JSON')
+                message.error(t('msg.importInvalid'))
               }
               return false
             }}
           >
-            <Button size="small" icon={<ImportOutlined />}>导入</Button>
+            <Button size="small" icon={<ImportOutlined />}>{t('common.import')}</Button>
           </Upload>
           <Popconfirm
-            title="删除当前仪表盘？"
+            title={t('msg.deleteDashboard')}
             onConfirm={async () => {
               if (!current) return
               await dashboardAPI.delete(current.id)
               setCurrent(null)
               await loadDashboards()
-              message.success('已删除')
+              message.success(t('msg.deleted'))
             }}
           >
-            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button size="small" danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
           </Popconfirm>
         </Space>
       </Card>
@@ -619,17 +640,11 @@ export default function CustomDashboard() {
           <Spin size="large" />
         </div>
       ) : !current ? (
-        <Empty description="还没有仪表盘，点「新建」创建一个" style={{ marginTop: 80 }} />
+        <Empty description={t('dash.none')} style={{ marginTop: 80 }} />
       ) : widgetsOf.length === 0 ? (
         <Empty
           description={
-            <span>
-              这个仪表盘还没有组件 —— 点右上角
-              <Button type="link" size="small" onClick={() => { setEditMode(true); setLibOpen(true) }}>
-                添加组件
-              </Button>
-              开始拼装
-            </span>
+            <span>{t('dash.noWidgetsHint')}<Button type="link" size="small" onClick={() => { setEditMode(true); setLibOpen(true) }}>{t('btn.addWidget')}</Button>{t('btn.startComposing')}</span>
           }
           style={{ marginTop: 80 }}
         />
@@ -637,7 +652,7 @@ export default function CustomDashboard() {
         <>
           {editMode && (
             <div style={{ marginBottom: 8 }}>
-              <Tag color="blue">编辑中：拖动标题栏移动，拖右下角调整尺寸</Tag>
+              <Tag color="blue">{t('dash.editHint')}</Tag>
             </div>
           )}
           <WidthProviderGrid
@@ -664,7 +679,7 @@ export default function CustomDashboard() {
       )}
 
       <Drawer
-        title="组件库"
+        title={t('card.widgetLibrary')}
         open={libOpen}
         onClose={() => setLibOpen(false)}
         width={420}
@@ -683,9 +698,9 @@ export default function CustomDashboard() {
                 <div>
                   <div style={{ fontWeight: 600 }}>
                     {m.label}
-                    {m.needsTestCase && <Tag color="orange" style={{ marginLeft: 6 }}>需用例</Tag>}
+                {m.needsTestCase && <Tag color="orange" style={{ marginLeft: 6 }}>{t('label.needsCase')}</Tag>}
                   </div>
-                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>{m.desc}</div>
+                  <div style={{ color: 'var(--app-fg-subtle)', fontSize: 12 }}>{m.desc}</div>
                 </div>
               </Space>
             </Card>

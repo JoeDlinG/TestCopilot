@@ -31,7 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import delete, inspect as sa_inspect, select, update
+from sqlalchemy import delete, func, inspect as sa_inspect, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -327,6 +327,13 @@ async def _clear_section(db: AsyncSession, section: str) -> None:
         await db.execute(delete(ExecutionPlan))
     elif section == "dashboards":
         await db.execute(delete(Dashboard))
+    elif section == "skills":
+        # Skills live on disk (plugins/*/skills/*.md), not in the database.
+        for meta in plugin_service.list_plugin_skills():
+            try:
+                plugin_service.delete_plugin_skill(meta["protocol"])
+            except Exception as exc:  # noqa: BLE001 - one bad file must not abort
+                logger.warning("reset: could not delete skill %s: %s", meta["protocol"], exc)
 
 
 async def _import_models(db: AsyncSession, rows: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -583,6 +590,66 @@ async def import_bundle(
 
     await db.commit()
     return {"mode": mode, "sections": results}
+
+
+# --------------------------------------------------------------------------- #
+# New project — clear the workspace, keep AI model settings
+# --------------------------------------------------------------------------- #
+
+# Everything a fresh project should NOT inherit. ``models`` is deliberately
+# absent: AI model configuration (endpoint + API key) is environment setup, not
+# project data, and re-entering keys for every new project is pure friction.
+RESETTABLE_SECTIONS: Tuple[str, ...] = (
+    "devices",
+    "plugins",
+    "skills",
+    "test_cases",
+    "execution_plans",
+    "dashboards",
+)
+
+
+async def _count_section(db: AsyncSession, section: str) -> int:
+    model = {
+        "devices": Device,
+        "plugins": Plugin,
+        "test_cases": TestCase,
+        "execution_plans": ExecutionPlan,
+        "dashboards": Dashboard,
+    }.get(section)
+    if model is None:
+        return len(plugin_service.list_plugin_skills())
+    result = await db.execute(select(func.count()).select_from(model))
+    return int(result.scalar() or 0)
+
+
+async def reset_workspace(
+    db: AsyncSession,
+    sections: Optional[Sequence[str]] = None,
+    keep_models: bool = True,
+) -> Dict[str, Any]:
+    """Wipe the workspace so a brand-new project can be started.
+
+    Returns how many entries were removed per section plus which sections were
+    intentionally kept, so the UI can show an honest summary.
+    """
+    wanted = [s for s in (sections or RESETTABLE_SECTIONS) if s in RESETTABLE_SECTIONS]
+    if not keep_models and "models" not in wanted:
+        wanted.append("models")
+    if not wanted:
+        raise ValueError("没有可清空的配置段")
+
+    cleared: Dict[str, int] = {}
+    for section in wanted:
+        cleared[section] = await _count_section(db, section)
+        await _clear_section(db, section)
+    await db.commit()
+
+    return {
+        "cleared": cleared,
+        "kept": [s for s in SECTIONS if s not in wanted],
+        "total_cleared": sum(cleared.values()),
+    }
 
 
 # --------------------------------------------------------------------------- #

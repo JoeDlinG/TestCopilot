@@ -3,13 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import {
   Card, Input, Button, Select, Space, Typography, message, Tag,
   Collapse, Empty, List, Tabs, Tooltip, Modal, Divider, Alert,
+  Upload, Image,
 } from 'antd'
 import {
   SendOutlined, AudioOutlined, RobotOutlined, UserOutlined,
-  ExperimentOutlined, SearchOutlined, SettingOutlined,
+  DiffOutlined, SearchOutlined, SettingOutlined,
   ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined,
   EyeOutlined, BulbOutlined, SaveOutlined, DeleteOutlined,
-  FileMarkdownOutlined, EditOutlined,
+  FileMarkdownOutlined, EditOutlined, PaperClipOutlined, FileOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { aiAPI, testCaseAPI, pluginAPI, deviceAPI, memoryAPI } from '../services/api'
@@ -17,17 +18,46 @@ import { extractData, extractItems, handleApiError, _errorMessage } from '../ser
 import { useChatStore } from '../stores/chatStore'
 import TestCasePreviewModal from '../components/ai/TestCasePreviewModal'
 import type { AIModel, TestCase } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
 
 // Virtual built-in "skills" that are always available (not from plugins).
 // Checked by default so users immediately get test-case generation capability.
-const BUILTIN_SKILLS = [
-  { name: '测试用例生成', protocol: '__builtin_testgen', default: true },
+const BUILTIN_SKILLS = (tr: (k: string) => string) => [
+  { name: tr('card.caseGeneration'), protocol: '__builtin_testgen', default: true },
 ]
 
+/** Height of the scrollable output area (the input stays visible below it). */
+const OUTPUT_STYLE: React.CSSProperties = {
+  height: 'calc(100vh - 400px)',
+  minHeight: 260,
+  overflow: 'auto',
+}
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+interface Attachment {
+  uid: string
+  name: string
+  size: number
+  mime: string
+  /** base64 payload WITHOUT the `data:...;base64,` prefix */
+  data: string
+  kind: 'image' | 'file'
+}
+
+const readFileAsBase64 = (file: File, t: (k: string) => string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error(t('msg.readFileFailed')))
+    reader.readAsDataURL(file)
+  })
+
 export default function AIChat() {
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   // --- global persisted state (survives page switches) ---
@@ -62,14 +92,16 @@ export default function AIChat() {
   const [pluginSkills, setPluginSkills] = useState<any[]>([])
   const [importingIds, setImportingIds] = useState<Set<string>>(new Set())
   const [importingAll, setImportingAll] = useState(false)
-  // Real devices, so the AI can target them and the generated flow nodes get a
-  // concrete 执行设备 instead of an empty column.
   const [devices, setDevices] = useState<any[]>([])
 
   // --- generated test case: preview + conversational refinement ---
   const [previewCase, setPreviewCase] = useState<any | null>(null)
   const [refining, setRefining] = useState(false)
   const [refineLog, setRefineLog] = useState<string[]>([])
+
+  // --- attachments (files + images) ---
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [dragging, setDragging] = useState(false)
 
   // --- project memory ---
   const [memories, setMemories] = useState<any[]>([])
@@ -89,17 +121,18 @@ export default function AIChat() {
     status: d.status,
   }))
 
-  // --- init ---
+  const attachmentPayload = () =>
+    attachments.map((a) => ({ name: a.name, size: a.size, mime: a.mime, data: a.data }))
+
   useEffect(() => {
     loadModels()
     loadPluginSkills()
     loadDevices()
     loadMemories()
-    // Default-select builtin skills
     const store = useChatStore.getState()
     if (store.selectedSkills.length === 0) {
       store.setSelectedSkills(
-        BUILTIN_SKILLS.filter((s) => s.default).map((s) => s.protocol),
+        BUILTIN_SKILLS(t).filter((s) => s.default).map((s) => s.protocol),
       )
     }
   }, [])
@@ -111,12 +144,8 @@ export default function AIChat() {
   const loadDevices = async () => {
     try {
       const res = await deviceAPI.list()
-      // /devices/ is paginated: { data: { items: [...], total } } — must use
-      // extractItems, not extractData (which returns the whole object).
       setDevices(extractItems(res))
-    } catch {
-      /* device list is optional */
-    }
+    } catch { /* device list is optional */ }
   }
 
   const loadModels = async () => {
@@ -138,23 +167,46 @@ export default function AIChat() {
     } catch { /* ignore */ }
   }
 
+  // --- Attachments ---
+  const addFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList || [])
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        message.warning(`「${file.name}」${t('msg.over10mb')}`)
+        continue
+      }
+      try {
+        const dataUrl = await readFileAsBase64(file, t)
+        const base64 = dataUrl.split(',')[1] || ''
+        const mime = file.type || 'application/octet-stream'
+        setAttachments((prev) => [...prev, {
+          uid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          size: file.size,
+          mime,
+          data: base64,
+          kind: mime.startsWith('image/') ? 'image' : 'file',
+        }])
+      } catch {
+        message.error(`${t('msg.readingPrefix')}${file.name}」${t('status.failed')}`)
+      }
+    }
+  }
+
+  const removeAttachment = (uid: string) =>
+    setAttachments((prev) => prev.filter((a) => a.uid !== uid))
+
   // --- Project memory ---
   const loadMemories = async () => {
     try {
       const res = await memoryAPI.list()
       setMemories(extractData(res, []))
-    } catch { /* memory list is optional */ }
+    } catch { /* optional */ }
   }
 
   const handleExtractMemory = async () => {
-    if (!activeModel) {
-      message.warning('请先选择 AI 模型')
-      return
-    }
-    if (messages.length === 0) {
-      message.warning('当前没有可提炼的对话内容')
-      return
-    }
+    if (!activeModel) { message.warning(t('msg.pickModelFirst')); return }
+    if (messages.length === 0) { message.warning(t('msg.noConversation')); return }
     setExtracting(true)
     try {
       const existing = (memories.find((m) => m.name === memoryProject) && memView?.content) || ''
@@ -165,38 +217,29 @@ export default function AIChat() {
         existing_memory: existing,
       })
       const data: any = res.data?.data || res.data
-      if (!data?.content) {
-        message.warning('AI 未提炼出内容')
-        return
-      }
+      if (!data?.content) { message.warning(`AI ${t('msg.nothingExtracted')}`); return }
       setMemDraft(data.content)
-      message.success('已提炼对话要点，确认后写入记忆文件')
+      message.success(t('msg.memoryExtracted'))
     } catch (err) {
-      handleApiError(err, '提炼失败')
+      handleApiError(err, t('msg.extractFailed'))
     } finally {
       setExtracting(false)
     }
   }
 
   const handleWriteMemory = async () => {
-    if (!memDraft.trim()) {
-      message.warning('没有可写入的内容，请先提炼或手动输入')
-      return
-    }
+    if (!memDraft.trim()) { message.warning(t('msg.nothingToWrite')); return }
     setMemSaving(true)
     try {
       await memoryAPI.write({
-        name: memoryProject,
-        content: memDraft,
-        mode: 'append',
-        title: 'AI 助手对话要点',
+        name: memoryProject, content: memDraft, mode: 'append', title: `AI ${t('card.assistantPoints')}`,
       })
-      message.success(`已写入 Project_${memoryProject} Memory.md`)
+      message.success(`${t('msg.memoryWritten')}_${memoryProject} Memory.md`)
       setMemDraft('')
       loadMemories()
       setMemView(null)
     } catch (err) {
-      handleApiError(err, '写入记忆失败')
+      handleApiError(err, t('msg.writeMemoryFailed'))
     } finally {
       setMemSaving(false)
     }
@@ -208,25 +251,25 @@ export default function AIChat() {
       const data: any = extractData(res, {})
       setMemView({ name, content: data.content || '' })
     } catch (err) {
-      handleApiError(err, '读取记忆失败')
+      handleApiError(err, t('msg.readMemoryFailed'))
     }
   }
 
   const handleDeleteMemory = (name: string) => {
     Modal.confirm({
-      title: `删除记忆文件 Project_${name} Memory.md？`,
-      content: '删除后无法恢复。',
-      okText: '删除',
+      title: `${t('msg.deleteMemoryPrefix')}_${name} Memory.md？`,
+      content: t('msg.deleteIrreversible'),
+      okText: t('common.delete'),
       okButtonProps: { danger: true },
-      cancelText: '取消',
+      cancelText: t('common.cancel'),
       onOk: async () => {
         try {
           await memoryAPI.remove(name)
-          message.success('已删除')
+          message.success(t('msg.deleted'))
           if (memView?.name === name) setMemView(null)
           loadMemories()
         } catch (err) {
-          handleApiError(err, '删除失败')
+          handleApiError(err, t('msg.deleteFailed'))
         }
       },
     })
@@ -234,12 +277,16 @@ export default function AIChat() {
 
   // --- Chat ---
   const handleChat = async () => {
-    if (!input.trim() || !activeModel) return
+    if ((!input.trim() && attachments.length === 0) || !activeModel) return
     const msg = input.trim()
-    addMessage({ role: 'user', content: msg })
+    const files = attachmentPayload()
+    addMessage({
+      role: 'user',
+      content: msg || `（${t('label.attachmentOnly')}`,
+    })
     setInput('')
+    setAttachments([])
     setChatLoading(true)
-
     try {
       const res = await aiAPI.chat({
         model_id: activeModel,
@@ -247,14 +294,15 @@ export default function AIChat() {
         session_id: sessionId || undefined,
         input_type: 'text',
         skill_protocols: selectedSkills.filter((s) => !s.startsWith('__builtin_')),
+        attachments: files,
       })
       const data: any = res.data?.data || res.data
       setSessionId(data?.session_id ?? '')
-      addMessage({ role: 'assistant', content: data?.response ?? '（无响应内容）' })
+      addMessage({ role: 'assistant', content: data?.response ?? t('msg.noResponse') })
     } catch (err) {
-      const errMsg = _errorMessage(err, 'AI 请求失败')
+      const errMsg = _errorMessage(err, `AI ${t('msg.requestFailed')}`)
       message.error(errMsg)
-      addMessage({ role: 'assistant', content: `⚠️ 请求失败：${errMsg}` })
+      addMessage({ role: 'assistant', content: `⚠️ ${t('msg.requestFailedColon')}${errMsg}` })
     } finally {
       setChatLoading(false)
     }
@@ -277,28 +325,24 @@ export default function AIChat() {
       const data: any = res.data?.data || res.data
       setTestCaseResult(data)
       setRefineLog([])
-      // Also add AI's raw response to chat history so users can see the full conversation
       if (data?.raw_response) {
         addMessage({ role: 'assistant', content: data.raw_response })
       }
       setActiveTab('result')
     } catch (err) {
-      handleApiError(err, '生成测试用例失败')
-      addMessage({ role: 'assistant', content: `⚠️ 生成测试用例失败：${_errorMessage(err, '生成测试用例失败')}` })
+      handleApiError(err, t('msg.generateFailed'))
+      addMessage({ role: 'assistant', content: `⚠️ ${t('msg.genFailedColon')}${_errorMessage(err, t('msg.generateFailed'))}` })
     } finally {
       setGenLoading(false)
     }
   }
 
-  // --- Conversational refinement of the generated test cases ---
+  // --- Conversational refinement ---
   const handleRefine = async () => {
     const instruction = refineInput.trim()
     const cases = testCaseResult?.parsed?.test_cases || []
     if (!instruction || !activeModel) return
-    if (cases.length === 0) {
-      message.warning('没有可修改的测试用例，请先生成')
-      return
-    }
+    if (cases.length === 0) { message.warning(t('msg.nothingToRefine')); return }
     setRefining(true)
     try {
       const res = await aiAPI.refineTestCases({
@@ -313,14 +357,11 @@ export default function AIChat() {
       setTestCaseResult(data)
       setRefineLog((prev) => [...prev, instruction])
       setRefineInput('')
-      addMessage({ role: 'user', content: `（修改用例）${instruction}` })
-      if (data?.warning) {
-        message.warning(data.warning)
-      } else {
-        message.success('已按你的要求修改测试用例')
-      }
+      addMessage({ role: 'user', content: `${t('label.refineSuffix')}${instruction}` })
+      if (data?.warning) message.warning(data.warning)
+      else message.success(t('msg.casesRefined'))
     } catch (err) {
-      handleApiError(err, '修改测试用例失败')
+      handleApiError(err, t('msg.refineFailed'))
     } finally {
       setRefining(false)
     }
@@ -335,13 +376,12 @@ export default function AIChat() {
       setQueryResult(data)
       setActiveTab('query')
     } catch (err) {
-      handleApiError(err, '查询失败')
+      handleApiError(err, t('msg.queryFailed'))
     } finally {
       setQueryLoading(false)
     }
   }
 
-  // --- Save one test case ---
   const handleSaveOne = async (tc: any) => {
     setImportingIds((prev) => new Set(prev).add(tc.name))
     try {
@@ -351,9 +391,9 @@ export default function AIChat() {
         model_id: activeModel,
         available_devices: devicePayload(),
       })
-      message.success(`「${tc.name}」已导入测试用例列表（含流程图）`)
-    } catch (err) {
-      message.error(`「${tc.name}」导入失败`)
+      message.success(`「${tc.name}」${t('msg.casesImported')}`)
+    } catch {
+      message.error(`「${tc.name}」${t('msg.importFailed')}`)
     } finally {
       setImportingIds((prev) => {
         const next = new Set(prev)
@@ -363,13 +403,9 @@ export default function AIChat() {
     }
   }
 
-  // --- Import ALL generated test cases at once ---
   const handleImportAll = async () => {
     const cases = testCaseResult?.parsed?.test_cases || []
-    if (cases.length === 0) {
-      message.warning('没有可导入的测试用例')
-      return
-    }
+    if (cases.length === 0) { message.warning(t('msg.nothingToImport')); return }
     setImportingAll(true)
     try {
       const res = await testCaseAPI.importAiResult({
@@ -380,29 +416,28 @@ export default function AIChat() {
       })
       const data: any = res.data?.data || res.data
       const total = data.total_imported || data.saved_cases?.length || 0
-      message.success(`已导入 ${total} 个测试用例（含流程图）`)
+      message.success(`${t('msg.imported')} ${total} ${t('unit.casesWithFlows')}`)
       if (total > 0) navigate('/testcases')
     } catch (err) {
-      handleApiError(err, '批量导入失败')
+      handleApiError(err, t('msg.bulkImportFailed'))
     } finally {
       setImportingAll(false)
     }
   }
 
-  // --- Clear ---
   const handleClear = () => {
     clearStore()
     setRefineLog([])
     setPreviewCase(null)
+    setAttachments([])
   }
 
   const handleVoiceInput = () => {
-    message.info('语音输入功能：请使用浏览器录音后上传')
+    message.info(t('msg.voiceHint'))
   }
 
-  // Combine built-in + plugin skills for the selector
   const allSkills = [
-    ...BUILTIN_SKILLS.map((s) => ({ name: s.name, protocol: s.protocol, builtin: true })),
+    ...BUILTIN_SKILLS(t).map((s) => ({ name: s.name, protocol: s.protocol, builtin: true })),
     ...pluginSkills.map((s: any) => ({ name: s.name, protocol: s.protocol, builtin: false })),
   ]
 
@@ -411,132 +446,60 @@ export default function AIChat() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>AI 助手</Title>
+        <Title level={3} style={{ margin: 0 }}>AI {t('label.assistant')}</Title>
         <Space>
           <Select
-            placeholder="选择 AI 模型"
+            placeholder={t('ph.pickModel')}
             value={activeModel || undefined}
             onChange={setActiveModel}
             style={{ width: 280 }}
-            options={models.map((m) => ({
-              label: `${m.name} (${m.provider})`,
-              value: m.id,
-            }))}
+            options={models.map((m) => ({ label: `${m.name} (${m.provider})`, value: m.id }))}
             notFoundContent={
-              <Empty description="暂无模型，请先配置" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-                <Button type="primary" size="small" onClick={() => navigate('/model-config')}>
-                  去配置模型
-                </Button>
+              <Empty description={t('msg.noModelYet')} image={Empty.PRESENTED_IMAGE_SIMPLE}>
+                <Button type="primary" size="small" onClick={() => navigate('/model-config')}>{t('btn.goConfigureModel')}</Button>
               </Empty>
             }
           />
-          <Button icon={<ClearOutlined />} onClick={handleClear}>清空对话</Button>
+          <Button icon={<ClearOutlined />} onClick={handleClear}>{t('btn.clearChat')}</Button>
         </Space>
       </div>
 
-      <Card style={{ marginBottom: 16 }}>
-        <TextArea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="输入测试需求，或直接与 AI 对话..."
-          autoSize={{ minRows: 3, maxRows: 6 }}
-          onPressEnter={(e) => {
-            if (!e.shiftKey) {
-              e.preventDefault()
-              handleChat()
-            }
-          }}
-          disabled={!activeModel}
-        />
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12 }}>
-          <Space>
-            <Button icon={<AudioOutlined />} onClick={handleVoiceInput} disabled={!activeModel}>
-              语音输入
-            </Button>
-            <Select
-              mode="multiple"
-              allowClear
-              value={selectedSkills}
-              onChange={setSelectedSkills}
-              style={{ minWidth: 260 }}
-              maxTagCount="responsive"
-              placeholder={<span><ApiOutlined /> 导入 Skill / 知识库</span>}
-              options={allSkills.map((s) => ({
-                label: s.builtin ? `⚡ ${s.name}（内置）` : `${s.name} (${s.protocol})`,
-                value: s.protocol,
-              }))}
-            />
-            {selectedSkills.length > 0 && (
-              <Tag color="blue">已启用 {selectedSkills.length} 项 Skill</Tag>
-            )}
-          </Space>
-          <Space>
-            <Button
-              icon={<SearchOutlined />}
-              onClick={handleNaturalQuery}
-              disabled={!activeModel || !input.trim()}
-              loading={queryLoading}
-            >
-              查询数据库
-            </Button>
-            <Button
-              icon={<ExperimentOutlined />}
-              onClick={handleGenerateTestCases}
-              disabled={!activeModel || !input.trim()}
-              loading={genLoading}
-            >
-              生成测试用例
-            </Button>
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={handleChat}
-              disabled={!activeModel || !input.trim()}
-              loading={chatLoading}
-            >
-              发送
-            </Button>
-          </Space>
-        </div>
-      </Card>
-
+          {/* ---------- output area (top): reply / result ---------- */}
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
           {
             key: 'chat',
-            label: '对话',
+            label: t('tab.chat'),
             children: (
               <Card>
-                {messages.length === 0 ? (
-                  <Empty description="开始与 AI 对话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : (
-                  <div style={{ maxHeight: 500, overflow: 'auto' }}>
-                    {messages.map((msg, i) => (
+                <div style={OUTPUT_STYLE}>
+                  {messages.length === 0 ? (
+                    <Empty description={t('btn.startChat')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                  ) : (
+                    messages.map((msg, i) => (
                       <div
                         key={i}
                         style={{
                           display: 'flex', gap: 12,
-                          padding: '12px 0', borderBottom: '1px solid #f0f0f0',
+                          padding: '12px 0', borderBottom: '1px solid var(--app-border)',
                         }}
                       >
                         <div>
-                          {msg.role === 'assistant' ? (
-                            <RobotOutlined style={{ color: '#1677ff', fontSize: 20 }} />
-                          ) : (
-                            <UserOutlined style={{ color: '#52c41a', fontSize: 20 }} />
-                          )}
+                          {msg.role === 'assistant'
+                            ? <RobotOutlined style={{ color: 'var(--app-accent)', fontSize: 20 }} />
+                            : <UserOutlined style={{ color: 'var(--app-pass)', fontSize: 20 }} />}
                         </div>
                         <div style={{ flex: 1 }}>
-                          <Text strong>{msg.role === 'assistant' ? 'AI' : '用户'}</Text>
+                          <Text strong>{msg.role === 'assistant' ? 'AI' : t('label.user')}</Text>
                           <ReactMarkdown>{msg.content}</ReactMarkdown>
                         </div>
                       </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                  </div>
-                )}
+                    ))
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
               </Card>
             ),
           },
@@ -544,127 +507,89 @@ export default function AIChat() {
             key: 'result',
             label: (
               <span>
-                生成的测试用例
-                {caseCount > 0 && (
-                  <Tag color="blue" style={{ marginLeft: 6 }}>{caseCount}</Tag>
-                )}
+                {t('tab.generatedCases')}
+                {caseCount > 0 && <Tag color="blue" style={{ marginLeft: 6 }}>{caseCount}</Tag>}
               </span>
             ),
             children: (
               <Card>
-                {testCaseResult ? (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <Title level={5} style={{ margin: 0 }}>AI 生成结果</Title>
-                      {caseCount > 0 && (
-                        <Button
-                          type="primary"
-                          icon={<ImportOutlined />}
-                          onClick={handleImportAll}
-                          loading={importingAll}
-                        >
-                          一键添加全部 ({caseCount} 个)
-                        </Button>
-                      )}
-                    </div>
-
-                    {/* Conversational refinement */}
-                    {caseCount > 0 && (
-                      <Card size="small" style={{ marginBottom: 12, background: '#fafcff' }}>
-                        <Text strong style={{ display: 'block', marginBottom: 8 }}>
-                          <EditOutlined /> 继续修改
-                        </Text>
-                        <TextArea
-                          value={refineInput}
-                          onChange={(e) => setRefineInput(e.target.value)}
-                          placeholder="用自然语言描述修改意见，例如：把第 2 步的延时改成 500ms，最后增加一个读取版本号的步骤"
-                          autoSize={{ minRows: 2, maxRows: 5 }}
-                        />
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            AI 会返回修改后的完整用例集，确认无误后再一键添加
-                          </Text>
+                <div style={OUTPUT_STYLE}>
+                  {testCaseResult ? (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <Title level={5} style={{ margin: 0 }}>{t('card.aiResult')}</Title>
+                        {caseCount > 0 && (
                           <Button
-                            icon={<CheckCircleOutlined />}
-                            onClick={handleRefine}
-                            loading={refining}
-                            disabled={!activeModel || !refineInput.trim()}
+                            type="primary" icon={<ImportOutlined />}
+                            onClick={handleImportAll} loading={importingAll}
                           >
-                            应用修改
+                            t('btn.addAllPrefix'){caseCount} {t('label.itemsParen')}
                           </Button>
-                        </div>
-                        {refineLog.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>已应用的修改：</Text>
-                            {refineLog.map((r, i) => (
-                              <Tag key={i} color="green" style={{ marginTop: 4 }}>{i + 1}. {r}</Tag>
-                            ))}
-                          </div>
                         )}
-                      </Card>
-                    )}
+                      </div>
 
-                    {/* Show AI raw response / conversation content */}
-                    {testCaseResult?.raw_response && (
-                      <Collapse
-                        ghost
-                        style={{ marginBottom: 12 }}
-                        items={[
-                          {
-                            key: 'raw',
-                            label: <Text strong style={{ color: '#1677ff' }}>查看 AI 完整对话内容（原始响应）</Text>,
-                            children: (
-                              <div
-                                style={{
-                                  maxHeight: 400,
-                                  overflow: 'auto',
-                                  background: '#fafafa',
-                                  padding: 16,
-                                  borderRadius: 8,
-                                  whiteSpace: 'pre-wrap',
-                                  fontSize: 13,
-                                  lineHeight: 1.7,
-                                }}
-                              >
-                                {testCaseResult.raw_response}
-                              </div>
-                            ),
-                          },
-                        ]}
-                      />
-                    )}
+                      {caseCount > 0 && (
+                        <Card size="small" style={{ marginBottom: 12, background: 'var(--app-accent-subtle)' }}>
+                          <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                            <EditOutlined />{t('label.keepRefining')}</Text>
+                          <TextArea
+                            value={refineInput}
+                            onChange={(e) => setRefineInput(e.target.value)}
+                            placeholder={t('ph.refineInstruction')}
+                            autoSize={{ minRows: 2, maxRows: 5 }}
+                          />
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              AI {t('tip.refineResult')}
+                            </Text>
+                            <Button
+                              icon={<CheckCircleOutlined />}
+                              onClick={handleRefine} loading={refining}
+                              disabled={!activeModel || !refineInput.trim()}
+                            >{t('btn.applyChanges')}</Button>
+                          </div>
+                          {refineLog.length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>{t('label.appliedChanges')}</Text>
+                              {refineLog.map((r, i) => (
+                                <Tag key={i} color="green" style={{ marginTop: 4 }}>{i + 1}. {r}</Tag>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      )}
 
-                    {caseCount > 0 ? (
-                      <List
-                        dataSource={testCaseResult.parsed.test_cases}
-                        renderItem={(tc: any) => {
-                          const stepCount = tc.steps?.length || 0
-                          return (
+                      {testCaseResult?.raw_response && (
+                        <Collapse ghost style={{ marginBottom: 12 }} items={[{
+                          key: 'raw',
+                          label: <Text strong style={{ color: 'var(--app-accent)' }}>{t('btn.viewRawReply')}</Text>,
+                          children: (
+                            <div style={{
+                              maxHeight: 400, overflow: 'auto', background: 'var(--app-surface-muted)',
+                              padding: 16, borderRadius: 8, whiteSpace: 'pre-wrap',
+                              fontSize: 13, lineHeight: 1.7,
+                            }}>
+                              {testCaseResult.raw_response}
+                            </div>
+                          ),
+                        }]} />
+                      )}
+
+                      {caseCount > 0 ? (
+                        <List
+                          dataSource={testCaseResult.parsed.test_cases}
+                          renderItem={(tc: any) => (
                             <List.Item
                               actions={[
-                                <Tag color="default" key="steps">
-                                  {stepCount} 步骤
-                                </Tag>,
-                                <Tooltip title="预览用例详情" key="preview">
-                                  <Button
-                                    type="link"
-                                    size="small"
-                                    icon={<EyeOutlined />}
-                                    onClick={() => setPreviewCase(tc)}
-                                  >
-                                    预览
-                                  </Button>
+                                <Tag color="default" key="steps">{tc.steps?.length || 0} {t('col.steps')}</Tag>,
+                                <Tooltip title={t('btn.previewCase')} key="preview">
+                                  <Button type="link" size="small" icon={<EyeOutlined />}
+                                    onClick={() => setPreviewCase(tc)}>{t('btn.preview')}</Button>
                                 </Tooltip>,
-                                <Tooltip title="导入到测试用例列表" key="import">
-                                  <Button
-                                    type="link"
-                                    size="small"
-                                    icon={<ImportOutlined />}
+                                <Tooltip title={t('btn.importToList')} key="import">
+                                  <Button type="link" size="small" icon={<ImportOutlined />}
                                     loading={importingIds.has(tc.name)}
-                                    onClick={() => handleSaveOne(tc)}
-                                  >
-                                    添加
-                                  </Button>
+                                    onClick={() => handleSaveOne(tc)}>{t('common.add')}</Button>
                                 </Tooltip>,
                               ]}
                             >
@@ -672,167 +597,222 @@ export default function AIChat() {
                                 title={tc.name}
                                 description={
                                   <Text type="secondary" ellipsis style={{ maxWidth: 400 }}>
-                                    {tc.description || '（无描述）'}
+                                    {tc.description || `（${t('label.noDesc')}`}
                                   </Text>
                                 }
                               />
                             </List.Item>
-                          )
-                        }}
-                      />
-                    ) : (
-                      <Empty description="未能解析出测试用例" />
-                    )}
-                  </div>
-                ) : (
-                  <Empty description="尚未生成测试用例。输入需求后点击「生成测试用例」" />
-                )}
+                          )}
+                        />
+                      ) : (
+                        <Empty description={t('msg.parseCasesFailed')} />
+                      )}
+                    </div>
+                  ) : (
+                    <Empty description={t('msg.noCasesGenerated')} />
+                  )}
+                </div>
               </Card>
             ),
           },
           {
             key: 'memory',
-            label: '项目记忆',
+            label: t('tab.memory'),
             children: (
               <Card>
-                <Alert
-                  type="info"
-                  showIcon
-                  style={{ marginBottom: 12 }}
-                  message="把对话中确认的关键决策、约定与事实沉淀到 Project_<项目名> Memory.md"
-                  description="先让 AI 从当前对话提炼要点，确认或修改后再写入文件。文件保存在 backend/memory/ 目录下，可直接提交到 Git。"
-                />
-                <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                  <Space wrap>
-                    <Text strong>项目名：</Text>
-                    <Input
-                      value={memoryProject}
-                      onChange={(e) => setMemoryProject(e.target.value)}
-                      style={{ width: 240 }}
-                      placeholder="例如 AITestLab"
-                    />
-                    <Button
-                      icon={<BulbOutlined />}
-                      onClick={handleExtractMemory}
-                      loading={extracting}
-                      disabled={!activeModel || messages.length === 0}
-                    >
-                      从对话提炼要点
-                    </Button>
-                    <Button
-                      type="primary"
-                      icon={<SaveOutlined />}
-                      onClick={handleWriteMemory}
-                      loading={memSaving}
-                      disabled={!memDraft.trim()}
-                    >
-                      写入记忆文件
-                    </Button>
-                  </Space>
-
-                  <TextArea
-                    value={memDraft}
-                    onChange={(e) => setMemDraft(e.target.value)}
-                    placeholder="提炼结果会显示在这里，可手动修改后再写入"
-                    autoSize={{ minRows: 6, maxRows: 16 }}
+                <div style={OUTPUT_STYLE}>
+                  <Alert
+                    type="info" showIcon style={{ marginBottom: 12 }}
+                    message={t('memory.purposeFull')}
+                    description={t('memory.howto')}
                   />
+                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Text strong>{t('label.projectNameColon')}</Text>
+                      <Input
+                        value={memoryProject}
+                        onChange={(e) => setMemoryProject(e.target.value)}
+                        style={{ width: 240 }} placeholder={t('ph.projectExample')}
+                      />
+                      <Button icon={<BulbOutlined />} onClick={handleExtractMemory}
+                        loading={extracting} disabled={!activeModel || messages.length === 0}>{t('btn.extractMemory')}</Button>
+                      <Button type="primary" icon={<SaveOutlined />} onClick={handleWriteMemory}
+                        loading={memSaving} disabled={!memDraft.trim()}>{t('btn.writeMemory')}</Button>
+                    </Space>
 
-                  <Divider orientation="left" style={{ margin: '8px 0' }}>已有记忆文件</Divider>
-                  {memories.length === 0 ? (
-                    <Empty description="还没有记忆文件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                  ) : (
-                    <List
-                      size="small"
-                      dataSource={memories}
-                      renderItem={(m: any) => (
-                        <List.Item
-                          actions={[
-                            <Button
-                              key="view" type="link" size="small"
-                              icon={<FileMarkdownOutlined />}
-                              onClick={() => handleReadMemory(m.name)}
-                            >
-                              查看
-                            </Button>,
-                            <Button
-                              key="del" type="link" size="small" danger
-                              icon={<DeleteOutlined />}
-                              onClick={() => handleDeleteMemory(m.name)}
-                            >
-                              删除
-                            </Button>,
-                          ]}
-                        >
+                    <TextArea
+                      value={memDraft}
+                      onChange={(e) => setMemDraft(e.target.value)}
+                      placeholder={t('ph.memoryDraft')}
+                      autoSize={{ minRows: 6, maxRows: 16 }}
+                    />
+
+                    <Divider orientation="left" style={{ margin: '8px 0' }}>{t('card.existingMemory')}</Divider>
+                    {memories.length === 0 ? (
+                      <Empty description={t('msg.noMemoryFiles')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                    ) : (
+                      <List size="small" dataSource={memories} renderItem={(m: any) => (
+                        <List.Item actions={[
+                          <Button key="view" type="link" size="small" icon={<FileMarkdownOutlined />}
+                            onClick={() => handleReadMemory(m.name)}>{t('btn.view')}</Button>,
+                          <Button key="del" type="link" size="small" danger icon={<DeleteOutlined />}
+                            onClick={() => handleDeleteMemory(m.name)}>{t('common.delete')}</Button>,
+                        ]}>
                           <List.Item.Meta
-                            title={
-                              <Space>
-                                <Text strong>{m.name}</Text>
-                                <Text type="secondary" style={{ fontSize: 12 }}>
-                                  {m.file_name}
-                                </Text>
-                              </Space>
-                            }
-                            description={
-                              <Text type="secondary" style={{ fontSize: 12 }}>
-                                {m.section_count} 条记录 · {m.preview || '（无摘要）'}
-                              </Text>
-                            }
+                            title={<Space><Text strong>{m.name}</Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>{m.file_name}</Text></Space>}
+                            description={<Text type="secondary" style={{ fontSize: 12 }}>
+                              {m.section_count} t('unit.recordsDot') {m.preview || `（${t('label.noSummary')}`}</Text>}
                           />
                         </List.Item>
-                      )}
-                    />
-                  )}
+                      )} />
+                    )}
 
-                  {memView && (
-                    <>
-                      <Divider orientation="left" style={{ margin: '8px 0' }}>
-                        {memView.name} 的内容
-                      </Divider>
-                      <pre
-                        style={{
-                          background: '#fafafa', padding: 16, borderRadius: 8,
+                    {memView && (
+                      <>
+                        <Divider orientation="left" style={{ margin: '8px 0' }}>{memView.name} {t('label.contentSuffix')}</Divider>
+                        <pre style={{
+                          background: 'var(--app-surface-muted)', padding: 16, borderRadius: 8,
                           maxHeight: 360, overflow: 'auto', fontSize: 12,
-                        }}
-                      >
-                        {memView.content}
-                      </pre>
-                    </>
-                  )}
-                </Space>
+                        }}>
+                          {memView.content}
+                        </pre>
+                      </>
+                    )}
+                  </Space>
+                </div>
               </Card>
             ),
           },
           {
             key: 'query',
-            label: '数据库查询结果',
+            label: t('card.queryResult'),
             children: (
               <Card>
-                {queryResult ? (
-                  <div>
-                    <Title level={5}>查询结果</Title>
-                    <Text type="secondary">SQL: {queryResult.sql_generated}</Text>
-                    <p>
-                      共找到 {queryResult.result_count} 条记录
-                    </p>
-                    {queryResult.results?.length > 0 && (
-                      <pre
-                        style={{
-                          background: '#f5f5f5', padding: 16,
-                          borderRadius: 8, overflow: 'auto',
-                        }}
-                      >
-                        {JSON.stringify(queryResult.results, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                ) : (
-                  <Empty description="尚未查询数据库" />
-                )}
+                <div style={OUTPUT_STYLE}>
+                  {queryResult ? (
+                    <div>
+                      <Title level={5}>{t('card.queryResult')}</Title>
+                      <Text type="secondary">SQL: {queryResult.sql_generated}</Text>
+                      <p>t('label.foundTotal') {queryResult.result_count} {t('unit.records')}</p>
+                      {queryResult.results?.length > 0 && (
+                        <pre style={{ background: 'var(--app-surface-sunken)', padding: 16, borderRadius: 8, overflow: 'auto' }}>
+                          {JSON.stringify(queryResult.results, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ) : (
+                    <Empty description={t('msg.notQueried')} />
+                  )}
+                </div>
               </Card>
             ),
           },
         ]}
       />
+
+        {/* ---------- input area (bottom) ---------- */}
+      <Card
+        style={{ marginTop: 16, borderColor: dragging ? 'var(--app-accent)' : undefined }}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files)
+        }}
+      >
+        {attachments.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <Space size={[8, 8]} wrap>
+              {attachments.map((a) => (
+                <span
+                  key={a.uid}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '4px 8px', border: '1px solid var(--app-border)',
+                    borderRadius: 6, background: 'var(--app-surface-muted)', fontSize: 12,
+                  }}
+                >
+                  {a.kind === 'image' ? (
+                    <Image
+                      src={`data:${a.mime};base64,${a.data}`}
+                      alt={a.name}
+                      width={28} height={28}
+                      style={{ objectFit: 'cover', borderRadius: 4 }}
+                    />
+                  ) : (
+                    <FileOutlined style={{ color: 'var(--app-fg-subtle)' }} />
+                  )}
+                  <span style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {a.name}
+                  </span>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {(a.size / 1024).toFixed(0)}KB
+                  </Text>
+                  <Button
+                    type="text" size="small" icon={<DeleteOutlined />}
+                    onClick={() => removeAttachment(a.uid)}
+                  />
+                </span>
+              ))}
+            </Space>
+          </div>
+        )}
+
+        <TextArea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={t('ph.chatInput')}
+          autoSize={{ minRows: 3, maxRows: 6 }}
+          onPressEnter={(e) => {
+            if (!e.shiftKey) { e.preventDefault(); handleChat() }
+          }}
+          disabled={!activeModel}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12 }}>
+          <Space>
+            <Upload
+              beforeUpload={(file) => { addFiles([file as any]); return false }}
+              showUploadList={false}
+              multiple
+              accept="image/*,.txt,.md,.csv,.log,.json,.py,.yaml,.yml,.xml"
+            >
+              <Tooltip title={t('btn.attachFull')}>
+                <Button icon={<PaperClipOutlined />} disabled={!activeModel}>
+                  t('label.attachment'){attachments.length > 0 ? ` (${attachments.length})` : ''}
+                </Button>
+              </Tooltip>
+            </Upload>
+            <Button icon={<AudioOutlined />} onClick={handleVoiceInput} disabled={!activeModel}>{t('btn.voiceInput')}</Button>
+            <Select
+              mode="multiple" allowClear
+              value={selectedSkills} onChange={setSelectedSkills}
+              style={{ minWidth: 260 }} maxTagCount="responsive"
+              placeholder={<span><ApiOutlined />{t('btn.importSkillKb')}</span>}
+              options={allSkills.map((s) => ({
+                label: s.builtin ? `⚡ ${s.name}（${t('label.builtin')}` : `${s.name} (${s.protocol})`,
+                value: s.protocol,
+              }))}
+            />
+            {selectedSkills.length > 0 && (
+              <Tag color="blue">t('status.enabled') {selectedSkills.length} {t('unit.skills')}</Tag>
+            )}
+          </Space>
+          <Space>
+            <Button icon={<SearchOutlined />} onClick={handleNaturalQuery}
+              disabled={!activeModel || !input.trim()} loading={queryLoading}>{t('btn.queryDb')}</Button>
+            <Button icon={<DiffOutlined />} onClick={handleGenerateTestCases}
+              disabled={!activeModel || !input.trim()} loading={genLoading}>{t('btn.generateCases')}</Button>
+            <Button type="primary" icon={<SendOutlined />} onClick={handleChat}
+              disabled={!activeModel || (!input.trim() && attachments.length === 0)}
+              loading={chatLoading}>{t('btn.send')}</Button>
+          </Space>
+        </div>
+        {attachments.some((a) => a.kind === 'image') && (
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>{t('tip.imageUnsupported')}</Text>
+        )}
+      </Card>
 
       <TestCasePreviewModal
         open={!!previewCase}

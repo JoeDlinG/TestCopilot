@@ -15,6 +15,8 @@ class DeviceCreate(BaseModel):
     type: str  # device type: oscilloscope, power_supply, etc.
     protocol: str  # scpi, can, serial, ethernet, etc.
     connection_type: str  # usb, ethernet, gpib, serial, can
+    # Stable user-facing identifier (e.g. "DEV-001"); auto-assigned when omitted.
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None
@@ -32,6 +34,7 @@ class DeviceResponse(BaseModel):
     type: str
     protocol: str
     connection_type: str
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None
@@ -51,6 +54,7 @@ class DeviceUpdate(BaseModel):
     type: Optional[str] = None
     protocol: Optional[str] = None
     connection_type: Optional[str] = None
+    device_key: Optional[str] = None
     visa_address: Optional[str] = None
     can_channel: Optional[str] = None
     serial_port: Optional[str] = None
@@ -116,6 +120,19 @@ class AIModelConfigResponse(BaseModel):
     created_at: datetime
 
 
+class ChatAttachment(BaseModel):
+    """A file or image attached to a chat message.
+
+    ``data`` holds the payload base64-encoded **without** any ``data:`` prefix;
+    the server adds the prefix in whatever shape the provider expects.
+    """
+
+    name: str
+    mime: str = ""
+    size: int = 0
+    data: str = ""
+
+
 class AIChatRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
 
@@ -126,6 +143,8 @@ class AIChatRequest(BaseModel):
     system_prompt: Optional[str] = None
     # Plugin skills to import into the conversation context (protocol names).
     skill_protocols: List[str] = Field(default_factory=list)
+    # Files / images the user attached to this message.
+    attachments: Optional[List[ChatAttachment]] = None
 
 
 class AIChatResponse(BaseModel):

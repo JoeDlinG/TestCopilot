@@ -33,6 +33,14 @@ def main() -> None:
         restart_helper.main()
         sys.exit(0)
 
+    # Detached update helper: wait for this process to exit, swap files, relaunch
+    # (issue #25). Same trick as the restart helper — a frozen build has no
+    # separate interpreter, so the exe re-enters here with a flag.
+    if "--update-helper" in sys.argv:
+        import update_helper
+        rest = [a for a in sys.argv[1:] if a != "--update-helper"]
+        sys.exit(update_helper.main(rest))
+
     os.chdir(_data_dir())
 
     import uvicorn

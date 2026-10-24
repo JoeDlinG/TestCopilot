@@ -61,6 +61,1070 @@ FC01 读线圈 / FC05 写线圈回读 / 非法地址返回 ERROR 且连接保持
 - Modbus RTU 驱动（P1 第二批）：需先将 `example_plugin.py` 的协议名从 `modbus_rtu`
   改名为 `demo_virtual`，避免两个插件争用同一协议名。
 - 机械臂 Modbus TCP 场景用例待机械臂到场后补充验证（V7 项）。
+## 2026-10-22: 品牌标识、帮助中心、首次引导 + Issue #25 / #26（v2.3.0）
+
+### 1. 替换 Logo
+
+源文件 `logo/TestCopilot logo设计.jpeg`（2048×2048，白底）。直接拿来用有两个坑：
+
+1. **白底不能整体透明化** —— 剪贴板内部本身就是白色，全局「白→透明」会把它镂空。
+   改为**从画布边缘做洪水填充**，只去掉与外界连通的白。
+2. **图标不是一个干净的矩形** —— 勾的笔画伸进了文字的 x 范围，纸飞机三角形又压着字母 T，
+   所以按 x 裁切不是切掉勾就是留下半个 T。改用**连通域分析**：剔掉 JPEG 噪点（<8px）
+   与字母字形，剩下的（剪贴板 + 勾 + 纸飞机）才是图标。
+
+产物落在 `frontend/public/`：`logo-full.png`（760×223 字标）、`logo-mark.png`（图标，折叠态用）、
+`logo-32/64/180.png`、`apple-touch-icon.png`。接入位置：侧栏品牌位（展开用字标、折叠用图标）、
+浏览器标签图标与标题、关于弹窗。顺带把界面上的品牌文案统一为 TestCopilot。
+
+> 备注：JS 里 `split()` 在 PixelAccess 写入后返回的是旧 alpha 通道，导致裁切框一直是全幅。
+> 最终改用 `ImageChops.multiply` 构造显式掩膜解决。
+
+### 2. 帮助菜单（含帮助文件）
+
+顶栏新增**帮助**菜单，六个入口：重新观看导航 / 使用文档 / 快捷键 / 检查更新 / 问题反馈 / 关于。
+
+- **帮助文档走后端**（`GET /api/help/docs`），前端不内嵌副本 —— `docs/` 始终是唯一数据源，
+  不会因为改了手册忘了同步而漂移。只暴露白名单三篇（使用手册 + 两个插件手册），
+  内部的 PRD / 架构 / DB 设计文档不外露。
+- markdown 表格：`react-markdown` 不认 GFM 管道表，`remark-gfm` 在本机 node_modules 下装不上，
+  改为**零依赖方案** —— 把文档切成文本段与表格块，表格交给 AntD `Table` 渲染（手册里 29 张表全部正常）。
+
+### 3. 首次运行引导
+
+用 AntD `Tour`（5.29 自带，省掉自绘遮罩）。8 步走完三区：左侧配置 → 顶栏观察 → 搜索/帮助 → 右侧输出。
+
+- 只跑一次：`testcopilot.onboarding.v1` 写在 localStorage，**跳过和走完都会记标记**
+- 帮助 ▸ 重新观看导航 可随时重放（不影响标记）
+- 各区域用 `data-tour` 锚点（logo / nav / topmenus / search / help / dock）
+
+### 4. Issue #25 —— 远程更新服务
+
+| 子任务 | 落地 |
+|---|---|
+| U1 版本来源 | `version.json` 清单 或 `gh:owner/repo`（GitHub Releases），`UPDATE_FEED_URL` / `SystemConfig` 配置 |
+| U2 比对与时机 | 语义化比较（release > 同号 pre-release）；启动检查 + 手动检查；网络异常静默降级 |
+| U3 提示 UI | 启动用**非阻塞 notification**，手动用对话框；带「立即更新 / 稍后 / 不再提示此版本」 |
+| U4 下载校验 | 后台线程流式下载到 `tempfile.gettempdir()`（不用 `/tmp`），**必须 SHA256 校验**，不过就删文件 |
+| U5 应用更新 | 新增 `update_helper.py`（detached）：等父进程退出 → 备份 → 替换（NSIS `/S` 或 zip 目录交换）→ 重启 → 健康检查 → 失败回滚 |
+| U6 回滚 | 更新后 60s 内轮询 `/api/health`，不通则回滚备份并重启 |
+| U7 设置项 | 自动检查（默认开）、自动下载（默认关）、更新源、已忽略版本 |
+
+**安全设计**：客户端不传 URL、不传文件路径。下载由服务端选定资源，安装只接受服务端
+为该次已校验下载签发的 token —— 伪造 token 一律 400。且**必须两次确认**：下载一次、安装一次。
+
+### 5. Issue #26 —— 问题提交功能
+
+| 子任务 | 落地 |
+|---|---|
+| F1 存储 | 新增 `feedback_reports` 表（kind / signature / occurrences / github_issue_number / status…） |
+| F2 接收 | `POST /api/feedback`，含限流（60s / 20 次） |
+| F3 转发去重 | GitHub Token 走环境变量（**绝不下发前端**）；崩溃按 `hash(类型+归一化栈顶N帧+版本)` 去重，新签名开 Issue，已知签名只累加次数 |
+| F4 管理视图 | `GET /api/feedback` 列表 |
+| F5 后端捕获 | 补**通用 FastAPI 异常处理器**（顺带关闭 #13 的缺口）+ `sys.excepthook` + `threading.excepthook` → 落 spool，下次启动补发 |
+| F6 前端捕获 | `ErrorBoundary`（只包路由页，外壳仍在）+ `window.onerror` + `unhandledrejection`，带去重与自上报循环防护 |
+| F7 异常退出检测 | `testcopilot_lastrun.json` 运行标记，干净退出置 true，下次启动发现 false → 记录「上次异常退出」并附日志尾部 |
+| F8–F10 UI | 帮助 ▸ 问题反馈；表单含类型/标题/描述/邮箱(可选)/附日志/崩溃自动上报开关 |
+| F11 脱敏 | API Key、Token、密码、Bearer、JWT、用户主目录路径全部剔除 |
+| F12 离线队列 | 无 Token 或转发失败 → `status=pending`，下次启动 `retry_pending` 补发 |
+
+### 验证
+
+- 新增 `Test/test_update_service.py` **10 项全 PASS**：版本比较 7 例、无源降级、检测、平台选包、
+  下载 + SHA256 一致、伪造 token 被拒 400、**校验失败即删文件**、忽略版本、helper dry-run 不改文件
+- 新增 `Test/test_feedback.py` **10 项全 PASS**：想法提交、**密钥被剔除**、重复崩溃合并为一条且 occ=2、
+  关闭自动上报后崩溃被抑制而手动反馈仍可用、空标题 400
+- 浏览器实测：帮助菜单 6 项；手册 29 张表渲染正常；引导首次弹出、二次加载不再出现；
+  更新提示「发现新版本 — 99.9.0」+ 对话框；手动反馈与崩溃自动上报均 POST 到 `/api/feedback` 并入库
+- `Test/` 7 个脚本全 PASS；端点 16/16；`tsc` + `build` 通过
+
+---
+
+## 2026-10-21: 修复自定义仪表盘不显示数据 —— `since` 参数 400（v2.2.1）
+
+### 现象
+
+打开「自定义仪表盘」，4 个组件全部空白，统一显示「请先在顶部「数据源」选择一个测试用例」，
+但顶部**明明已经绑定了用例**。控制台静默报 400，界面上没有任何错误提示。
+
+### 根因
+
+后端 `app/api/dashboards.py` 解析起始时间用的是裸 `datetime.fromisoformat()`：
+
+```python
+since_dt = datetime.fromisoformat(since)
+```
+
+而前端「清零 / 起始时间」是用 `Date.toISOString()` 写入的，产出**带 `Z` 后缀**的
+`2026-10-17T16:00:00.000Z`。本项目运行在 **Python 3.8**，`fromisoformat()` 直到 3.11
+才支持 `Z` 后缀 —— 于是**只要仪表盘设置过起始时间，snapshot 请求就恒定 400**。
+
+前端 `loadSnapshot` 的 `catch` 又把异常静默吞掉（注释写着「保留上一次快照」），
+快照始终为 `null`，组件便一律落到「请先选择测试用例」这个分支。
+
+即：**数据一直都在，是请求被拒了且没人说**。
+
+### 修复
+
+1. **后端** —— 改用项目已有的 `app.core.timeutils.parse_iso_utc()`（它会把 `Z` 归一为
+   `+00:00`，并处理 naive / 带偏移两种输入），与 `logs.py` 等接口保持一致。
+   非法输入仍然返回 400，不会被静默忽略。
+   `since_dt` 为 aware UTC，经 `UTCDateTime.process_bind_param` 绑定时自动转 naive UTC，
+   与库中 `created_at` 的存储格式（`2026-10-18 07:28:09.030844`）一致，比较不会错位。
+2. **前端** —— `loadSnapshot` 失败时改用 `handleApiError` 弹出提示，
+   不再静默吞掉（这类失败以后看得见）。
+
+### 验证
+
+- 新增回归测试 `Test/test_dash_since.py`，**10/10 通过**：
+  `Z` 后缀 / naive / `+00:00` / 非 UTC 偏移 / 仅日期 均接受；非法值仍 400；
+  未来时间确实过滤为 0 条；两个既有仪表盘按自身 `data_source` 均 200
+- 无头浏览器实测 `/dashboards`：4 个组件全部出数 ——
+  解析数值 `byte1 / PASS / 2 / 采样 20`、趋势曲线坐标轴、判定汇总 `byte0~byte2` 全 PASS、
+  执行统计 `总数 36 · 通过 26 · 失败 10 · 通过率 72.2%`；控制台 400 消失（Empty 提示 0 个）
+- `Test/` 7 个脚本全 PASS；端点 **16/16**；用例 89 条；DEV-002 / DEV-004 仍 connected
+
+---
+
+## 2026-10-19: 英文界面补全 —— 逐个标签页治理并完成复查（v2.2.0）
+
+上一轮（v2.0.1）仅覆盖了「标题 / 表格 title / 状态」三类，点进页面后仍有大量中文。
+本轮按「**逐个页面检查并翻译**」推进，并在完成后**做了第二遍复查**。
+
+### 起点与结果
+
+| 口径 | 起点 | 本轮结果 |
+|---|---|:--:|
+| 页面内唯一中文串（排除注释） | **858** | **0** |
+| 接入 `useI18n` 的页面 | 2 / 16 | **16 / 16** |
+| 词条总量 | 115（仅手写） | **115 手写 + 1036 批量** |
+| `en-US` 缺失 | 0 | **0** |
+
+### 词条库分层
+
+`messages.ts` 只保留**手写**的导航 / 通用 / 设备 / 接口 / 工程词条，批量词条按批拆到独立模块，
+由 `messages.ts` 在模块加载时合并进 zh 与 en 两个语言包（合并幂等，同键同值）：
+
+| 模块 | 条目 | 内容 |
+|---|---:|---|
+| `extraKeys.ts` | 107 + 32 + 42 | 表格列名 · 状态词 · 标签页 · 流程节点 · 数据类型 · 刷新间隔 · 出错策略 · 向导步骤 · 卡片/弹窗标题 · 操作反馈 · 表单标签 · 空状态 · 按钮 |
+| `extraKeys4.ts` | ~180 | 通用词汇（与既有 key 对齐，便于批量替换按中文原文定位） |
+| `extraKeys5–12.ts` | 剩余 | 逐页文案、完整属性值（混合中英串）、最后长尾 |
+
+### 逐页推进
+
+`Logs` → `Dashboard` → `DebugTerminal` → `Reports` → `CustomDashboard` → `SkillEditor` →
+`Plugins` → `ModelConfig` → `Devices` → `ExecutionPlanner` → `TestCases` → `AIChat` →
+`Executions` → `ProjectManager` → `TestFlowEditor` → `PluginEditor`，每页翻译后单独编译验证。
+
+**最终各页界面中文均为 0**（Logs / Reports / AIChat / DebugTerminal / Devices / ExecutionPlanner 率先归零）。
+
+### 工程性难点与处理
+
+1. **模块级常量拿不到 hook** —— 改为工厂函数 `(tr) => [...]`：
+   `Plugins.columns`、`TestFlowEditor.PALETTE` / `VALUE_TYPE_OPTIONS`、
+   `ProjectManager.WIDGET_TYPE_LABEL` / `ON_ERROR_LABEL`、
+   `PluginEditor.TEMPLATE_TYPE_LABEL`、`SkillEditor.SKILL_SCAFFOLD`、
+   `AIChat.BUILTIN_SKILLS`
+2. **非组件函数** —— 追加 `t` 形参：`DebugTerminal.createWebSocket`、`AIChat.readFileAsBase64`
+3. **子组件缺 hook** —— 逐个补：`PluginManagement`、`TerminalWindow`、`SectionTable`、
+   `PlanPreview`、`ComMonitorCard`、`StepList`、`Cell`、`NodeIoBadges`、`DashboardPreview`
+4. **变量遮蔽** —— `PluginEditor` 里模板回调的 `t` 与翻译函数同名，回调改名 `tpl`
+5. **JSON 键名误替换** —— `placeholder='{"测试人员": ""}'` 中的 `"测试人员"` 会被当成普通串替换，
+   已加负向预查 `(?!\s*:)` 守卫；该处示例 JSON 最终改为英文 `{"tester": ...}`
+6. **混合串（`'AI 未提炼出内容'`）** —— 一律转模板字符串 `` `AI ${t('...')}` ``
+7. **JSX 属性缺花括号** —— 每次批量替换后统一跑一遍 `attr=t('k')` → `attr={t('k')}` 归一
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 界面中文（排除注释） | **0** |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| dev 编译新模块 | 5/5 `http=200` |
+| 反引号配对检查 | 全部偶数（修复了 6 处未闭合模板字符串） |
+| `Test/` 7 个脚本 | 全 PASS |
+| `Test/test_blocking.py` | 6/6 PASS |
+| 端点回归 | **16/16 通过** |
+| 数据完整性 | 用例 89 条；PeakCAN 与 MG100 均 `connected` |
+
+> 说明：用户可编辑 / 可输入的内容（测试用例正文、命令、Skill Markdown、报告模板等）
+> 按你的要求**不在本次范围内**，其示例占位符中的值保持原样。
+> 代码注释仍为中文的部分不影响界面，未强行改写。
+
+---
+
+## 2026-10-18: v2.1.0 —— 执行管理器完善 + 自定义仪表盘优化
+
+### 一、执行管理器（`/execution-plans`）
+
+**a) 新建测试计划** —— 顶部工具条新增「新建计划」按钮，一键清空草稿
+（`planId`/名称/循环/并行/失败策略/计划项/校验/运行态）回到初始状态，
+不影响已保存的计划。
+
+**b) 撤销（Ctrl+Z / ⌘Z）**
+
+- 维护一条快照栈（`items` + 计划名 + 循环 + 并行 + 失败策略），最多保留 50 步
+- **所有会改动计划的操作前都会压栈**：加入用例、上下移动、删除、合并组、
+  拆分组、修改项属性、批量复制、批量删除、新建计划
+- 快捷键在输入框 / 文本域 / `contentEditable` 内**不拦截**，保留原生撤销
+- 按钮上实时显示可撤销步数；栈空时禁用
+
+> 计划名输入框的逐字输入不入栈——否则一次改名会塞满整条历史。
+
+**c) 计划项多选 + 批量复制 / 删除**
+
+- 中间「执行序列」表格加勾选列，支持**全选 / 取消选择**
+- 「复制选中（N）」：把勾选项克隆并追加到末尾（新 id，避免与源项冲突）
+- 「删除选中（N）」：批量移除
+
+**d) 已有计划支持选中 / 复制 / 删除**
+
+原先「已有计划」列表只有一行链接，点开之外无法做任何事。现在每行：
+
+- **点击整行**即选中并载入编辑（当前计划以 `--app-accent-subtle` 底色高亮）
+- 行内 **复制** 按钮 → `POST /execution-plans/{id}/duplicate`，复制后自动打开副本
+- 行内 **删除** 按钮 → `Popconfirm` 二次确认；若删除的正是当前编辑的计划，自动回到新建态
+
+后端能力原本就齐备（create / update / delete / duplicate），本次是把它们接到界面上。
+
+### 二、自定义仪表盘
+
+**a) 限值改琥珀色，红色专属于 FAIL**
+
+红色在系统里表示 FAIL / ERROR，用它画阈值会让用户把「超限值」误读成「这条失败了」。
+
+| 位置 | 改动 |
+|---|---|
+| 趋势曲线限值线 | 本就是 `--app-warn`（琥珀），文案由「参考上/下限」改为**「限值上/下限」** |
+| **数据组件判定说明** | `detail` 仅在 `status === 'fail'` 时用红色，**其余（越界/需注意）用琥珀** |
+| **数据组件新增限值徽标** | 配置了 `min_value` / `max_value` 时，卡片上以**琥珀描边徽标**显式标出 `≥x · ≤y` |
+| 组件配置抽屉 | 数据组件此前**没有**限值配置项，现补上「限值下限 / 限值上限」；趋势曲线的「参考」同步改名 |
+
+**b) 执行统计组件：清零 + 可选起始时间**
+
+- 组件顶部新增 **起始时间** `DatePicker`（`showTime`，可清空），
+  清空 = 统计全部历史
+- 新增 **清零** 按钮：把起始时间设为**当前时刻**，计数从 0 重新开始
+- 有窗口时在下方以琥珀提示「统计自 … 起（N 条）」
+
+**后端配套**：`GET /api/dashboards/snapshot` 新增 `since` 参数（ISO-8601），
+按 `TestExecution.created_at >= since` 过滤后再统计；非法值返回 **400 / `40017`**。
+落在仪表盘的 `data_source.since`，刷新后仍保留。
+
+实测：
+
+| 请求 | total |
+|---|---|
+| 不带 since | 115 |
+| `since = 明天` | **0**（即"清零"效果） |
+| `since = 2020-01-01` | 115 |
+| `since = not-a-date` | 400（`40017` 起始时间格式无效） |
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| 计划 新建 / 复制 / 校验 / 删除（API） | 201 / 副本自动打开 / valid=True / 200，无残留 |
+| 快照 `since` 过滤 | 115 → 0 → 115，非法值 400 |
+| `Test/` 7 个脚本 + `test_blocking` 6 项 | 全 PASS |
+| `tsc --noEmit` / `npm run build` | 通过 |
+
+---
+
+## 2026-10-18: v2.0.1 —— PeakCAN 连接回归修复 + 英文版补全
+
+### 一、修复：PeakCAN 无法连接（我自己在 v2.0.0 引入的回归）
+
+**现象**：`POST /devices/connect` 返回 400，报错为「没有可用的 CAN 接口 —— 通常只是内核模块没加载」，
+并附带 `sudo modprobe peak_usb` 提示。按提示排查内核模块**是死路**。
+
+**根因**：v2.0.0 把 python-can 调用移出事件循环时，写成了
+
+```python
+self._bus = await run_blocking(can.interface.Bus, **bus_kwargs)
+```
+
+而 `run_blocking` 当时的签名是 `run_blocking(func, *args)` —— **不接受关键字参数**。
+每个候选接口都抛 `TypeError: run_blocking() got an unexpected keyword argument 'interface'`，
+被 `except Exception` 兜住后，再经 `_explain()` 翻译成「内核模块没加载」，
+把排查方向彻底带偏。
+
+**两层修复**：
+
+1. **修根因（不是改调用点）**：给 `run_blocking` 补上 `**kwargs` 转发，
+   与它所模拟的 `asyncio.to_thread` 语义一致。这样任何 `func(**kwargs)` 调用都不会再踩坑。
+2. **堵住误导**：`connect()` 的异常分支拆成两类 ——
+   `can.CanError / OSError / ValueError` 走「接口不可用」的人话解释；
+   **其余异常（TypeError、AttributeError…）一律 `logger.exception` 后原样抛出**，
+   绝不再包装成硬件/环境问题。
+
+**验证**：`POST /devices/connect` → **200**，`status: connected`。
+
+### 二、防复发：新增 `Test/test_blocking.py`
+
+把这次踩的坑钉成契约，6 项检查全 PASS：
+
+| 检查 | 目的 |
+|---|---|
+| kwargs 被正确转发 | **本次故障的直接回归点** |
+| 位置参数仍然生效 | 防止改坏既有调用 |
+| 位置参数与 kwargs 混用 | 覆盖组合场景 |
+| 阻塞调用在其它线程执行 | 确认真的离开了事件循环 |
+| 阻塞期间事件循环未被卡住 | 确认修复的目的仍然成立 |
+| 异常向上传播 | 防止被静默吞掉 |
+
+> **教训**：给通用工具函数（尤其"转发调用"类）补参数能力时，
+> 必须同步补**覆盖新签名**的测试；否则调用方换个写法就会静默炸掉，
+> 而且错误会被上层的宽泛 `except Exception` 翻译成完全不相干的原因。
+
+### 三、英文版补全
+
+原 i18n 只覆盖导航 / 通用 / 设备 / 接口 / 工程，**16 个页面里只有 2 个接入了 `useI18n`**，
+其余全部硬编码中文（全库约 1800 处中文字符串）。
+
+本次按「**标题 → 表格 title → 状态**」三类系统治理：
+
+- 新增 `src/i18n/extraKeys.ts`，分三批共 **181 条** `中文 → [key, 英文]` 映射：
+  - `EXTRA`（107）：表格列名、状态词、标签页、流程节点类型、数据类型、刷新间隔、出错策略、循环类型、向导步骤
+  - `EXTRA2`（32）：卡片 / 弹窗 / 区块标题
+  - `EXTRA3`（42）：操作反馈（删除失败、保存失败…）、表单标签、空状态、操作按钮
+- `messages.ts` 在模块加载时把三批合并进 zh 与 en 两个语言包
+- **16 个页面全部接入 `useI18n()`**（含子组件：`PluginManagement`、`TerminalWindow`、
+  `SectionTable`、`PlanPreview`、`ComMonitorCard`）
+- 模块级常量（`Plugins.columns`、`TestFlowEditor.PALETTE` / `VALUE_TYPE_OPTIONS`）
+  改为 `(t) => [...]` 工厂函数，因为它们拿不到 hook
+
+**词条总量 296（115 手写 + 181 批量），en-US 缺失 0。**
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_blocking.py` | 6/6 PASS |
+| `Test/` 原有 7 个脚本 | 全 PASS |
+| PeakCAN 连接 | **200 / connected** |
+| MG100 连接 | connected |
+| 命令期间 `/health` 最大延迟 | 111 ms（v2.0.0 修复前 2024 ms） |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| i18n 覆盖 | 16/16 页接入；296 键，en 缺失 0 |
+
+> 说明：页面内仍有约 1587 处中文（多为长句提示、tooltip、告警正文）。
+> 本次按你的要求覆盖了「标题 / 表格 title / 状态」三类；若要 100% 英文，
+> 需再逐条补剩余长尾文案，建议按页面拆成后续小批次推进。
+
+---
+
+## 2026-10-17: v2.0.0 —— 执行卡死修复 + 响应性能优化 + Issue #23 硬编码色 token 化
+
+### 一、修复：正在执行的测试突然卡住（P0）
+
+**根因不是业务逻辑，是插件在 async 函数里做了阻塞 I/O。**
+
+`MiniGateway100Plugin` 的 `send()` 是 `async def`，但内部直接调用 pyserial：
+`self._serial.write(...)` 与 `self._serial.read(1)`（循环读到 `;`）。pyserial 是**同步** API，
+`read()` 会阻塞调用线程直到超时——而它跑在 asyncio 的**事件循环线程**上。
+
+后果是整个进程被拖死，不只是这一条命令：
+
+- 执行计划的进度无法通过 WebSocket 推出去 → 界面上「执行卡住不动」
+- 期间**所有** API 请求排队等待 → 任何按钮点击都像卡死
+
+**实证测量**（发一条 MG100 命令，同时轮询 `/api/health`）：
+
+| 阶段 | 平均 | 最大 | 6 秒内完成请求数 |
+|---|---|---|---|
+| 修复前（空闲） | 15.2 ms | 114 ms | 198 |
+| 修复前（命令中） | 24.7 ms | **2024 ms** | 243 |
+| **修复后（命令中）** | 6.6 ms | **16 ms** | **915** |
+
+2024 ms 恰好等于插件的 `timeout = 2.0`——铁证。
+
+**修复**：新增 `backend/app/core/blocking.py`，提供共享线程池与 `run_blocking()`，
+把同步设备调用移出事件循环。落地位置：
+
+| 文件 | 改动 |
+|---|---|
+| `app/core/blocking.py` | 新增：16 线程的 `BLOCKING_POOL` + `run_blocking()` |
+| `app/communication/__init__.py` | `_run_in_thread()` 改为委托给它，不再另建线程池 |
+| `plugins/mini_gateway100_plugin.py` | `write` / `read` / `reset_input_buffer` / `Serial()` 构造 / `close()` 全部线程化；整帧读取抽成 `_serial_read_frame_sync()` |
+| `plugins/peakcan_plugin.py` | `Bus()` 构造 / `bus.send()` / `bus.shutdown()` 线程化 |
+
+吞吐提升约 **3.8×**，命令期间 P99 延迟从 2 s 降到 16 ms。
+
+### 二、优化：按键卡顿与加载等待
+
+新增 `frontend/src/hooks/usePolling.ts`，替换散落在各页的裸 `setInterval`。解决两个问题：
+
+1. **隐藏页签仍在轮询** —— 切走后各页仍以 2–5 s 频率打后端，白白占用正在跑测试的机器资源
+2. **慢响应会叠加** —— 请求耗时超过间隔时下一个 tick 照常触发，越慢越堵
+
+行为：`document.hidden` 时跳过；上一次请求未结束不发起新的；回到页签立即补一次。
+
+接入 6 处：`Executions`(2s) / `ExecutionPlanner`(2s) / `Logs`(5s) / `DebugTerminal`(5s) /
+`Dashboard` / `CustomDashboard`。
+
+### 三、Issue #23：172 处硬编码色 token 化
+
+静态扫描 `frontend/src`：硬编码十六进制 **207** 处，扣除调色板定义本身
+（`tokens.ts` 29 + `cssVars.ts` 注释），实际需治理 **170** 处，集中在
+`DebugTerminal`(40)、`dashboard/widgets.tsx`(33)、`Dashboard`(16)、`Executions`(13)、
+`CustomDashboard`(11)、`AIChat`(12)、`registry`(8)、`ParsedTrendChart`(8)、`StatusTag`(7)。
+
+**新增应用级语义变量**（`cssVars.ts`，模式相关）：
+
+- 表面：`--app-bg / --app-surface / --app-surface-muted / --app-surface-sunken / --app-hover`
+- 描边：`--app-border / --app-border-strong`
+- 文字：`--app-fg / --app-fg-muted / --app-fg-subtle`
+- 交互：`--app-accent / --app-accent-hover / --app-accent-subtle`
+- 状态：`--app-pass`（仪器蓝）/ `--app-fail`（信号红）/ `--app-warn` / `--app-running`
+- 场景：`--app-code-bg/fg`、`--app-danger-bg`、`--app-bigscreen-bg`、`--app-on-dark`
+- 图表色序：`--app-series-1…8`（由调色板派生，替换 AntD 彩虹盘）
+- 终端：`--term-*`（调试终端**恒为深色**，不随主题翻转，符合串口终端习惯）
+
+语义收敛：
+
+- 绿色 `#52c41a`（PASS / 已连接）→ `--app-pass`（仪器蓝，与 #20 约定一致），**绿色彻底退出**
+- `#ff4d4f` → `--app-fail`；`#faad14`/`#fa8c16` → `--app-warn`；`#1677ff` → `--app-accent`
+- 终端 sent=`--term-sent`(蓝) / received=`--term-recv`(中性) / data=`--term-data`(琥珀)
+- `main.tsx` 的 `colorPrimary` 改为引用 `blue[500]`；`theme/index.tsx` 的 Layout 背景改用 `graphite`
+
+**结果**：`frontend/src` 中除 `theme/tokens.ts`（调色板定义，29 处，应保留）外，
+**硬编码色归零**。
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/` 7 个脚本 | 全 PASS |
+| 端点回归（16 个） | 全通过 |
+| 设备命令期间 `/health` 最大延迟 | **16 ms**（修复前 2024 ms） |
+| `tsc --noEmit` / `npm run build` | 通过 |
+| dev server 新模块 | `DebugTerminal` / `widgets` / `Dashboard` / `cssVars` / `usePolling` 均 200 |
+| 数据完整性 | 用例 89 条、设备 DEV-001~004 完整 |
+
+---
+
+## 2026-10-17: 工程配置可视化 —— 仪表盘画 layout 图、执行计划展开用例（v0.17.1）
+
+v0.17.0 把工程配置展示出来了，但两段内容与用户心智不匹配，继续优化。
+
+### 1. 仪表盘：直接显示 layout 缩略图
+
+原来仪表盘段是参数表格（一串 `x/y/w/h` + `widgets` JSON），用户看不懂。
+
+改为**把 `layout` 画成缩略图**：
+
+- 12 列栅格，每个挂件按其 `x / y / w / h` 绝对定位
+- 行高固定 **26px**（`LAYOUT_UNIT`），整块高度 = 总行数 × 26 + 8
+  —— 实测「长稳视图」4 挂件 12 行 → 320px，「调试视图」3 挂件 14 行 → 372px
+- 方框内显示**挂件标题 + 中文类型名**（解析值 / 趋势图 / 判定汇总 / 执行统计 /
+  设备状态 / 通信日志）
+- 配色走 `--flow-badge-*` / `--flow-canvas-bg` 变量，深/浅主题都正常
+- 原始参数没有丢：折叠面板「查看原始参数」里仍可展开完整 `layout` + `widgets` JSON
+
+脚本校验：两个仪表盘**越界挂件 0、缺标题 0**（`x + w ≤ 12` 全部成立）。
+
+### 2. 执行管理器：展开计划项并显示测试用例
+
+计划行本身只有「循环 1 次、最大并行 4、出错中止」，
+真正要看的是**跑哪些用例、在第几组**。改为展开计划项：
+
+| 列 | 内容 |
+|---|---|
+| 组 / 序 | `group_no` / `seq` |
+| **测试用例** | 由 bundle 内的 `test_cases` 把 `testcase_id` 解析成**用例名称**（不再显示 ID） |
+| 循环 | `loop_count` |
+| 前置 / 后置延时 | `delay_before_ms` / `delay_after_ms`，0 显示 `-` |
+| 设备 | `resolved_device_ids` 解析成**设备名称**，为空显示「自动推断」 |
+| 节点数 | `node_count` |
+
+顶部再补一行计划属性：整体循环次数、最大并行、出错策略、计划项数量。
+
+脚本校验：2 个计划 4 个计划项，**用例名未解析 0**（全部命中 bundle 内用例）。
+
+### 验证
+
+`tsc --noEmit` + `npm run build` 通过；dev 可编译 `ProjectManager`；
+`GET /api/projects/CANTestPeakCANandMGW` 数据完整，解析全部命中。
+
+---
+
+## 2026-10-17: 项目工程树状展开 + 主页面展示工程配置（v0.17.0）
+
+### 需求
+
+「项目工程」页面原先只有一个平铺表格，工程名与配置内容混在一行里，
+看不到某个工程**具体包含了哪些配置**。改为：
+
+- 左侧**树状列出已保存的工程名称**，可展开看到各配置段及条数
+- **点击工程名 → 右侧主页面展示该工程的全部配置**
+
+### 1. 左侧工程树
+
+- 顶层节点 = 工程名（带版本 Tag、配置总项数、损坏标记）
+- 子节点 = 7 个配置段，各带条数；条数为 0 的段降低透明度
+- 支持展开/收起，选中态高亮
+
+### 2. 右侧配置详情
+
+点击工程名后调用 `GET /api/projects/{name}` 拉取该工程文件并渲染：
+
+| 区域 | 内容 |
+|---|---|
+| 标题栏 | 工程名、版本、文件名、大小、导出时间；损坏文件给出错误提示 |
+| 操作按钮 | 导入 / 下载 / 覆盖同步 / 重命名 / 删除（原表格行内操作上移） |
+| 配置段概览 | 7 个 Tag，点击即只看该段 |
+| 配置明细 | 每个配置段一张表 |
+
+- **点单个配置段**只看该段，点工程名看全部
+- **打开页面自动选中最近保存的工程**，不必先点一下才有内容
+- 删除当前工程时同步清空详情面板，不残留失效数据
+
+### 3. 通用配置表 `SectionTable`
+
+工程各段 schema 差异极大（设备行与测试用例行几乎没有共同字段），
+所以列不做预设，而是**从数据自动推导**：
+
+- 取前 30 行字段并集、最多 8 列，主键列宽 200、其余 170
+- 对象/数组用 `JSON.stringify` 后**截断到 60 字符，完整值放 `title` 悬停**
+- 布尔渲染为「是 / 否」，空值渲染为 `-`
+- `api_key_encrypted` / `password` / `secret` / `token` 一律不展示（bundle 本身已剔除，此处再兜一层）
+- 超过 20 行分页（simple 模式），最多渲染 200 行，避免 89 条用例一次铺开
+
+### 4. 清理
+
+删除改造后失效的旧表格 `columns` 定义（87 行）与 `Table` 导入；
+按钮文案改用已有 i18n 键（`common.import` / `common.download` / `common.rename` / `common.delete`）。
+
+### 验证
+
+`tsc --noEmit` + `npm run build` 通过；dev server 可编译 `ProjectManager`；
+`GET /api/projects/CANTestPeakCANandMGW` 返回 200（545 KB），
+7 段数据完整（模型 1 / 设备 4 / 插件 3 / Skill 5 / 用例 89 / 计划 2 / 仪表盘 2）。
+
+---
+
+## 2026-10-17: 流程图节点配色细化 —— 莫兰迪色调（v0.16.1）
+
+Issue #22 合入后的配色细化反馈。此前「方案 A」为强调用形状/填充模式区分，
+把多数节点做成了近黑深底 + 空心描边，实测观感偏重、且空心节点在面板里几乎看不见。
+
+### 1. 节点面板菱形块补底色
+
+面板里的「判断」此前是 `clip-path` 菱形 + **透明底**，看起来像什么都没有。
+现在改为：菱形块**直接使用该类型的填充色**（与拖到画布上一致），
+菱形通过一个小方块 `rotate(45deg)` 标识体现 —— 这样边框不会被 `clip-path` 裁掉，
+文字也不会被切角。
+
+### 2. 节点底色重排（整体向莫兰迪色调靠近）
+
+低饱和、中明度的填充成为统一基调，**文字统一改白色**；循环是唯一例外（浅琥珀底 + 深琥珀字）。
+
+| 类型 | 底色 | 文字 | 对比度 |
+|---|---|---|:--:|
+| 开始 | `#1D5B75` 深莫兰迪蓝 | 白 | 7.49 |
+| 初始化 | `#427A94` 蓝灰 | 白 | 4.73 |
+| 操作 | `#3D4752` 石墨灰（**不再是近黑的 `#1C2228`**） | 白 | 9.45 |
+| 判断 | `#246F90` 仪器蓝（偏浅） | 白 | 5.60 |
+| 循环 | `#F9E9CE` 浅琥珀 | `#875D21` 深琥珀 | 4.86 |
+| 延时 | `#5A6672` 中灰 + 虚线 | 白 | 5.87 |
+| 结束 | `#232A31` 深灰 | 白 | 14.51 |
+
+七种底色的**白字对比度全部达到 WCAG AA（≥ 4.5:1）**。
+循环原本直接用 `amber[700]`（`#B87A22`）只有 **3.01:1**，不达标，
+故再向石墨压暗为 `mix(amber[700], graphite[900], 0.70)` = `#875D21`，提升到 4.86。
+
+灰阶明度阶梯（保证黑白截图仍可区分）：结束 2.2 < 操作 6.1 < 开始 9.0 < 延时 12.9 < 判断 15.9 < 初始化 17.2 < 循环 82.9。
+
+### 3. 连接点统一仪器蓝
+
+- 所有连接点改为 **仪器蓝 `#2296C4` + 浅色轮廓线**，不再随节点类型变色
+- **选中时高亮**：连接点变 `blue[300]` 并加外圈蓝环（`.react-flow__node.selected .react-flow__handle`）
+- **判断的是/非出口保留深浅对比**，但同属蓝色系：是 = `#156B8C`（深）、非 = `#8FCBEA`（浅）
+- 优先级处理：选择器加 `.react-flow` 前缀提升权重，避免被 reactflow 自带样式覆盖
+
+---
+
+## 2026-10-17: 流程图编辑器 UI 统一：方案 A（单色系）+ 循环节点改用琥珀（Issue #22）（v0.16.0）
+
+### 背景
+
+`TestFlowEditor.tsx` 内有 **48 处硬编码十六进制色**，横跨 7 个色相（绿 / 红 / 蓝 / 琥珀 / 紫 / 青 / 橙），
+全部取自 AntD 默认调色盘。最严重的是**语义污染**：开始节点绿、结束节点红，
+而系统里红色专属于 FAIL/ERROR —— 工程师会把红色「结束」误读成「这条流程失败了」。
+
+按 Issue 决策采用**方案 A**：以 Graphite 明度 + Instrument Blue 为底，节点类型靠
+**图标 · 形状 · 填充模式**区分；**唯一例外：循环节点使用琥珀**。不新增色相。
+
+### 1. 新增 `src/theme/cssVars.ts`
+
+画布里有 SVG `fill`、ReactFlow `Handle`、`<pre>` 等拿不到 antd JS 主题对象的角落。
+新增模块把 `tokens.ts` 的色阶**派生为 CSS 自定义属性**（`--g-*` / `--b-*` / `--a-*` / `--r-*`
++ 一组 `--flow-*` 语义变量），由 `ThemeProvider` 注入 `<style>`：
+
+- 全部取值由 `tokens.ts` 计算而来（含 `mix()` 线性混色），**不二次硬编码任何 hex**
+- 浅/深两套表面值挂在 `:root` 与 `:root[data-theme='dark']`，自动跟随主题切换
+- 实测取值：画布底 浅 `#FFFFFF` / 深 `#0E1114`；循环色条两态均为 `#E8A33D`；
+  选中环 `rgba(34,150,196,.45)`；琥珀文字 浅 `#B87A22` / 深 `#E8A33D`
+
+### 2. 节点类型编码表（已落地）
+
+| 类型 | 编码 | 颜色来源 |
+|---|---|---|
+| 开始 | 描边空心 + 蓝文字 | `--flow-node-outline-*` |
+| 初始化 | 低饱和蓝底 + 蓝文字 | `--flow-node-tint-*`（12% 蓝，由 `mix()` 派生） |
+| 操作 | 石墨实心 | `--flow-node-solid-*` |
+| 判断 | **菱形**（形状编码，颜色不参与） | `--flow-node-weak-bg` + 石墨描边 |
+| **循环** | 深底 + **1px 琥珀描边 + 左侧 3px 琥珀色条** + 琥珀图标文字 | `--flow-loop-*` |
+| 延时 | **虚线**边框 + 弱化文字 | `--flow-node-dashed-*` |
+| 结束 | 弱化深底（**不再是红色**） | `--flow-node-dim-*` |
+
+脚本校验确认 `nodeSurface()` 的 7 个分支中，**只有 `loop` 分支引用琥珀**。
+
+### 3. 琥珀用法边界
+
+琥珀在系统里的既定语义是「运行中 / 需注意」。为避免「循环节点」被误读成「正在运行」，二者走**不同形态通道**：
+
+1. **循环（类型）** = 静态琥珀描边 + 左 3px 色条 + 琥珀图标 —— 节点固有属性，**静止不动**
+2. **运行中（状态）** = `NodeRuntimeRing` 外圈**脉冲光晕**（`flow-pulse` 呼吸动画）
+   + 右上角 `SyncOutlined` 旋转角标 —— 临时状态，**动态可见**
+3. 多个循环共存时色条**恒为 3px**，不随数量变化
+
+### 4. 与配色无关的共用修复
+
+| 修复项 | 做法 |
+|---|---|
+| 48 处硬编码色 → token | 全部改为 CSS 变量（含 `rgba()` 徽标底色） |
+| 结束节点不再用红色 / 绿色彻底移除 | 红专属于 FAIL/ERROR |
+| 圆角统一 ≤ 6px | 取消开始 / 结束的 20px 胶囊 |
+| 撤销 / 重做换原生图标 | `UndoOutlined` / `RedoOutlined`，**删除镜像翻转 hack**（此前「返回」与「撤销」都叫 ArrowLeft，重做则是同一个箭头水平翻转） |
+| 工具栏按语义分 5 组 | ① 历史 · ② 编辑 · ③ 危险（删除）· ④ 视图 · ⑤ 提交（保存/生成代码），`Divider` 分隔 |
+| 「生成代码」按钮去紫色 | 紫色 `#722ed1` 不在色板内，改为与保存一致的单一主色 |
+| 画布网格 / 全屏背景 / 代码区改 token | 全屏不再出现「白色孤岛」，`<pre>` 不再是写死的 VSCode 深色 |
+| 节点面板 | 宽度 120 → **148**，深色卡片 + hover 抬升 + 拖拽手型反馈 |
+| AntD 预设语义色清除 | `cyan` / `geekblue` / `purple` / `blue` / `green` Tag 全部改为中性或主题变量 |
+
+### 验证
+
+- 脚本逐条核对验收清单：**无硬编码 `#xxxxxx`、无 `rgba()`、画布无红绿、仅 `loop` 分支用琥珀、
+  撤销/重做为原生图标且无 `scaleX` 残留、工具栏 5 组、圆角 ≤ 6px、面板 148px**
+- `tsc --noEmit` + `npm run build` 通过；dev server 可编译 `TestFlowEditor` / `cssVars` / `theme`
+- `Test/` 7 个脚本全 PASS
+- 功能回归：新建**含 2 个循环的 7 节点**流程 → 保存 200、生成代码 200（6343 字符，含循环与延时），用例已清理
+
+> 待人工目视确认：「黑白截图下五种类型可区分」「1280×720 无溢出」—— 需浏览器实看。
+
+---
+
+## 2026-10-17: 抽屉展开面积 + P3 页面级优化（Issue #21，从 #20 拆分）（v0.15.0）
+
+Issue #20 的 P3（约 2 人日）拆分为独立 Issue **#21**，本版本实现并关闭。
+
+### 1. 抽屉展开面积与交互（先修）
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 展开宽度 | 420px，执行结果/报告看不清 | `min(720px, 58vw)` —— 按视口收敛，小屏也留得出正文区 |
+| 收起态交互 | 单击展开 | **单击展开；双击直接全屏** |
+| 全屏按钮 | 已有 | **保留**（`Esc` 退出） |
+
+### 2. 插件中心：三路由合并为一个
+
+`/plugins`、`/plugin-editor`、`/skill-editor` 三个平级入口合并为**一个 `/plugins` 路由**，
+内部三个 Tab（插件管理 / 插件编辑器 / Skill 编辑器）：
+
+- 编辑器面板改为 `lazy()` 懒加载，不进首屏包
+- **旧路由保留**：`/plugin-editor`、`/skill-editor` 仍可访问并自动落到对应 Tab，
+  既有链接与书签不失效
+- 页面内原本跳编辑器的按钮/链接改为切 Tab
+
+### 3. ⌘K / Ctrl+K 全局命令面板
+
+- 快捷键 `⌘K`（macOS）/ `Ctrl+K`（Win/Linux）唤起，`Esc` 关闭，顶栏也有搜索入口
+- 搜索范围：左侧 8 项导航 + 顶栏 2 项 + 输出区 2 Tab + **设备（按设备ID号/名称）** + **测试用例（直达流程图）**
+- `↑↓` 选择、`Enter` 打开；结果为「导航 / 设备 / 用例」分组
+- 导航定义抽到 `src/config/navigation.tsx`，侧栏、顶栏下拉、命令面板**共用同一份**，不会再漂移
+
+### 4. 三栏布局
+
+| 页面 | 结果 |
+|---|---|
+| 执行计划 `/execution-plans` | 复核发现**原本已是三栏**（`Row` + `Col` 6/13/5：计划列表 / 计划项编排 / 属性校验），本次补齐了缺 width 的「用例」列 |
+| 调试终端 `/debug-terminal` | 原为 `设备列表 \| 收发窗口` 两栏，新增**第三栏「指令 / 历史」**（按设备记录，点击即填入输入框），构成 `设备选择 \| 收发窗口 \| 指令/历史` |
+
+### 5. 流程图沉浸模式
+
+进入 `/testcases/:id/flow` 时侧栏自动折叠、输出区让位；顶栏出现**「退出沉浸」**按钮，
+离开路由自动恢复。用户不会被"没有菜单"困住。
+
+### 6. 项目向导（`/projects`）
+
+三步引导：**选配置段 → 命名 → 确认生成**，复用现有"另存为"能力。
+新增工程**不影响当前系统配置**（导引里明确说明；要清空工作区请用「新建项目工程」）。
+
+### 7. P2 收尾：剩余表格页应用规范
+
+`Logs` / `Reports` / `Plugins` / `ExecutionPlanner` / `Executions` / `TestCases`
+全部改用 `DataTable`，并补齐缺失的列宽，消除 dev 下 `[DataTable] columns without an explicit width` 告警。
+
+### 8. 无障碍
+
+- 新增 `:focus-visible` 焦点环（仪器蓝 `#2296C4`），鼠标点击不显示、键盘聚焦才显示
+- 新增 `prefers-reduced-motion` 媒体查询，系统开启"减弱动效"时关闭动画与过渡
+
+### 验证
+
+`tsc --noEmit` 与 `npm run build` 通过；dev server 可编译全部新模块；
+`Test/` 7 个脚本全 PASS；15 个端点失败数 0；用例 89 条、设备 DEV-001~004 完整。
+
+---
+
+## 2026-10-17: GUI 三区布局重构（Issue #20，P0–P2）（v0.14.0）
+
+> Issue #20 的方案文档 `docs/UI_REDESIGN_PLAN.md` 与预览页 `docs/ui-preview-*.html`
+> **未提交到仓库**（仅存在于本地），因此按 Issue 正文的规格实现。
+
+### P0 主题与 Token
+
+新建 `src/theme/tokens.ts`，三层结构（primitives → semantic → component）：
+
+| 色系 | 主值 | 分工 |
+|---|---|---|
+| Graphite 石墨灰 | `#0E1114` ~ `#EDF1F5` | 中性 ~90% |
+| Instrument Blue 仪器蓝 | `#2296C4` | 唯一交互色：主按钮 / 选中 / 链接 / **PASS** |
+| Amber 琥珀 | `#E8A33D` | 运行中 / 需注意 |
+| Signal Red 信号红 | `#FF7B72` | **FAIL / ERROR**（状态功能色） |
+
+`src/theme/index.tsx` 的 `ThemeProvider` 接入 `theme.darkAlgorithm`，
+主题模式写入 `localStorage` 并同步 `document.documentElement.dataset.theme`，顶栏可一键切换。
+
+### P1 布局与导航（左侧 3 组 8 项）
+
+`AppLayout.tsx` 重写：
+
+- **左侧**：208 / 56 折叠，3 组 8 项
+  - 配置与接入(1)：设备管理
+  - 设计与编写(4)：测试用例、AI 助手、执行管理器、调试终端
+  - 系统(3)：插件中心、模型配置、项目工程
+- **顶栏**(56)：看板▾（仪表盘 / 自定义仪表盘）、工具▾（通信日志）+ 语言 / 主题 / 重启
+- **状态条**(32)：后端在线、已连接设备数、运行中任务数（任意页面常驻）
+
+补齐 i18n 词条（分组名、顶栏、状态条、输出区），中英 100% 覆盖。
+
+### P1·B 输出 / 交付区（右侧抽屉）
+
+新建 `OutputDock.tsx` 与全局 store `stores/outputDockStore.ts`（Zustand —— 展开/pin/Tab 属跨页状态，
+放组件里会在切页时丢失）：
+
+| 状态 | 宽度 | 进入 / 退出 |
+|---|---|---|
+| ① 收起（默认） | 34px 竖条 | 配置页默认态 / 点竖条展开 |
+| ② 展开 | 420px | 点箭头 或 **点「启动」自动展开** / 未 pin 时切页自动收起 |
+| ③ 全屏 | 铺满工作区 | 展开态点全屏 / `Esc` 退出 |
+
+- 双 Tab：测试执行（`PlayCircleOutlined`）、输出报告（`FileDoneOutlined`）
+- pin 持久化到 `localStorage`；未 pin 时切左侧菜单自动收起
+- 收起态竖条显示运行中任务数（>0 时琥珀色徽标）
+- 任意页面点「启动」→ `openDock('executions')` 自动展开并切到测试执行 Tab
+- 当路由本身是 `/executions` 或 `/reports` 时抽屉让位，避免与路由页重复渲染导致重复 WebSocket
+
+### P2 组件规范（闭环 #17 / #19）
+
+新建 `src/components/ui/`：`DataTable`（强制列宽 + `scroll.x`，dev 下对缺 width 的列告警）、
+`StatusTag`（图标 + 文字 + 颜色三重编码）、`PageContainer`、`EmptyState`、`MonoText`。
+已在设备管理页落地示范（含 `device_key` 列宽、状态用 `StatusTag`）。
+
+### 其它验收项
+
+- **`.big-dash` 的 4 处 `!important` 已全部删除** —— 改为提高选择器特异性
+  （`.big-dash .ant-statistic .ant-statistic-title` 等），不再阻断主题切换
+- **全站无残留 `ExperimentOutlined` 烧杯** —— 已统一改为 `DiffOutlined`（预期 vs 实际）
+
+### 验证
+
+`tsc --noEmit` 与 `npm run build` 通过；dev server 可正常编译全部新模块；
+`Test/` 7 个脚本全 PASS；15 个端点失败数 0。
+
+> **未完成（Issue #20 的 P3 页面级优化）**：总览重构、执行计划三栏、调试终端三栏、
+> 流程图沉浸模式、插件三页路由合并、⌘K 搜索、项目向导，以及 P2 剩余表格页改造。
+> 该阶段约 2 人日，Issue 保持开启。
+
+---
+
+## 2026-10-17: 设备ID号（稳定标识）+ 切换设备重生成代码 + 加载性能优化（v0.13.0）
+
+### 1. 设备ID号：用稳定标识替代易变主键
+
+v0.12.1 修掉了"失效绑定导致用例不执行"，但那只是**事后补救**。真正的结构性问题是：
+设备**删除后重新添加会拿到新的主键**，而用例把这个主键写死在流程里，必然会再次失效。
+
+因此引入**设备ID号（``device_key``）**——一个由用户掌握、稳定不变的业务标识：
+
+| 层 | 内容 |
+|---|---|
+| 数据模型 | `Device.device_key`（`VARCHAR(64)`，**唯一索引**）；启动迁移时按创建顺序自动回填 `DEV-001`、`DEV-002`… |
+| 用例绑定 | 流程节点的 `config.device_key`；上线时把存量 `device_id` 绑定**回填为 device_key（93 个节点）** |
+| 解析顺序 | `device_key` → 旧 `device_id`（兼容）→ 命令推断出的协议；旧 id 悬空时仍回退，行为不劣化 |
+| 唯一性 | 创建时重复 → **409**；更新时与其它设备冲突 → **409** |
+| 换硬件的正确姿势 | 把**同一个设备ID号赋给新设备**，原有用例无需任何改动 |
+
+### 2. 切换设备接口（切换后自动重新生成代码）
+
+`POST /api/testcases/{id}/switch-device`，按**设备ID号**重新绑定，并**立即返回重新生成的代码**：
+
+- `to_device_key`（必填）：目标设备ID号
+- `from_device_key`（可选）：只切换当前绑定该设备的步骤；留空则切换本用例**全部**已绑定步骤
+- 返回：`changed_nodes`（逐个节点的前后绑定）、`device`、**`code`** 与 `summary`
+
+这样"换设备后代码还是旧的"这类漂移被消灭在接口里——切换与重新生成是**一个原子操作**。
+
+前端：用例列表每行新增 **切换设备** 按钮（选择目标/来源设备ID号），完成后显示"已切换 N 个步骤 → DEV-00x，已重新生成代码"。
+设备列表新增 **设备ID号** 列（可点击修改）。
+
+配套接口：
+- `POST /api/testcases/backfill-device-keys` —— 把旧 `device_id` 绑定翻译成 `device_key`（幂等）
+- `GET /api/testcases/stale-devices` —— 报告失效绑定（已支持按 device_key 判定）
+
+### 3. 加载性能优化
+
+先量化：后端所有列表接口 **25~50 ms**、数据量也很小（用例 89 / 执行 46 / 日志 3721 行）。
+所以慢不在后端，而在前端：
+
+**① dev 依赖未预打包（主因）**
+`node_modules/.vite/deps` **是空的** —— 意味着 dev 模式下每打开一个页面都要逐文件拉取
+antd、图标、reactflow 等（antd 单包数千个模块）。在 `vite.config.ts` 增加
+`optimizeDeps.include`（react / antd / 图标 / reactflow / recharts / markdown / grid / axios / dayjs / zustand），
+重建后 **deps 从 0 → 32 个预打包文件**，页面切换从"数千个请求"降为"几十个"。
+
+**② 执行页 WS 消息逐条触发整页重渲染**
+`Executions.tsx` 有 1382 行，而 200ms 周期用例每秒会产生多条帧，
+每条都 `setLines(...)` → 整页重渲染 → 页面"反应慢"。改为**批量合并**：消息先入缓冲，100 ms 统一 flush 一次
+（暂停期间的缓冲逻辑不变，卸载时兜底 flush）。
+
+### 4. 验证
+
+| 项 | 结果 |
+|---|---|
+| 设备ID号分配 | `DEV-001`~`DEV-004` 自动分配；新建自动取 `DEV-005`；重复 → 409 |
+| 存量绑定回填 | **93 个节点** `device_id → device_key`；失效绑定 **0** |
+| 切换设备 + 重生成代码 | **15/15**：切换 4 个节点、返回重新生成代码（8417 字符）、与 `generate-code` 结果一致、可切回还原 |
+| 真实执行（按 device_key 解析） | `tc_9158200f` **passed**，通信日志 **+42** |
+| `Test/` 全部 7 个脚本 | 全 PASS（带统一重连，避免连续跑时设备互相干扰） |
+| 功能套件 | 设备ID号 15/15、MG100 29/29、接口 32/32、附件 7/7、工程文件闭环 PASS |
+| 端点回归 | 15 个失败数 0；用例 89 条完整 |
+| 前端 | `tsc --noEmit` + `npm run build` 通过 |
+
+---
+
+## 2026-10-16: 修复「用例无法执行 + 通信窗口无消息」——失效的设备绑定（v0.12.1）
+
+### 现象
+
+用例能启动，但**执行中的通信窗口完全没有任何消息**；步骤直接判失败。
+
+### 根因：流程里硬编码的 `device_id` 已失效
+
+设备**删除后重新添加会拿到新的 id**（名称与协议不变）。而流程节点把设备写死在
+`config.device_id` 上，于是所有指向旧 id 的流程全部悬空：
+
+```
+步骤结果: [未执行] Device dev_30a07f0a is not connected
+```
+
+执行引擎 `_resolve_device()` 只要看到 `device_id` 就**无条件返回**，不做任何存在性校验；
+随后 `send_command()` 抛错 → 步骤失败 → **一条指令都没下发 → 通信窗口自然是空的**。
+
+实测范围：89 个流程中 **9 个绑定了设备，且 9 个全部失效**
+（`dev_7d2cc656` 被 6 个用例引用、`dev_30a07f0a` 被 5 个引用）；
+其余 80 个未绑定设备、靠协议推断，因此不受影响——这也解释了"部分用例是好的"。
+
+### 修复
+
+1. **执行引擎：绑定的设备必须先有效**
+   `_resolve_device()` 改为先查库校验：
+   - 存在且已连接 → 正常返回
+   - **不存在（悬空 id）→ 记 WARNING 并回退到协议推断**（与运行时同一套推断逻辑，不会串台）
+   - 存在但未连接 → 返回 `None`，**绝不静默改投别的设备**（否则会把 CAN 报文发给网关，
+     测试看起来"跑了"实际没发），并在 `_missing_device_hint()` 里点名该设备："请先连接该设备"
+
+2. **清理存量数据：`GET/POST /api/testcases/stale-devices` / `rebind-devices`**
+   扫描所有流程，把失效 id 按**节点自身命令推断出的协议**改指向当前设备。
+   本次修复 **93 个节点**（`dev_7d2cc656 → dev_9fe2d1cf`、`dev_30a07f0a → dev_0b343a10`），修复后失效绑定为 **0**。
+
+3. **协议推断补漏**
+   节点命令 `打开 PCAN 通道：can.Bus(interface='pcan', …)` 未被识别为 peakcan，原因有二：
+   `_PYCAN_FN_RE` 的备选项里**没有 `can.Bus`**，且用的是**行首锚定 `match`**，被中文前缀挡住。
+   已补上 `can\.Bus|Bus`，并改为 `search`。
+
+4. **前端预防**：测试用例页在检测到失效绑定时弹出告警条 + **「重新绑定设备」** 按钮，
+   说明"为什么通信窗口没消息"，避免下次再静默踩坑。
+
+### 顺带修掉测试不稳定（非产品问题）
+
+`Test/test_ws_monitor.py` 偶发失败于"未收到 `execution_completed`"：
+- 状态轮询会**抢在 WS 终帧之前**退出循环 → 改为退出后再收尾排空在途消息
+- 该用例是 200ms 周期发送的长时间用例，**60s 等待窗口不够** → 改为等到执行真正进入终态（上限 300s）
+
+### 验证（真实硬件）
+
+| 用例 | 修复前 | 修复后 |
+|---|---|---|
+| `tc_9158200f`（PeakCAN，绑定 `dev_30a07f0a`） | failed / `is not connected` | **passed**，通信日志 +42 |
+| `tc_7653d5b2`（PeakCAN） | — | **passed**，+4 |
+| `tc_fc0bb5d1`（MG100，绑定 `dev_7d2cc656`） | — | **passed**，+34（真实响应 `2000,1.0,120000,…,MGW100_V1.4.8`）|
+| `tc_799c722d`（MG100） | — | **passed**，+36 |
+| WebSocket `/ws/executions/{id}` | — | 收到 `connected` + `step_started`×N + `step_completed`×N + `execution_completed` |
+| 失效绑定 | 9 个用例 | **0** |
+| `Test/` 全部 7 个脚本 | — | **连续两轮全 PASS** |
+| 功能套件 + 15 个端点 | — | 29/29、32/32、7/7、PASS；端点失败数 0 |
+
+---
+
+## 2026-10-14: 新建项目工程 + AI 助手改版（附件/布局）+ 性能优化与国际化（v0.12.0）
+
+### 1. 项目工程：新建项目工程
+
+新增 `POST /api/projects/new`，清空工作区以开始新项目，**默认保留 AI 模型配置**
+（接口地址与 API Key 属于环境配置而非项目数据，每次新建都重填是纯粹的摩擦）。
+
+- 清空范围：设备 / 插件 / **Skill（磁盘上的 Markdown）** / 测试用例（含流程图）/ 执行计划 / 仪表盘
+- **执行历史与通信日志不删除**（不是"配置"）
+- 必须显式 `confirm: true`，否则 400；可传 `keep_models: false` 连带清模型
+- 返回每个配置段的清除条数与 `kept` 列表，前端如实展示"清空了什么、保留了什么"
+
+前端在「项目工程」页新增同名按钮 + 破坏性确认弹窗（列出将被清空的段、可勾选是否保留模型）。
+
+实测 21/21：清空 104 项、模型保留、导入备份 bundle 后 7 段计数全部还原。
+
+### 2. AI 助手改版
+
+**布局**：输出区（对话 / 生成的用例 / 项目记忆 / 查询结果）移到**上方**，
+输入区（含模型选择、Skill、附件）固定在**下方**——符合"上面看结果、下面继续聊"的直觉。
+
+**附件（文件 + 图片）**：
+
+| 类型 | 处理 |
+|---|---|
+| 文本文件（`.txt/.md/.csv/.log/.json/.py/…`） | base64 解码后作为带标记的正文块内联进消息 |
+| 图片 | 按 provider 组装多模态内容：OpenAI 系用 `image_url` data URI，Anthropic 用 `source.base64` |
+| 超长文本 | 截断到 12 万字符并标注 |
+| 模型不支持视觉 | 捕获报错后**自动降级为纯文本重试**，并在回复前加醒目提示，而不是抛错 |
+
+实测 7/7：AI 正确读出文本附件里的 `MG100-SECRET-8823`；
+**当前 deepseek 模型支持视觉**——2×2 纯红 PNG 被识别为"红橙色 / 砖红 #C84637"。
+
+### 3. 性能优化（看板待办：启动速度 + 大数据量日志渲染）
+
+**数据库写入（日志热路径）**：
+
+- `CommunicationLog` 的列上 `index=True` 与 `__table_args__` 里的 `idx_logs_*`
+  **重复建了索引**——同一列上两套一模一样的索引，每写一条日志都要维护两遍。
+  移除 `index=True`，并在轻量迁移里 `DROP INDEX IF EXISTS` 掉历史遗留的 `ix_*`。
+  **索引数 9 → 6**，写入放大减半，查询计划不变（同名 `idx_*` 仍在）。
+- 新增 SQLite PRAGMA 调优（连接级）：`journal_mode=WAL`（读写不互相阻塞）、
+  `synchronous=NORMAL`（配合 WAL 安全且省掉每次提交的 fsync）、
+  `cache_size=-16000`（约 16MB 页缓存）、`temp_store=MEMORY`。
+  **`foreign_keys` 保持 OFF**：代码里存在先删父表的批量操作，贸然开启会变成运行时报错。
+
+**启动速度**：`lifespan` 加分段计时并写入日志，慢启动可归因到具体步骤
+（实测：`database initialized: 68 ms`、`stale state reset: 197 ms`）。
+前端延续 v0.11.0 的路由级分包。
+
+**大数据量日志渲染**：通信日志表格开启**虚拟滚动**（`virtual` + `scroll.y`），
+每页可调到 200 条也只渲染可视行；页大小选项补齐 20/50/100/200，并给关键列加宽度。
+
+### 4. 国际化（看板待办：中英文界面切换）
+
+- 新增 `frontend/src/i18n/`：`messages.ts`（词条）+ `index.tsx`（`LanguageProvider` / `useI18n`）
+- `t(key, vars)` 支持 `{name}` 占位符；**未翻译的键回退到中文**，因此可增量翻译而不会显示裸 key
+- 语言选择写入 `localStorage`，首次进入按浏览器语言自动判定
+- 顶栏新增语言切换下拉；同步切换 antd 的 locale 包与 dayjs 语言（日期选择器一并生效）
+- 已翻译范围：导航 15 项、通用动作/名词、设备管理、项目工程、接口配置弹窗（含 30 个接口参数名）
+- **键覆盖率 100%（103/103）**；尚未接入的页面按上述回退策略保持中文
+
+### 5. 验证
+
+| 项 | 结果 |
+|---|---|
+| 新建项目工程 | 21/21（含完整还原） |
+| 附件（文本 + 图片） | 7/7，模型支持视觉 |
+| 设备接口 / MG100 以太网 / 工程文件闭环 | 32/32、29/29、PASS |
+| `Test/` 全部 7 个脚本 | 全 PASS |
+| 端点回归 | 14 个失败数 0 |
+| 索引与 WAL | 索引 9→6，`journal_mode=wal` |
+| 启动计时 | db 68ms、stale reset 197ms |
+| i18n 键覆盖 | 103/103 = 100% |
+| `tsc --noEmit` / `npm run build` | 通过 |
+
+---
+
+## 2026-10-14: MG100 以太网 + 设备接口可配置 + 修复 GitHub Open Issue（v0.11.0）
+
+### 1. Mini Gateway 100 插件支持以太网
+
+用户确认：**MG100 支持以太网，端口 6025，默认 IP 192.168.0.120**；PeakCAN 不支持，不改。
+
+插件原来把传输写死在 `connect()` 里（`import serial` + `serial.Serial`），完全绕过了平台通用通信层。
+改造为**双传输**（照 `rigol_oscilloscope_plugin.py` 的 `TRANSPORTS` 模式）：
+
+| `transport` | 参数 | 说明 |
+|---|---|---|
+| `serial`（默认） | `port` / `baudrate` | 与改造前行为完全一致，向后兼容 |
+| `ethernet` | `host`（默认 `192.168.0.120`）/ `tcp_port`（默认 `6025`）/ `connect_timeout` | asyncio TCP |
+
+要点：
+
+- 抽出 `_write_frame()` / `_read_frame(timeout)` / `_flush_input()` 三个传输原语，串口与以太网共用同一套收发逻辑
+- 以太网收帧带回退缓冲（一次 `read(4096)` 而非逐字节），超时返回已收部分，不会挂死
+- **键名冲突**：串口的串口号占用 `port`，故 TCP 端口另用 `tcp_port`，避免同一字段两种语义
+- 连接失败给出可操作报错（超时 / 不可达分别提示），而非静默成功
+
+### 2. 设备管理：可手动配置连接方式（含 PCIe / PXI）
+
+原来只能在「添加设备」时填地址，事后改不了。新增：
+
+- `app/core/interfaces.py` —— **接口注册表**，7 种接口的参数单一数据源，前端按此动态渲染
+  （串口 / USB / 以太网 / **PCIe** / **PXI** / CAN / GPIB）
+- 新增 `GET /api/devices/interfaces`、`GET|PUT /api/devices/{id}/interface`
+- 切换接口时**清空其它接口的地址列**（否则切到以太网后 `serial_port` 仍显示并参与执行管理器的资源键计算），
+  并**移除其它接口的 config 键**（否则把 `baudrate` 交给 TCP socket）
+- 前端新增「配置接口」弹窗（`InterfaceConfigModal`），按接口类型动态出字段
+
+参数存放：能落到 `devices` 列的用列（`serial_port`/`ip_address`/`port`/`visa_address`/`can_channel`），
+其余进 `config` JSON。PCIe 用 `bdf`（如 `0000:01:00.0`），PXI 用 `chassis`+`slot`（VISA 资源 `PXI0::2::INSTR`）。
+
+### 3. 通信层：新增 PCIe / PXI，修复以太网「假装连上」
+
+- 新增 `PCIeInterface` / `PXIInterface`（`BusInstrumentInterface`），**明确模拟模式**：连接成功但收发均带
+  `[Simulated PCIe:...]` 标记，且 `simulated` 属性可给 UI 打徽标（当前无内核驱动集成）
+- **修复隐患**：`EthernetInterface.connect()` 失败时原本 `self._is_connected = True`（注释 "Allow mock fallback"），
+  导致不可达设备也显示「已连接」并返回 `[Mock Ethernet]` 假数据。改为**默认严格报错**，
+  模拟需显式 `simulate: true`（界面上就是以太网参数里的「模拟模式」开关）
+
+### 4. GitHub Open Issue（16 个）
+
+逐一核对后：**11 个为历史版本已修但未关闭**，本轮实际修复 5 个。
+
+| # | 结论 |
+|---|---|
+| #8 | **修复**：9 个集合路由无尾斜杠返回 307（打包模式下会落到 SPA 兜底返回 index.html）。用 `main.py` 统一中间件内部改写路径，不逐个改路由。`/api/health`、`/api/ai/models` 等单资源路径不受影响 |
+| #9 | **修复**：`test_codegen.py` 的 `os.chdir()` 改为 `sys.path` 导入（可从任意目录运行）；新增 `Test/_testutil.py`，`find_device()` 不再抛 `StopIteration`、`ensure_connected()` 连不上就 SKIP；修正 3 处过期断言（`parsed_results` 已改为 `{count,samples,last}` 逐回复序列；生成代码现为 `send_command(_r('...', ctx))`） |
+| #10 | **修复**：文档与 `GET /` 自述的 `ws://.../ws` 不存在（403）。改为列出真实端点 `/ws/executions/{id}`、`/ws/devices/{id}`；同步修正 `API_SPEC.md`（`/ws/devices/{id}/monitor` → `/ws/devices/{id}`）与 `ARCHITECTURE.md` |
+| #11 | **修复**：RIGOL `usbtmc` 默认 `/dev/usbtmc0` 在 Windows 必然失败。改为必须显式填 `device`，并按 OS 给出提示 |
+| #12 | **修复**：前端单一 2.33 MB chunk → 路由级 `React.lazy` + `manualChunks` 分包（antd / 图标 / charts / flow / react / markdown / grid / http）。路由块降到 1.5–30 kB |
+| #1 #2 #3 #4 #5 #6 #7 #13 #14 #15 #16 | 核对为**历史已修**：复制粘贴与节点类型切换、循环节点命令/预期、while 进入/跳出条件、节点输入输出、初始化节点、PeakCAN 10047 提示、时区、NaN 防御、`is_rx` 自回环过滤、`_errorMessage` 422 数组 codegen 保存失败（均已在 v0.7.0~v0.10.0 落地） |
+
+### 5. 验证
+
+| 项 | 结果 |
+|---|---|
+| MG100 以太网（mock TCP 服务器） | 29/29，HELLO/SYSID/GETVOLT 解析正确，帧格式 `@11_…;` |
+| 设备接口配置 | 32/32，切接口清空旧列、必填校验、PCIe/PXI 模拟连接、以太网不可达正确报错 |
+| 工程文件闭环（回归） | 7 段，二次导入 `created=0`（幂等），不含 `api_key_encrypted` |
+| `Test/` 全部 7 个脚本 | **全 PASS**（test_codegen / result_parsing / ws_monitor / parser_unique_and_trend / mg100_skill_syntax / serial_multiline / can_comlog） |
+| 集合路由无尾斜杠 | 10 个路径全部 200；`/api/health`、`/api/ai/models` 仍 200 |
+| 前端构建 | `tsc --noEmit` + `npm run build` 通过，路由块 1.5–30 kB |
 
 ---
 

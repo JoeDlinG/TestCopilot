@@ -8,6 +8,7 @@ import asyncio
 import logging
 import tempfile
 import subprocess
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
@@ -20,7 +21,8 @@ from app.core.database import init_db
 from app.core.exceptions import AITestLabException
 from app.api import (
     devices, ai, testcases, executions, logs, reports, plugins,
-    plugin_editor, dashboards, websocket, plans, memory, projects,
+    plugin_editor, dashboards, websocket, plans, memory, projects, help as help_api,
+    update as update_api, feedback as feedback_api,
 )
 
 logging.basicConfig(
@@ -33,7 +35,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
-    # Startup
+    # Startup — timed, so a slow boot is attributable to a specific step
+    # instead of being a black box.
+    import time as _time
+
+    _boot = _time.monotonic()
+
+    def _mark(step: str) -> None:
+        logger.info(f"[boot] {step}: {(_time.monotonic() - _boot) * 1000:.0f} ms")
+
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     os.makedirs(settings.LOG_DIR, exist_ok=True)
     os.makedirs(settings.EXPORT_DIR, exist_ok=True)
@@ -47,8 +57,16 @@ async def lifespan(app: FastAPI):
     install_program_logging()
     logger.info("Program logging installed (logs/program, 10MB rotation)")
 
+    # Crash capture is armed before anything else can throw (issue #26 / F5).
+    try:
+        from app.core.crash_trap import install_hooks
+
+        install_hooks()
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        logger.warning(f"crash hooks not installed: {exc}")
+
     await init_db()
-    logger.info("Database initialized")
+    _mark("database initialized")
 
     # Reset stale connections (in-memory state lost on restart)
     from app.core.database import async_session
@@ -65,11 +83,43 @@ async def lifespan(app: FastAPI):
         # Same for batch runs left 'running' by a previous process.
         from app.services.plan_runner import plan_runner
         await plan_runner.reset_stale_runs(db)
+    _mark("stale state reset")
+
+    # Feedback centre (issue #26): file crashes spooled by a previous run, note
+    # an abnormal exit, and flush reports that could not be forwarded earlier.
+    async with async_session() as db:
+        try:
+            from app.core.crash_trap import drain_spool, report_abnormal_exit
+
+            filed = await drain_spool(db)
+            abnormal = await report_abnormal_exit(db)
+            if filed or abnormal:
+                logger.info(
+                    f"feedback centre: {filed} spooled crash(es), abnormal_exit={abnormal}"
+                )
+        except Exception as exc:
+            logger.warning(f"feedback startup check failed: {exc}")
+        try:
+            from app.services.feedback_service import retry_pending
+
+            sent = await retry_pending(db)
+            if sent:
+                logger.info(f"feedback centre: forwarded {sent} queued report(s)")
+        except Exception as exc:
+            logger.warning(f"feedback flush failed: {exc}")
+    _mark("feedback centre ready")
 
     yield
 
-    # Shutdown
+    # Shutdown — mark the exit as clean so the next start can tell a restart
+    # apart from a crash.
     logger.info(f"Shutting down {settings.APP_NAME}")
+    try:
+        from app.core.crash_trap import mark_clean_exit
+
+        mark_clean_exit()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -102,6 +152,35 @@ async def aitestlab_exception_handler(request: Request, exc: AITestLabException)
     )
 
 
+# Catch-all handler (issue #13 / issue #26 F5). Until now only
+# AITestLabException was handled, so every other unhandled error escaped as a
+# bare traceback and neither the UI nor we ever learned about it.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    try:
+        from app.core.database import async_session
+        from app.services import feedback_service as svc
+
+        async with async_session() as db:
+            report = await svc.create_report(
+                db,
+                kind="crash",
+                title=f"[crash] {type(exc).__name__}: {exc}"[:200],
+                body=f"{request.method} {request.url.path}",
+                stack=traceback.format_exc(),
+                route=f"{request.method} {request.url.path}",
+                consent=True,
+                attach_logs=True,
+            )
+            await svc.forward_report(db, report)
+    except Exception:
+        pass  # reporting must never change the response
+    return JSONResponse(
+        status_code=500,
+        content={"code": 50000, "message": "服务器内部错误", "detail": str(exc)},
+    )
+
+
 # Register API routers
 app.include_router(devices.router)
 app.include_router(ai.router)
@@ -116,9 +195,38 @@ app.include_router(plugin_editor.router)
 app.include_router(dashboards.router)
 app.include_router(plans.plans_router)
 app.include_router(plans.runs_router)
+app.include_router(help_api.router)
+app.include_router(update_api.router)
+app.include_router(feedback_api.router)
 
 # Register WebSocket router
 app.include_router(websocket.router)
+
+
+# ---------------------------------------------------------------------------
+# Accept both "/api/devices" and "/api/devices/" for collection routes.
+#
+# FastAPI answers the slash-less form with a 307 redirect, which costs an extra
+# round trip, breaks clients that do not follow redirects, and — in packaged
+# mode, where the SPA catch-all lives — used to surface as index.html instead
+# of JSON (issue #8).  Rewriting the path internally fixes every collection
+# route at once instead of patching each router.
+# ---------------------------------------------------------------------------
+_API_ROUTE_PATHS = {getattr(r, "path", None) for r in app.routes}
+
+
+@app.middleware("http")
+async def _api_trailing_slash(request, call_next):
+    path = request.scope.get("path") or ""
+    if (
+        path.startswith("/api/")
+        and not path.endswith("/")
+        and path not in _API_ROUTE_PATHS
+        and f"{path}/" in _API_ROUTE_PATHS
+    ):
+        request.scope["path"] = f"{path}/"
+        request.scope["raw_path"] = f"{path}/".encode()
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +250,16 @@ if _HAS_STATIC:
 async def root():
     if _HAS_STATIC:
         return FileResponse(_STATIC_INDEX)
+    # NOTE: there is no plain "/ws" endpoint — advertising it (as the docs and
+    # this response used to do) sent clients to a 403 (issue #10).
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "docs": "/docs",
-        "websocket": "ws://localhost:8000/ws",
+        "websocket": {
+            "executions": "ws://localhost:8000/ws/executions/{execution_id}",
+            "devices": "ws://localhost:8000/ws/devices/{device_id}",
+        },
     }
 
 

@@ -11,9 +11,11 @@ POST   /api/testcases/{id}/flow    - Create/update test case flow
 PUT    /api/testcases/{id}/flow    - Update test case flow
 """
 import json
+import logging
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -28,8 +30,22 @@ from app.services.testgen_service import testgen_service
 from app.services.codegen_service import codegen_service
 from app.services.response_parser import response_parser
 from app.services.trend_service import collect_parsed_series
+from app.services.execution_service import (
+    backfill_device_keys,
+    count_stale_bindings,
+    rebind_stale_devices,
+    switch_case_device,
+)
+
+
+class SwitchDeviceRequest(BaseModel):
+    """Re-point a case's device binding (by 设备ID号) and regenerate its code."""
+
+    to_device_key: str
+    from_device_key: Optional[str] = None
 
 router = APIRouter(prefix="/api/testcases", tags=["Test Cases"])
+logger = logging.getLogger(__name__)
 
 
 def _parse_json(value):
@@ -42,6 +58,73 @@ def _parse_json(value):
         except (json.JSONDecodeError, TypeError):
             return value
     return value
+
+
+@router.post("/backfill-device-keys")
+async def backfill_keys(db: AsyncSession = Depends(get_db)):
+    """Translate legacy ``device_id`` bindings into stable ``device_key`` ones."""
+    try:
+        result = await backfill_device_keys(db)
+    except Exception as e:
+        logger.exception("backfill failed")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "code": 50010, "message": "回填设备ID号失败", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": result}
+
+
+@router.post("/{test_case_id}/switch-device")
+async def switch_device(
+    test_case_id: str,
+    data: SwitchDeviceRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Switch the case to another device (by 设备ID号) and regenerate its code."""
+    try:
+        result = await switch_case_device(
+            db, test_case_id, data.to_device_key, data.from_device_key
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": 40019, "message": "切换设备失败", "detail": str(e),
+        })
+    except Exception as e:
+        logger.exception("switch device failed")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "code": 50011, "message": "切换设备失败", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": result}
+
+
+@router.get("/stale-devices")
+async def list_stale_device_bindings(db: AsyncSession = Depends(get_db)):
+    """Report flows that pin a device id which no longer exists.
+
+    This is the usual cause of "the case runs but nothing ever appears in the
+    communication pane": the device was deleted and re-added, so it got a new
+    id while the flow still points at the old one.
+    """
+    return {"code": 0, "message": "success", "data": await count_stale_bindings(db)}
+
+
+@router.post("/rebind-devices")
+async def rebind_device_bindings(db: AsyncSession = Depends(get_db)):
+    """Re-point those stale bindings at a current device of the same protocol.
+
+    The replacement is derived from the protocol the node's own commands imply,
+    so a CAN step is never re-pointed at a gateway.
+    """
+    try:
+        result = await rebind_stale_devices(db)
+    except Exception as e:
+        logger.exception("rebind failed")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "code": 50009, "message": "重新绑定设备失败", "detail": str(e),
+        })
+    return {"code": 0, "message": "success", "data": result}
 
 
 @router.post("/")

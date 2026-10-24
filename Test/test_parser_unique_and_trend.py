@@ -10,11 +10,15 @@ Tests for parser-name uniqueness and the historical parsed-value trend API.
 Run: python3 Test/test_parser_unique_and_trend.py
 """
 import json
+import os
 import sqlite3
 import sys
 import time
 
 import requests
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _testutil import ensure_connected, find_device, flat_fields  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
 DB = "backend/aitestlab.db"
@@ -52,9 +56,13 @@ def save_flow(nodes, edges):
 def main():
     ensure_column()
     devices = requests.get(f"{BASE}/devices/", timeout=10).json()["data"]["items"]
-    dev = next(d for d in devices if d["protocol"] == "mini_gateway100")
-    if dev["status"] != "connected":
-        requests.post(f"{BASE}/devices/connect", json={"device_id": dev["id"]}, timeout=30)
+    dev = find_device(devices, "mini_gateway100")
+    if dev is None:
+        print("  [SKIP] 未找到 mini_gateway100 设备（需要硬件），跳过本测试")
+        return 0
+    if not ensure_connected(BASE, dev):
+        print("  [SKIP] mini_gateway100 无法连接（需要硬件），跳过本测试")
+        return 0
 
     flow = get_flow()
     nodes, edges = flow["nodes"], flow["edges"]
@@ -130,7 +138,7 @@ def main():
     stored = []
     for s in st.get("step_results", []):
         if s.get("parsed_results"):
-            stored.extend(json.loads(s["parsed_results"]))
+            stored.extend(flat_fields(s["parsed_results"]))
     names = [p["name"] for p in stored]
     print(f"    落库解析项: {names}")
     check("版本序号" in names, "解析值已落库（版本序号）")
@@ -158,7 +166,7 @@ def main():
     failed = [
         p for s in st2.get("step_results", [])
         if s.get("parsed_results")
-        for p in json.loads(s["parsed_results"])
+        for p in flat_fields(s["parsed_results"])
         if p["name"] == "版本序号" and not p["ok"]
     ]
     check(bool(failed), "超出上下限 -> 判定 FAIL（作为测试结果记录）")

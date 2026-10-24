@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Card, Table, Button, Space, Tag, message, Typography, Select,
   DatePicker, Input, Row, Col, Empty
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   ReloadOutlined, DownloadOutlined, SearchOutlined,
   ArrowUpOutlined, ArrowDownOutlined
@@ -11,11 +13,13 @@ import { logAPI, deviceAPI } from '../services/api'
 import { extractItems, handleApiError } from '../services/apiHelper'
 import type { CommunicationLog, Device } from '../types'
 import { INTERFACE_TYPES } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title } = Typography
 const { RangePicker } = DatePicker
 
 export default function Logs() {
+  const { t } = useI18n()
   const [logs, setLogs] = useState<CommunicationLog[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(false)
@@ -33,7 +37,7 @@ export default function Logs() {
       const res = await logAPI.list(params)
       setLogs(extractItems(res))
     } catch (err) {
-      handleApiError(err, '加载日志失败')
+      handleApiError(err, t('msg.loadLogsFailed'))
     } finally {
       if (!silent) setLoading(false)
     }
@@ -54,10 +58,8 @@ export default function Logs() {
   useEffect(() => { loadLogs() }, [filters])
 
   // Auto-refresh every 5s so the terminal shows live traffic during tests
-  useEffect(() => {
-    const timer = setInterval(() => loadLogs(true), 5000)
-    return () => clearInterval(timer)
-  }, [filters])
+  // (pauses while the tab is hidden, and never stacks requests).
+  usePolling(() => loadLogs(true), 5000)
 
   const handleExportCSV = async () => {
     try {
@@ -72,22 +74,22 @@ export default function Logs() {
       a.download = `communication_logs_${new Date().toISOString().slice(0, 10)}.csv`
       a.click()
       URL.revokeObjectURL(url)
-      message.success('日志已导出')
+      message.success(t('msg.logsExported'))
     } catch (err) {
-      handleApiError(err, '导出失败')
+      handleApiError(err, t('msg.exportFailed'))
     }
   }
 
   const columns = [
     {
-      title: '时间',
+      title: t('col.time'),
       dataIndex: 'timestamp',
       key: 'timestamp',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '设备',
+      title: t('col.device'),
       dataIndex: 'device_id',
       key: 'device_id',
       width: 120,
@@ -97,27 +99,28 @@ export default function Logs() {
       },
     },
     {
-      title: '接口',
+      title: t('col.interface'),
       dataIndex: 'protocol',
       key: 'protocol',
       width: 100,
       render: (type: string) => <Tag>{INTERFACE_TYPES[type] || type}</Tag>,
     },
     {
-      title: '方向',
+      title: t('col.direction'),
       dataIndex: 'direction',
       key: 'direction',
       width: 80,
       render: (dir: string) => (
         <Tag color={dir === 'sent' ? 'blue' : 'green'} icon={dir === 'sent' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}>
-          {dir === 'sent' ? '发送' : '接收'}
+          {dir === 'sent' ? t('btn.send') : t('term.recv')}
         </Tag>
       ),
     },
     {
-      title: '数据内容',
+      title: t('col.dataContent'),
       dataIndex: 'raw_data',
       key: 'raw_data',
+      width: 320,
       render: (data: string) => (
         <div style={{ maxWidth: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           <code style={{ fontSize: 12 }}>{data || '-'}</code>
@@ -128,7 +131,7 @@ export default function Logs() {
       title: 'Hex',
       dataIndex: 'raw_data_hex',
       key: 'raw_data_hex',
-      width: 150,
+      width: 180,
       render: (hex: string) => (
         <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{hex || '-'}</code>
       ),
@@ -138,10 +141,10 @@ export default function Logs() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>通信日志</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('label.commLog')}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>刷新</Button>
-          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>导出 CSV</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>{t('common.refresh')}</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>{t('btn.exportCsv')}</Button>
         </Space>
       </div>
 
@@ -150,7 +153,7 @@ export default function Logs() {
           <Col xs={24} sm={8}>
             <Select
               allowClear
-              placeholder="选择设备"
+              placeholder={t('btn.selectDevice')}
               style={{ width: '100%' }}
               value={filters.device_id}
               onChange={(val: any) => setFilters({ ...filters, device_id: val })}
@@ -160,7 +163,7 @@ export default function Logs() {
           <Col xs={24} sm={8}>
             <Select
               allowClear
-              placeholder="选择接口类型"
+              placeholder={t('msg.selectInterface')}
               style={{ width: '100%' }}
               value={filters.interface_type}
               onChange={(val: any) => setFilters({ ...filters, interface_type: val })}
@@ -171,15 +174,23 @@ export default function Logs() {
       </Card>
 
       <Card>
-        <Table
+        <DataTable
           columns={columns}
           dataSource={logs}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
-          locale={{ emptyText: <Empty description="暂无通信日志" /> }}
+          // 性能优化：通信日志可以积到几十万行。开启虚拟滚动后，即使把每页
+          // 调到 200 条也只渲染可视区域内的行，滚动不再掉帧。
+          virtual
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: [20, 50, 100, 200],
+            showTotal: (total) => `${t('label.total')} ${total} ${t('unit.items')}`,
+          }}
+          locale={{ emptyText: <Empty description={t('msg.noComLogs')} /> }}
           size="small"
-          scroll={{ x: 1000 }}
+          scroll={{ x: 1000, y: 'calc(100vh - 430px)' }}
         />
       </Card>
     </div>

@@ -68,6 +68,7 @@ export const deviceAPI = {
   list: () => api.get('/devices/'),
   get: (id: string) => api.get(`/devices/${id}`),
   create: (data: any) => api.post('/devices/', data),
+  update: (id: string, data: any) => api.put(`/devices/${id}`, data),
   delete: (id: string) => api.delete(`/devices/${id}`),
   discover: () => api.get('/devices/discover'),
   connect: (deviceId: string, config?: any) =>
@@ -75,6 +76,15 @@ export const deviceAPI = {
   disconnect: (id: string) => api.post(`/devices/${id}/disconnect`),
   sendCommand: (id: string, command: string) =>
     api.post(`/devices/${id}/command`, { command }),
+  // Physical interface (connection) configuration
+  listInterfaces: () => api.get('/devices/interfaces'),
+  getInterface: (id: string) => api.get(`/devices/${id}/interface`),
+  updateInterface: (id: string, connectionType: string, params: any, protocol?: string) =>
+    api.put(`/devices/${id}/interface`, {
+      connection_type: connectionType,
+      params,
+      protocol,
+    }),
 }
 
 // AI APIs — use long timeout because reasoning models can take minutes
@@ -117,6 +127,16 @@ export const testCaseAPI = {
   updateFlow: (id: string, data: any) => api.put(`/testcases/${id}/flow`, data),
   // Code generation
   generateCode: (id: string) => api.post(`/testcases/${id}/generate-code`),
+  // Device bindings that outlived their device (device deleted + re-added)
+  staleDevices: () => api.get('/testcases/stale-devices'),
+  rebindDevices: () => api.post('/testcases/rebind-devices'),
+  // Switch a case to another device by 设备ID号 — returns regenerated code
+  switchDevice: (id: string, toDeviceKey: string, fromDeviceKey?: string) =>
+    api.post(`/testcases/${id}/switch-device`, {
+      to_device_key: toDeviceKey,
+      from_device_key: fromDeviceKey || null,
+    }),
+  backfillDeviceKeys: () => api.post('/testcases/backfill-device-keys'),
   // Result parsing preview (uses the same engine as the execution)
   parsePreview: (raw: string, parsers: any[]) =>
     api.post('/testcases/parse-preview', { raw, parsers }),
@@ -185,9 +205,13 @@ export const dashboardAPI = {
   duplicate: (id: string) => api.post(`/dashboards/${id}/duplicate`),
   setDefault: (id: string) => api.post(`/dashboards/${id}/set-default`),
   importJson: (data: any) => api.post('/dashboards/import', data),
-  snapshot: (testCaseId?: string | null, limit = 50) =>
+  snapshot: (testCaseId?: string | null, limit = 50, since?: string | null) =>
     api.get('/dashboards/snapshot', {
-      params: { test_case_id: testCaseId || undefined, limit },
+      params: {
+        test_case_id: testCaseId || undefined,
+        limit,
+        since: since || undefined,
+      },
     }),
 }
 
@@ -260,6 +284,34 @@ export const projectAPI = {
   remove: (name: string) => api.delete(`/projects/${encodeURIComponent(name)}`),
   sync: (name: string, sections?: string[]) =>
     api.post(`/projects/${encodeURIComponent(name)}/sync`, { sections }),
+  // 新建项目工程：清空配置（默认保留 AI 模型设置）
+  newProject: (sections?: string[], keepModels: boolean = true) =>
+    api.post('/projects/new', { sections, keep_models: keepModels, confirm: true }),
+}
+
+export const feedbackAPI = {
+  submit: (data: any) => api.post('/feedback', data),
+  list: (limit = 50) => api.get('/feedback', { params: { limit } }),
+  getSettings: () => api.get('/feedback/settings'),
+  putSettings: (data: any) => api.put('/feedback/settings', data),
+}
+
+export const updateAPI = {
+  check: () => api.get('/update/check'),
+  status: () => api.get('/update/status'),
+  /** The server decides *what* to download; the client only says "go". */
+  download: () => api.post('/update/download', {}),
+  /** Only the token issued by a verified download can be applied. */
+  apply: (token: string) => api.post('/update/apply', { token }),
+  ignore: (version: string) => api.post('/update/ignore', { version }),
+  getSettings: () => api.get('/update/settings'),
+  putSettings: (data: any) => api.put('/update/settings', data),
+}
+
+export const helpAPI = {
+  /** Manuals bundled with the backend (``docs/*.md``), served as markdown. */
+  listDocs: () => api.get('/help/docs'),
+  getDoc: (id: string) => api.get(`/help/docs/${id}`),
 }
 
 export const PROJECT_SECTIONS = [

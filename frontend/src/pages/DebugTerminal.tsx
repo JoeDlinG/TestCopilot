@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Button, Input, Tag, Space, Tooltip, Card, Typography, Empty, Spin
 } from 'antd'
@@ -12,6 +13,7 @@ import { extractItems } from '../services/apiHelper'
 import type { Device } from '../types'
 import { useTerminalStore, nextMsgId } from '../stores/terminalStore'
 import type { TerminalMessage } from '../stores/terminalStore'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
@@ -56,7 +58,7 @@ function formatTimestamp(isoStr?: string): string {
 // Module-level WebSocket factory. Uses the global store directly so that
 // message handling keeps working even after the React component unmounts
 // (e.g. when navigating to another page and back).
-function createWebSocket(deviceId: string): WebSocket {
+function createWebSocket(deviceId: string, t: (k: string) => string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const host = window.location.hostname || 'localhost'
   const wsUrl = `${protocol}//${host}:8000/ws/devices/${deviceId}`
@@ -69,7 +71,7 @@ function createWebSocket(deviceId: string): WebSocket {
       id: nextMsgId(),
       timestamp: formatTime(),
       type: 'system',
-      content: 'WebSocket 已连接',
+      content: `WebSocket ${t('status.connected')}`,
     })
   }
 
@@ -84,7 +86,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: msg.message || '已连接到设备',
+            content: msg.message || t('term.connectedTo'),
           })
           break
         case 'command_sent':
@@ -136,7 +138,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: `开始监听设备数据 (间隔: ${msg.interval_ms}ms)`,
+            content: `${t('term.startListenAt')} ${msg.interval_ms}ms)`,
           })
           store.setListening(deviceId, true)
           break
@@ -145,7 +147,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'system',
-            content: '已停止监听',
+            content: t('term.stoppedListen'),
           })
           store.setListening(deviceId, false)
           break
@@ -154,7 +156,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'error',
-            content: `接收错误: ${msg.error}`,
+            content: `${t('term.recvError')} ${msg.error}`,
           })
           break
         case 'device_disconnected':
@@ -162,7 +164,7 @@ function createWebSocket(deviceId: string): WebSocket {
             id: nextMsgId(),
             timestamp: ts,
             type: 'error',
-            content: `设备已断开: ${msg.message}`,
+            content: `${t('term.disconnectedColon')} ${msg.message}`,
           })
           store.setListening(deviceId, false)
           break
@@ -192,13 +194,13 @@ function createWebSocket(deviceId: string): WebSocket {
       id: nextMsgId(),
       timestamp: formatTime(),
       type: 'system',
-      content: 'WebSocket 已断开，将在 3s 后重连...',
+      content: `WebSocket ${t('term.reconnectIn3s')}...`,
     })
 
     // Reconnect with exponential backoff
     const delay = Math.min(1000 * Math.pow(2, Math.min(attempts, 5)), 30000)
     setTimeout(() => {
-      const newWs = createWebSocket(deviceId)
+      const newWs = createWebSocket(deviceId, t)
       useTerminalStore.getState().setWs(deviceId, newWs)
     }, delay)
   }
@@ -213,6 +215,7 @@ function createWebSocket(deviceId: string): WebSocket {
 // Single terminal window (one device). Extracted so it can use hooks
 // independently of the parent's render cycle.
 function TerminalWindow({ deviceId }: { deviceId: string }) {
+  const { t } = useI18n()
   const tab = useTerminalStore((s) => s.tabs[deviceId])
   const commandInput = useTerminalStore((s) => s.commandInputs[deviceId] || '')
   const setCommandInput = useTerminalStore((s) => s.setCommandInput)
@@ -242,7 +245,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         id: nextMsgId(),
         timestamp: formatTime(),
         type: 'error',
-        content: 'WebSocket 未连接，无法发送命令',
+        content: `WebSocket ${t('term.notConnected')}`,
       })
       return
     }
@@ -287,12 +290,12 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
 
   const getMessageColor = (type: string) => {
     switch (type) {
-      case 'sent': return '#569cd6'
-      case 'received': return '#6a9955'
-      case 'data': return '#ce9178'
-      case 'error': return '#f44747'
-      case 'system': return '#808080'
-      default: return '#d4d4d4'
+      case 'sent': return 'var(--term-sent)'
+      case 'received': return 'var(--term-recv)'
+      case 'data': return 'var(--term-data)'
+      case 'error': return 'var(--term-error)'
+      case 'system': return 'var(--term-system)'
+      default: return 'var(--term-fg)'
     }
   }
 
@@ -317,19 +320,19 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: '8px 12px',
-        borderBottom: '1px solid #333',
-        background: '#252526',
+        borderBottom: '1px solid var(--term-border)',
+        background: 'var(--term-chrome)',
       }}>
         <Space>
-          <Text style={{ color: '#ccc', fontSize: 13 }}>
+          <Text style={{ color: 'var(--term-fg)', fontSize: 13 }}>
             {tab.deviceName}
           </Text>
           <Tag color={isOpen ? 'green' : 'red'}>
-            {isOpen ? '已连接' : '未连接'}
+            {isOpen ? t('status.connected') : t('status.disconnected')}
           </Tag>
         </Space>
         <Space>
-          <Tooltip title={tab.listening ? '停止监听' : '开始监听实时数据'}>
+          <Tooltip title={tab.listening ? t('btn.stopListen') : t('term.startLive')}>
             <Button
               size="small"
               type={tab.listening ? 'primary' : 'default'}
@@ -338,10 +341,10 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
               onClick={toggleListening}
               disabled={!isOpen}
             >
-              {tab.listening ? '停止监听' : '开始监听'}
+              {tab.listening ? t('btn.stopListen') : t('btn.startListen')}
             </Button>
           </Tooltip>
-          <Tooltip title="清空日志">
+          <Tooltip title={t('btn.clearLogs')}>
             <Button
               size="small"
               icon={<ClearOutlined />}
@@ -357,7 +360,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         style={{
           flex: 1,
           overflow: 'auto',
-          background: '#1e1e1e',
+          background: 'var(--term-bg)',
           padding: '12px',
           fontFamily: 'Consolas, Monaco, "Courier New", monospace',
           fontSize: 13,
@@ -367,16 +370,16 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
       >
         {tab.messages.length === 0 ? (
           <div style={{
-            color: '#666',
+            color: 'var(--term-fg-subtle)',
             textAlign: 'center',
             paddingTop: 40,
           }}>
-            等待设备数据... 在下方输入框发送命令
+            t('term.waiting')... {t('term.sendBelow')}
           </div>
         ) : (
           tab.messages.map(msg => (
             <div key={msg.id} style={{ marginBottom: 2 }}>
-              <span style={{ color: '#666', fontSize: 11, marginRight: 8 }}>
+              <span style={{ color: 'var(--term-fg-subtle)', fontSize: 11, marginRight: 8 }}>
                 {msg.timestamp}
               </span>
               <span style={{ color: getMessageColor(msg.type) }}>
@@ -392,18 +395,18 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
         display: 'flex',
         gap: 8,
         padding: '8px 12px',
-        borderTop: '1px solid #333',
-        background: '#252526',
+        borderTop: '1px solid var(--term-border)',
+        background: 'var(--term-chrome)',
       }}>
         <Input
           value={commandInput}
           onChange={(e) => setCommandInput(deviceId, e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入命令，Enter 发送，Shift+Enter 换行，↑↓ 历史命令..."
+          placeholder={t('term.inputFull')}
           style={{
-            background: '#3c3c3c',
-            border: '1px solid #555',
-            color: '#d4d4d4',
+            background: 'var(--term-input-bg)',
+            border: '1px solid var(--term-input-border)',
+            color: 'var(--term-fg)',
             fontFamily: 'Consolas, Monaco, monospace',
           }}
         />
@@ -412,15 +415,14 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
           icon={<SendOutlined />}
           onClick={sendCommand}
           disabled={!isOpen}
-        >
-          发送
-        </Button>
+        >{t('btn.send')}</Button>
       </div>
     </div>
   )
 }
 
 export default function DebugTerminal() {
+  const { t } = useI18n()
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -429,6 +431,10 @@ export default function DebugTerminal() {
   const openTerminalAction = useTerminalStore((s) => s.openTerminal)
   const closeTerminalAction = useTerminalStore((s) => s.closeTerminal)
   const setActiveTab = useTerminalStore((s) => s.setActiveTab)
+  // Needed by the third column (指令 / 历史) rendered by this component.
+  const commandHistories = useTerminalStore((s) => s.commandHistories)
+  const setCommandInput = useTerminalStore((s) => s.setCommandInput)
+  const activeHistory: string[] = activeTabId ? (commandHistories[activeTabId] || []) : []
 
   const connectedDevices = devices.filter(
     (d: any) => d.status === 'connected'
@@ -447,11 +453,8 @@ export default function DebugTerminal() {
     }
   }, [])
 
-  useEffect(() => {
-    loadDevices()
-    const interval = setInterval(loadDevices, 5000)
-    return () => clearInterval(interval)
-  }, [loadDevices])
+  useEffect(() => { loadDevices() }, [loadDevices])
+  usePolling(loadDevices, 5000)
 
   // Load recent communication history from the DB once per opened device tab,
   // so the terminal shows past traffic even before new frames arrive.
@@ -503,7 +506,7 @@ export default function DebugTerminal() {
     const store = useTerminalStore.getState()
     Object.values(store.tabs).forEach((tab) => {
       if (!tab.ws || tab.ws.readyState === WebSocket.CLOSED) {
-        const ws = createWebSocket(tab.deviceId)
+        const ws = createWebSocket(tab.deviceId, t)
         store.setWs(tab.deviceId, ws)
       }
     })
@@ -516,7 +519,7 @@ export default function DebugTerminal() {
       store.setActiveTab(deviceId)
       return
     }
-    const ws = createWebSocket(deviceId)
+    const ws = createWebSocket(deviceId, t)
     openTerminalAction(deviceId, device.name, ws)
   }
 
@@ -538,8 +541,8 @@ export default function DebugTerminal() {
     return (
       <div style={{
         display: 'flex',
-        background: '#2d2d2d',
-        borderBottom: '1px solid #333',
+        background: 'var(--term-chrome-alt)',
+        borderBottom: '1px solid var(--term-border)',
         overflow: 'auto',
       }}>
         {tabEntries.map(([deviceId, tab]) => (
@@ -551,9 +554,9 @@ export default function DebugTerminal() {
               alignItems: 'center',
               padding: '8px 12px',
               cursor: 'pointer',
-              borderRight: '1px solid #333',
-              background: activeTabId === deviceId ? '#1e1e1e' : '#2d2d2d',
-              color: activeTabId === deviceId ? '#fff' : '#999',
+              borderRight: '1px solid var(--term-border)',
+              background: activeTabId === deviceId ? 'var(--term-bg)' : 'var(--term-chrome-alt)',
+              color: activeTabId === deviceId ? 'var(--term-fg)' : 'var(--term-fg-muted)',
               whiteSpace: 'nowrap',
               fontSize: 13,
               minWidth: 0,
@@ -582,20 +585,20 @@ export default function DebugTerminal() {
       <div style={{
         width: 250,
         minWidth: 250,
-        borderRight: '1px solid #e8e8e8',
-        background: '#fafafa',
+        borderRight: '1px solid var(--app-border)',
+        background: 'var(--app-surface-muted)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
         <div style={{
           padding: '12px 16px',
-          borderBottom: '1px solid #e8e8e8',
+          borderBottom: '1px solid var(--app-border)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
         }}>
-          <Title level={5} style={{ margin: 0 }}>已连接设备</Title>
+          <Title level={5} style={{ margin: 0 }}>{t('card.connectedDevices')}</Title>
           <Button size="small" icon={<ReloadOutlined />} onClick={loadDevices} />
         </div>
 
@@ -606,13 +609,9 @@ export default function DebugTerminal() {
             </div>
           ) : connectedDevices.length === 0 ? (
             <Card size="small" style={{ margin: 8, textAlign: 'center' }}>
-              <Text type="secondary" style={{ fontSize: 13 }}>
-                没有已连接的设备
-              </Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>{t('term.noDevices')}</Text>
               <div style={{ marginTop: 8 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  请先在设备管理页面连接设备
-                </Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('term.connectFirst')}</Text>
               </div>
             </Card>
           ) : (
@@ -627,14 +626,14 @@ export default function DebugTerminal() {
                     margin: '4px 0',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    background: isActive ? '#e6f4ff' : '#fff',
-                    border: isActive ? '1px solid #1677ff' : '1px solid #e8e8e8',
+                    background: isActive ? 'var(--app-accent-subtle)' : 'var(--app-surface)',
+                    border: isActive ? '1px solid var(--app-accent)' : '1px solid var(--app-border)',
                     transition: 'all 0.2s',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <Space>
-                      <ApiOutlined style={{ color: isActive ? '#1677ff' : '#999' }} />
+                      <ApiOutlined style={{ color: isActive ? 'var(--app-accent)' : 'var(--term-fg-muted)' }} />
                       <Text
                         strong={isActive}
                         style={{
@@ -648,7 +647,7 @@ export default function DebugTerminal() {
                         {device.name}
                       </Text>
                     </Space>
-                    <Tag color="green" style={{ fontSize: 11, margin: 0 }}>已连接</Tag>
+                    <Tag color="green" style={{ fontSize: 11, margin: 0 }}>{t('status.connected')}</Tag>
                   </div>
                   <div style={{ marginTop: 4 }}>
                     <Text type="secondary" style={{ fontSize: 11 }}>
@@ -672,16 +671,13 @@ export default function DebugTerminal() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#f5f5f5',
+            background: 'var(--app-surface-sunken)',
           }}>
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
-                <span style={{ color: '#999' }}>
-                  选择一个已连接的设备打开调试终端<br />
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    支持同时打开多个设备的终端窗口
-                  </Text>
+                <span style={{ color: 'var(--term-fg-muted)' }}>{t('term.selectDevice')}<br />
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('term.multiTab')}</Text>
                 </span>
               }
             />
@@ -698,15 +694,54 @@ export default function DebugTerminal() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: '#1e1e1e',
-                  color: '#666',
-                }}>
-                  选择一个终端窗口
-                </div>
+                  background: 'var(--term-bg)',
+                  color: 'var(--term-fg-subtle)',
+                }}>{t('term.selectTab')}</div>
               )}
             </div>
           </>
         )}
+      </div>
+
+      {/* Third column — command history (issue #21).
+      Previously the terminal was only a device list plus a traffic pane; recalling an
+          earlier command meant retyping it, so the per-device history now has
+          its own column and inserts straight into the input box. */}
+      <div style={{
+        width: 260,
+        minWidth: 260,
+        borderLeft: '1px solid var(--app-border)',
+        background: 'var(--app-surface-muted)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--app-border)',
+        }}>
+          <Title level={5} style={{ margin: 0 }}>{t('card.commandsHistory')}</Title>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
+          {activeHistory.length === 0 ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('term.noHistory')}</Text>
+          ) : (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('term.clickToFill')}</Text>
+              {[...activeHistory].reverse().slice(0, 40).map((cmd, i) => (
+                <Button
+                  key={i}
+                  size="small"
+                  block
+                  style={{ textAlign: 'left', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11 }}
+                  onClick={() => activeTabId && setCommandInput(activeTabId, cmd)}
+                >
+                  {cmd}
+                </Button>
+              ))}
+            </Space>
+          )}
+        </div>
       </div>
     </div>
   )

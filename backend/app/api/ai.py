@@ -172,6 +172,7 @@ async def chat(data: AIChatRequest, db: AsyncSession = Depends(get_db)):
             db, data.model_id, data.message, session_id,
             data.system_prompt, data.input_type,
             skill_protocols=data.skill_protocols,
+            attachments=[a.model_dump() for a in (data.attachments or [])],
         )
         return {"code": 0, "message": "success", "data": result}
     except Exception as e:

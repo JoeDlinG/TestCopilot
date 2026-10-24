@@ -593,7 +593,7 @@ Client                                    Server
   │◀── { type: "step_complete", result: {}}─│
   │◀── { type: "execution_complete" } ──────│
   │                                          │
-  │── WS /ws/devices/{id}/monitor ─────────▶│ 订阅设备实时数据
+  │── WS /ws/devices/{id} ─────────────────▶│ 订阅设备实时数据
   │◀── { type: "device_data", value: 3.3 }──│ 持续推送
 ```
 

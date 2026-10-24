@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons'
 import { pluginAPI } from '../services/api'
 import { extractData, handleApiError } from '../services/apiHelper'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -26,22 +27,23 @@ interface SkillMeta {
   has_manual?: boolean
 }
 
-const SKILL_SCAFFOLD = `## 适用范围
+const SKILL_SCAFFOLD = (tr: (k: string) => string) => `## ${tr('label.applicability')}
 
-- 描述本 Skill 针对的设备 / 协议
+- ${tr('skill.describeTarget')}
 
-## 命令生成规则
+## ${tr('label.commandRules')}
 
-1. 每个测试步骤直接写设备命令字符串
+1. ${tr('skill.stepCommandHint')}
 
-## 标准测试流程模板
+## ${tr('label.stdTemplate')}
 
 \`\`\`
-*IDN?                  ; 1. 识别设备
+*IDN?                  ; 1. identify the ${tr('col.device')}
 \`\`\`
 `
 
 export default function SkillEditor() {
+  const { t } = useI18n()
   const [skills, setSkills] = useState<SkillMeta[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -65,7 +67,7 @@ export default function SkillEditor() {
       const res = await pluginAPI.listSkills()
       setSkills(extractData(res, []))
     } catch (err) {
-      handleApiError(err, '加载 Skill 列表失败')
+      handleApiError(err, `${t('msg.loadSkillsFailed')}`)
     } finally {
       setLoading(false)
     }
@@ -87,7 +89,7 @@ export default function SkillEditor() {
       setContent(data?.skill || '')
       setDirty(false)
     } catch (err) {
-      handleApiError(err, '读取 Skill 失败')
+      handleApiError(err, `${t('msg.readSkillFailed')}`)
     }
   }
 
@@ -97,14 +99,14 @@ export default function SkillEditor() {
     setName('')
     setProtocol('')
     setKeywords('')
-    setContent(SKILL_SCAFFOLD)
+    setContent(SKILL_SCAFFOLD(t))
     setDirty(true)
   }
 
   const handleSave = async () => {
     const p = (protocol || '').trim()
     if (!p) {
-      message.warning('请填写协议标识（protocol）')
+      message.warning(t('msg.protocolRequired'))
       return
     }
     setSaving(true)
@@ -121,13 +123,13 @@ export default function SkillEditor() {
       } else {
         await pluginAPI.createSkill(payload)
       }
-      message.success('Skill 已保存')
+      message.success(`Skill ${t('msg.saved')}`)
       originalProtocolRef.current = p
       setCurrent(p)
       setDirty(false)
       loadSkills()
     } catch (err) {
-      handleApiError(err, '保存失败')
+      handleApiError(err, t('msg.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -136,7 +138,7 @@ export default function SkillEditor() {
   const handleDelete = async (p: string) => {
     try {
       await pluginAPI.deleteSkill(p)
-      message.success(`Skill ${p} 已删除`)
+      message.success(`Skill ${p} ${t('msg.deleted')}`)
       if (current === p) {
         setCurrent(null)
         originalProtocolRef.current = null
@@ -145,24 +147,24 @@ export default function SkillEditor() {
       }
       loadSkills()
     } catch (err) {
-      handleApiError(err, '删除失败')
+      handleApiError(err, t('msg.deleteFailed'))
     }
   }
 
   const handleImport = async () => {
     if (!importText.trim()) {
-      message.warning('请先选择或粘贴 .md 内容')
+      message.warning(`${t('msg.pickOrPaste')} .md ${t('label.content')}`)
       return
     }
     try {
       await pluginAPI.importSkill({ filename: importName, content: importText })
-      message.success('Skill 导入成功')
+      message.success(`Skill ${t('msg.importOk')}`)
       setImportOpen(false)
       setImportName('')
       setImportText('')
       loadSkills()
     } catch (err) {
-      handleApiError(err, '导入失败')
+      handleApiError(err, t('msg.importFailed'))
     }
   }
 
@@ -177,26 +179,24 @@ export default function SkillEditor() {
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <Title level={3} style={{ margin: 0 }}>Skill 编辑器</Title>
-          <Text type="secondary">
-            编辑插件 Skill（Markdown）：指导 AI 为对应协议/设备生成测试用例
-          </Text>
+          <Title level={3} style={{ margin: 0 }}>{t('tab.skillEditor')}</Title>
+          <Text type="secondary">{t('skill.editorDesc')}</Text>
         </div>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadSkills}>刷新</Button>
-          <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>导入</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={newSkill}>新建 Skill</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadSkills}>{t('common.refresh')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('common.import')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={newSkill}>{t('btn.newSkill')}</Button>
         </Space>
       </div>
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <Card
           style={{ width: 300, flex: '0 0 300px' }}
-          title={<Space><FileMarkdownOutlined /> 现有 Skill</Space>}
+          title={<Space><FileMarkdownOutlined />{t('card.existingSkills')}</Space>}
           loading={loading}
         >
           {skills.length === 0 ? (
-            <Empty description="暂无 Skill" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            <Empty description={t('msg.noSkills')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           ) : (
             <List
               dataSource={skills}
@@ -206,13 +206,13 @@ export default function SkillEditor() {
                   onClick={() => openSkill(item.protocol)}
                   style={{
                     cursor: 'pointer',
-                    background: current === item.protocol ? '#e6f4ff' : undefined,
+                    background: current === item.protocol ? 'var(--app-accent-subtle)' : undefined,
                     paddingLeft: 8, paddingRight: 8,
                   }}
                   actions={[
                     <Popconfirm
                       key="del"
-                      title="确认删除该 Skill？"
+                      title={t('msg.deleteSkill')}
                       onConfirm={(e) => { e?.stopPropagation(); handleDelete(item.protocol) }}
                     >
                       <Button
@@ -227,7 +227,7 @@ export default function SkillEditor() {
                     description={
                       <Space size={4} wrap>
                         <Tag color="blue">{item.protocol}</Tag>
-                        {item.has_manual && <Tag color="green">含手册</Tag>}
+                    {item.has_manual && <Tag>{t('label.hasManual')}</Tag>}
                       </Space>
                     }
                   />
@@ -241,24 +241,24 @@ export default function SkillEditor() {
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             <Space wrap>
               <Input
-                addonBefore="名称"
+                addonBefore={t('col.name')}
                 style={{ width: 240 }}
                 value={name}
-                placeholder="如：SCPI 通用协议"
+                placeholder={t('label.exampleScpi')}
                 onChange={(e) => { setName(e.target.value); setDirty(true) }}
               />
               <Input
-                addonBefore="协议标识"
+                addonBefore={t('label.protocolId')}
                 style={{ width: 240 }}
                 value={protocol}
-                placeholder="如：scpi"
+                placeholder={t('label.exampleScpiId')}
                 onChange={(e) => { setProtocol(e.target.value); setDirty(true) }}
               />
               <Input
-                addonBefore="关键词"
+                addonBefore={t('label.keyword')}
                 style={{ width: 320 }}
                 value={keywords}
-                placeholder="逗号分隔，用于 AI 自动匹配"
+                placeholder={t('label.commaSeparated')}
                 onChange={(e) => { setKeywords(e.target.value); setDirty(true) }}
               />
             </Space>
@@ -266,7 +266,7 @@ export default function SkillEditor() {
             <TextArea
               value={content}
               onChange={(e) => { setContent(e.target.value); setDirty(true) }}
-              placeholder="Skill 正文（Markdown，不含 frontmatter）"
+              placeholder={t('skill.bodyFull')}
               style={{
                 minHeight: 'calc(100vh - 340px)',
                 fontFamily: 'Consolas, Monaco, monospace',
@@ -278,41 +278,36 @@ export default function SkillEditor() {
               <Button
                 type="primary" icon={<SaveOutlined />} loading={saving}
                 onClick={handleSave}
-              >
-                保存
-              </Button>
-              <Tooltip title="复制当前正文到剪贴板">
+              >{t('common.save')}</Button>
+              <Tooltip title={t('tip.copyBody')}>
                 <Button
                   icon={<CopyOutlined />}
                   onClick={() => {
                     navigator.clipboard.writeText(content)
-                    message.success('已复制')
+                    message.success(t('msg.copied'))
                   }}
-                >
-                  复制
-                </Button>
+                >{t('common.copy')}</Button>
               </Tooltip>
-              {dirty && <Tag color="orange">未保存</Tag>}
-              {!dirty && current && <Tag color="green">已同步</Tag>}
+                  {dirty && <Tag color="orange">{t('label.unsaved')}</Tag>}
+              {!dirty && current && <Tag color="green">{t('msg.synced')}</Tag>}
             </Space>
 
             <Divider style={{ margin: '4px 0' }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              保存后写入 <code>plugins/skills/{'{protocol}'}_skill.md</code>；
-              frontmatter（name / protocol / keywords）由上方字段自动生成。
-              修改「协议标识」会同步重命名文件。
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('label.writtenOnSave')}<code>plugins/skills/{'{protocol}'}_skill.md</code>；
+              frontmatter（name / protocol / keywords）{t('label.autoFromFields')}
+              {t('skill.renameWarning')}
             </Text>
           </Space>
         </Card>
       </div>
 
       <Modal
-        title="导入 Skill（.md）"
+        title={t('dlg.importSkill')}
         open={importOpen}
         onCancel={() => setImportOpen(false)}
         onOk={handleImport}
         width={720}
-        okText="导入"
+        okText={t('common.import')}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Upload
@@ -322,25 +317,23 @@ export default function SkillEditor() {
                 const text = await readFileAsText(file as File)
                 setImportName(file.name)
                 setImportText(text)
-                message.success(`已读取 ${file.name}`)
+      message.success(`${t('msg.loaded')} ${file.name}`)
               } catch {
-                message.error('文件读取失败')
+                message.error(t('msg.readFileFailed'))
               }
               return false
             }}
             showUploadList={false}
           >
-            <Button icon={<ImportOutlined />}>选择 Markdown 文件</Button>
+            <Button icon={<ImportOutlined />}>{t('btn.pickMarkdown')}</Button>
           </Upload>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            也可以直接粘贴内容；protocol 从 frontmatter 或文件名推断（如
-            <code>foo_skill.md</code> → <code>foo</code>），已存在则覆盖。
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('skill.pasteHint')}<code>foo_skill.md</code> → <code>foo</code>），{t('label.overwriteExisting')}
           </Text>
           <TextArea
             rows={14}
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
-            placeholder="粘贴 Skill Markdown 内容"
+            placeholder={t('skill.paste')}
             style={{ fontFamily: 'Consolas, Monaco, monospace', fontSize: 13 }}
           />
         </Space>

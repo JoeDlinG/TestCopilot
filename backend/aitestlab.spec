@@ -43,7 +43,7 @@ hiddenimports += ["serial.serialwin32", "serial.tools.list_ports_windows"]
 hiddenimports += collect_submodules("pymodbus")
 hiddenimports += ["usb.backend.libusb1"]
 # App + restart helper
-hiddenimports += ["restart_helper", "app", "app.main"]
+hiddenimports += ["restart_helper", "update_helper", "app", "app.main"]
 
 # Data files: plugins (protocol drivers + manuals + skills) and the built
 # frontend. These are loaded from disk at runtime (plugins via importlib, the
@@ -51,6 +51,8 @@ hiddenimports += ["restart_helper", "app", "app.main"]
 datas = [
     (os.path.join(backend_dir, "plugins"), "plugins"),
     (os.path.join(backend_dir, "static"), "static"),
+    # Markdown manuals for the in-app 帮助 centre (served by /api/help).
+    (os.path.join(os.path.dirname(backend_dir), "docs"), "docs"),
 ]
 
 a = Analysis(

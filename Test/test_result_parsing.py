@@ -12,11 +12,15 @@ Covers:
 Run: python3 Test/test_result_parsing.py
 """
 import json
+import os
 import sqlite3
 import sys
 import time
 
 import requests
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _testutil import ensure_connected, find_device, flat_fields  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
 DB = "backend/aitestlab.db"
@@ -44,8 +48,13 @@ def ensure_column():
 
 
 def pick_device():
+    """Return the Mini Gateway 100 device, or ``None`` when it is not attached.
+
+    A bare ``next(...)`` raised ``StopIteration`` on machines without the
+    hardware, which aborted the whole run (issue #9). Callers skip instead.
+    """
     items = requests.get(f"{BASE}/devices/", timeout=10).json()["data"]["items"]
-    return next(d for d in items if d["protocol"] == "mini_gateway100")
+    return find_device(items, "mini_gateway100")
 
 
 def get_flow(tc_id):
@@ -83,8 +92,12 @@ def wait_done(exec_id, timeout=180):
 def main():
     ensure_column()
     dev = pick_device()
-    if dev["status"] != "connected":
-        requests.post(f"{BASE}/devices/connect", json={"device_id": dev["id"]}, timeout=30)
+    if dev is None:
+        print("  [SKIP] 未找到 mini_gateway100 设备（需要硬件），跳过本测试")
+        return 0
+    if not ensure_connected(BASE, dev):
+        print("  [SKIP] mini_gateway100 无法连接（需要硬件），跳过本测试")
+        return 0
     print(f"  设备: {dev['id']} ({dev['protocol']})\n")
 
     # ---------------------------------------------------------------- #
@@ -121,13 +134,19 @@ def main():
     print(f"\n=== 2. 配置解析并执行（判定通过）===")
     print(f"    步骤: {first.get('data', {}).get('label')}")
     first.setdefault("config", {})
+    # A parser is evaluated on EVERY reply of the step (one sample per reply)
+    # and the step only passes when ALL samples pass. This step sends two
+    # commands (@11_HELLO; @11_SYSID;); only the SYSID reply carries the
+    # version, so a narrow range would make the HELLO sample fail. Use a range
+    # that every reply satisfies to exercise the "all pass -> step passed" path;
+    # the narrower range in section 3 exercises the failure path.
     first["config"]["parsers"] = [{
         "name": "版本序号",
         "data_type": "dec",
         "start": 0,
         "length": 4,
         "unit": "byte",
-        "conditions": {"min": 1000, "max": 3000},
+        "conditions": {"min": 0, "max": 900000000},
     }]
     save_flow(tc_id, nodes, edges)
 
@@ -139,10 +158,11 @@ def main():
         step1 = next(
             (s for s in st.get("step_results", []) if s["step_index"] == 1), None
         )
-        pr = json.loads(step1["parsed_results"]) if step1 and step1.get("parsed_results") else []
+        pr = flat_fields(step1["parsed_results"]) if step1 and step1.get("parsed_results") else []
         print(f"    step1 status={step1['status']} parsed={[(p['name'], p['value'], p['ok']) for p in pr]}")
-        check(len(pr) == 1, "步骤记录了 1 条解析结果")
-        check(pr and pr[0]["ok"] is True, "解析判定通过")
+        # One sample per device reply, so a repeated step yields several.
+        check(len(pr) >= 1, f"步骤记录了 {len(pr)} 条解析结果")
+        check(bool(pr) and pr[-1]["ok"] is True, "解析判定通过（最后一次采样）")
         check(step1["status"] == "passed", "判定通过时步骤状态为 passed")
 
     # ---------------------------------------------------------------- #
@@ -157,7 +177,7 @@ def main():
         step1 = next(
             (s for s in st2.get("step_results", []) if s["step_index"] == 1), None
         )
-        pr = json.loads(step1["parsed_results"]) if step1 and step1.get("parsed_results") else []
+        pr = flat_fields(step1["parsed_results"]) if step1 and step1.get("parsed_results") else []
         print(f"    step1 status={step1['status']} parsed={[(p['name'], p['value'], p['ok']) for p in pr]}")
         check(pr and pr[0]["ok"] is False, "解析判定未通过")
         check(step1["status"] == "failed", "判定未通过时步骤状态为 failed")
@@ -166,7 +186,12 @@ def main():
     # ---------------------------------------------------------------- #
     print(f"\n=== 4. 生成代码包含解析判断 ===")
     code = requests.post(f"{BASE}/testcases/{tc_id}/generate-code", timeout=60).json()["data"]["code"]
-    check("send_command('@11_HELLO;')" in code, "生成代码使用真实指令")
+    # Commands are now emitted through the placeholder resolver:
+    #   device.send_command(_r('@11_HELLO;', ctx))
+    check(
+        "send_command(_r('@11_HELLO;'" in code or "send_command('@11_HELLO;'" in code,
+        "生成代码使用真实指令",
+    )
 
     # restore: remove the parser config
     first["config"].pop("parsers", None)

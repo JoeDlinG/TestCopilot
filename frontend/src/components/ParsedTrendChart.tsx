@@ -5,8 +5,8 @@ import {
 } from 'recharts'
 
 const COLORS = [
-  '#1677ff', '#52c41a', '#fa8c16', '#eb2f96',
-  '#722ed1', '#13c2c2', '#f5222d', '#a0d911',
+  'var(--app-series-1)', 'var(--app-series-2)', 'var(--app-series-3)', 'var(--app-series-4)',
+  'var(--app-series-5)', 'var(--app-series-6)', 'var(--app-series-7)', 'var(--app-series-8)',
 ]
 
 /** Best-effort numeric view of a parsed value ("0x85" -> 133). */

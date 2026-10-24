@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { usePolling } from '../hooks/usePolling'
 import {
   Row, Col, Card, Table, Button, Space, Input, InputNumber, Select, Tag,
   Alert, Modal, Drawer, Progress, Tooltip, Typography, Divider, message,
-  List, Checkbox, Empty, Spin,
+  List, Checkbox, Empty, Spin, Popconfirm,
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined,
   PlayCircleOutlined, SaveOutlined, StopOutlined, WarningOutlined,
-  CopyOutlined, ReloadOutlined,
+  CopyOutlined, ReloadOutlined, UndoOutlined, FileAddOutlined,
 } from '@ant-design/icons'
 import { planAPI, planRunAPI, testCaseAPI, deviceAPI } from '../services/api'
+import { useI18n } from '../i18n'
 
 const { Text, Title } = Typography
 
@@ -59,23 +62,28 @@ function autoSerialize(items: PlanItem[]): PlanItem[] {
   })
 }
 
-const STATE_TAG: Record<string, { color: string; text: string }> = {
-  resolved: { color: 'green', text: '已确定' },
-  candidates: { color: 'orange', text: '多候选' },
-  unresolved: { color: 'red', text: '未指定' },
-}
+const STATE_TAG = (tr: (k: string) => string): Record<string, { color: string; text: string }> => ({
+  resolved: { color: 'processing', text: tr('label.resolved') },
+  candidates: { color: 'warning', text: tr('label.candidates') },
+  unresolved: { color: 'error', text: tr('label.unresolved') },
+})
 
 export default function ExecutionPlanner() {
+  const { t } = useI18n()
   const [cases, setCases] = useState<any[]>([])
   const [devices, setDevices] = useState<any[]>([])
   const [plans, setPlans] = useState<any[]>([])
   const [planId, setPlanId] = useState<string | null>(null)
-  const [planName, setPlanName] = useState('新建执行计划')
+  const [planName, setPlanName] = useState(t('btn.newPlan'))
   const [planLoop, setPlanLoop] = useState(1)
   const [maxParallel, setMaxParallel] = useState(4)
   const [onError, setOnError] = useState('abort_all')
   const [items, setItems] = useState<PlanItem[]>([])
   const [selected, setSelected] = useState<string[]>([])
+  /** Rows ticked in the middle plan-item table (bulk copy / delete). */
+  const [itemSelected, setItemSelected] = useState<string[]>([])
+  /** Undo stack of plan snapshots; Ctrl+Z pops one. */
+  const [history, setHistory] = useState<any[]>([])
   const [keyword, setKeyword] = useState('')
   const [validation, setValidation] = useState<any>(null)
   const [loading, setLoading] = useState(false)
@@ -99,7 +107,7 @@ export default function ExecutionPlanner() {
       setDevices(extractItems(d))
       setPlans(extractItems(p))
     } catch (e) {
-      message.error('加载用例/设备失败')
+      message.error(t('msg.loadBaseFailed'))
     }
   }
 
@@ -140,72 +148,178 @@ export default function ExecutionPlanner() {
   }, [items, planLoop, maxParallel, onError])
 
   // ---- poll the running batch -----------------------------------------
-  useEffect(() => {
+  const pollRun = useCallback(async () => {
     if (!runId) return
-    let alive = true
-    const tick = async () => {
-      try {
-        const data = extractData(await planRunAPI.get(runId))
-        if (!alive) return
-        setRun(data)
-        if (data?.status !== 'running') {
-          setRunId((cur) => (cur === runId ? null : cur))
-        }
-      } catch { /* keep polling */ }
-    }
-    tick()
-    const timer = setInterval(tick, 2000)
-    return () => { alive = false; clearInterval(timer) }
+    try {
+      const data = extractData(await planRunAPI.get(runId))
+      setRun(data)
+      if (data?.status !== 'running') {
+        setRunId((cur) => (cur === runId ? null : cur))
+      }
+    } catch { /* keep polling */ }
   }, [runId])
+
+  useEffect(() => { pollRun() }, [pollRun])
+  usePolling(pollRun, 2000, !!runId)
+
+  // ---- undo (Ctrl+Z) --------------------------------------------------
+  const snapshot = () => ({
+    items: items.map((i) => ({ ...i })),
+    planName, planLoop, maxParallel, onError,
+  })
+
+  /** Call *before* mutating so the pre-change state can be restored. */
+  const pushHistory = () => setHistory((h) => [...h.slice(-49), snapshot()])
+
+  const undo = () => {
+    if (!history.length) { message.info(t('msg.nothingToUndo')); return }
+    const prev = history[history.length - 1]
+    setHistory((h) => h.slice(0, -1))
+    setItems(prev.items)
+    setPlanName(prev.planName)
+    setPlanLoop(prev.planLoop)
+    setMaxParallel(prev.maxParallel)
+    setOnError(prev.onError)
+    setItemSelected((ids) => ids.filter((id) => prev.items.some((i: PlanItem) => i.id === id)))
+    message.success(t('msg.undone'))
+  }
+
+  // Ctrl+Z / ⌘Z. Held in a ref so the listener is bound once, not per render.
+  const undoRef = useRef(undo)
+  undoRef.current = undo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || String(e.key).toLowerCase() !== 'z') return
+      if (e.shiftKey) return // redo is not implemented yet
+      const el = e.target as HTMLElement | null
+      // Let text fields keep their own native undo.
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      e.preventDefault()
+      undoRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ---- item helpers ----------------------------------------------------
   const addSelected = () => {
-    if (!selected.length) { message.warning('请先在左侧勾选用例'); return }
-    const existing = new Set(items.map((i) => i.testcase_id))
-    const added: PlanItem[] = []
-    selected.forEach((cid) => {
-      if (existing.has(cid)) return
-      const tc = cases.find((c) => c.id === cid)
-      added.push({
-        id: `tmp_${Date.now()}_${cid}`,
-        testcase_id: cid,
-        testcase_name: tc?.name,
-        ...DEFAULT_ITEM,
-        // Default = own sequence number => fully serial (PRD FR3.1)
-        group_no: items.length + added.length + 1,
+    if (!selected.length) { message.warning(t('msg.tickCasesFirst')); return }
+    pushHistory()
+    setItems((prev) => {
+      const existing = new Set(prev.map((i) => i.testcase_id))
+      const added: PlanItem[] = []
+      selected.forEach((cid) => {
+        if (existing.has(cid)) return
+        const tc = cases.find((c) => c.id === cid)
+        added.push({
+          id: `tmp_${Date.now()}_${cid}`,
+          testcase_id: cid,
+          testcase_name: tc?.name,
+          ...DEFAULT_ITEM,
+          // Default = own sequence number => fully serial (PRD FR3.1)
+          group_no: prev.length + added.length + 1,
+        })
       })
+      return [...prev, ...added]
     })
-    setItems([...items, ...added])
     setSelected([])
   }
 
-  const update = (id: string, patch: Partial<PlanItem>) =>
+  /** Duplicate the ticked plan items, appended at the end. */
+  const copyItems = () => {
+    if (!itemSelected.length) { message.warning(t('msg.selectItemsFirst')); return }
+    pushHistory()
+    setItems((prev) => {
+      const clones = prev
+        .filter((i) => itemSelected.includes(i.id))
+        .map((i) => ({ ...i, id: `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }))
+      return [...prev, ...clones]
+    })
+    message.success(`${t('msg.copied')} ${itemSelected.length} ${t('label.items')}`)
+  }
+
+  const removeItems = () => {
+    if (!itemSelected.length) { message.warning(t('msg.selectItemsFirst')); return }
+    pushHistory()
+    setItems((prev) => prev.filter((i) => !itemSelected.includes(i.id)))
+    setItemSelected([])
+    message.success(`${t('msg.deleted')} ${itemSelected.length} ${t('label.items')}`)
+  }
+
+  // ---- plan-level helpers ---------------------------------------------
+  const newPlan = () => {
+    pushHistory()
+    setPlanId(null)
+    setPlanName(t('btn.newPlan'))
+    setPlanLoop(1)
+    setMaxParallel(4)
+    setOnError('abort_all')
+    setItems([])
+    setSelected([])
+    setItemSelected([])
+    setValidation(null)
+    setRunId(null)
+    setRun(null)
+  }
+
+  const update = (id: string, patch: Partial<PlanItem>) => {
+    pushHistory()
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)))
+  }
 
   const move = (index: number, delta: number) => {
     const target = index + delta
     if (target < 0 || target >= items.length) return
+    pushHistory()
     const next = [...items]
     ;[next[index], next[target]] = [next[target], next[index]]
     setItems(next)
   }
 
-  const remove = (id: string) => setItems((prev) => prev.filter((i) => i.id !== id))
+  const remove = (id: string) => {
+    pushHistory()
+    setItems((prev) => prev.filter((i) => i.id !== id))
+  }
 
   const mergeWithPrev = (index: number) => {
     if (index === 0) return
+    pushHistory()
     const prevGroup = items[index - 1].group_no
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, group_no: prevGroup } : it)))
   }
 
   const splitGroup = (index: number) => {
+    pushHistory()
     const maxGroup = Math.max(...items.map((i) => i.group_no))
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, group_no: maxGroup + 1 } : it)))
   }
 
+  // ---- existing plan operations (copy / delete) ------------------------
+  const duplicatePlan = async (id: string, name: string) => {
+    try {
+      const d = extractData(await planAPI.duplicate(id))
+      await openPlan(d.id)
+      loadBase()
+      message.success(`${t('msg.copiedPrefix')}${name}」`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || t('msg.copyFailed'))
+    }
+  }
+
+  const deletePlan = async (id: string, name: string) => {
+    try {
+      await planAPI.delete(id)
+      message.success(`${t('msg.deletedPrefix')}${name}」`)
+      if (planId === id) newPlan()
+      loadBase()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || t('msg.deleteFailed'))
+    }
+  }
+
   // ---- persistence -----------------------------------------------------
   const save = async () => {
-    if (!items.length) { message.warning('计划为空'); return }
+    if (!items.length) { message.warning(t('msg.planEmpty')); return }
     setLoading(true)
     try {
       const payload = {
@@ -230,10 +344,10 @@ export default function ExecutionPlanner() {
       const data = extractData(res)
       setPlanId(data.id)
       setItems(data.items.map((it: any) => ({ ...it })))
-      message.success('计划已保存')
+      message.success(t('msg.planSaved'))
       loadBase()
     } catch (e: any) {
-      message.error(e?.response?.data?.detail?.message || '保存失败')
+      message.error(e?.response?.data?.detail?.message || t('msg.saveFailed'))
     } finally {
       setLoading(false)
     }
@@ -250,21 +364,21 @@ export default function ExecutionPlanner() {
   }
 
   const startRun = async () => {
-    if (!planId) { message.warning('请先保存计划'); return }
+    if (!planId) { message.warning(t('msg.savePlanFirst')); return }
     try {
       const res = await planAPI.run(planId)
       const data = extractData(res)
       setRunId(data.run_id)
       setRun({ status: 'running', total_items: data.total_items, items: [] })
       setMonitorOpen(true)
-      message.success('批次已启动')
+      message.success(t('msg.batchStarted'))
     } catch (e: any) {
       const detail = e?.response?.data?.detail
       if (e?.response?.status === 409) {
         setValidation(detail?.validation)
         const errs = detail?.validation?.errors || []
         Modal.error({
-          title: '计划存在冲突，不能执行',
+          title: t('dlg.conflictTitle'),
           content: (
             <div>
               {errs.map((x: any, i: number) => (
@@ -274,7 +388,7 @@ export default function ExecutionPlanner() {
           ),
         })
       } else {
-        message.error(detail?.message || '启动失败')
+        message.error(detail?.message || t('msg.startFailed'))
       }
     }
   }
@@ -290,7 +404,7 @@ export default function ExecutionPlanner() {
 
   const itemColumns: any[] = [
     {
-      title: '序', width: 58,
+      title: t('col.seq'), width: 58,
       render: (_: any, __: any, idx: number) => (
         <Space size={2} direction="vertical">
           <Button size="small" type="text" icon={<ArrowUpOutlined />}
@@ -301,28 +415,28 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: '组', width: 130,
+      title: t('col.group'), width: 130,
       render: (_: any, r: PlanItem, idx: number) => (
         <Space size={4}>
-          <Tag color={errorItemIds.has(r.id) ? 'red' : 'blue'}>组{r.group_no}</Tag>
-          <Tooltip title="与上一项并行">
+          <Tag color={errorItemIds.has(r.id) ? 'red' : 'blue'}>t('col.group'){r.group_no}</Tag>
+          <Tooltip title={t('tip.mergeWithPrev')}>
             <Button size="small" type="text" disabled={idx === 0}
               onClick={() => mergeWithPrev(idx)}>↰</Button>
           </Tooltip>
-          <Tooltip title="独立成组（串行）">
+          <Tooltip title={t('tip.splitGroup')}>
             <Button size="small" type="text" onClick={() => splitGroup(idx)}>⇥</Button>
           </Tooltip>
         </Space>
       ),
     },
     {
-      title: '用例', ellipsis: true,
+      title: t('col.case'), width: 220, ellipsis: true,
       render: (_: any, r: PlanItem) => r.testcase_name || r.testcase_id,
     },
     {
-      title: '设备', width: 190,
+      title: t('col.device'), width: 190,
       render: (_: any, r: PlanItem) => {
-        const st = STATE_TAG[r.resolved_state || 'unresolved']
+        const st = STATE_TAG(t)[r.resolved_state || 'unresolved']
         const ids = r.resolved_device_ids || []
         return (
           <Space size={4} direction="vertical" style={{ width: '100%' }}>
@@ -331,9 +445,11 @@ export default function ExecutionPlanner() {
               size="small"
               style={{ width: '100%' }}
               allowClear
-              placeholder="自动推断"
+              placeholder={t('label.autoResolve')}
               value={r.device_id || undefined}
-              onChange={(v) => update(r.id, { device_id: v })}
+              // Explicit type: with `options` supplied but no generic parameter,
+              // antd cannot infer the value type and `v` degrades to any.
+              onChange={(v: string | undefined) => update(r.id, { device_id: v })}
               options={devices.map((d) => ({ value: d.id, label: d.name }))}
             />
             {!!ids.length && (
@@ -346,7 +462,7 @@ export default function ExecutionPlanner() {
       },
     },
     {
-      title: '循环', width: 88,
+      title: t('col.loop'), width: 88,
       render: (_: any, r: PlanItem) => (
         <InputNumber size="small" min={1} max={10000} style={{ width: 72 }}
           value={r.loop_count}
@@ -354,16 +470,16 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: '延时(ms)', width: 190,
+      title: t('col.delayMs'), width: 190,
       render: (_: any, r: PlanItem) => (
         <Space size={2}>
-          <Tooltip title="前置延时"><InputNumber size="small" min={0} style={{ width: 58 }}
+          <Tooltip title={t('col.delayBefore')}><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.delay_before_ms}
             onChange={(v) => update(r.id, { delay_before_ms: Number(v) || 0 })} /></Tooltip>
-          <Tooltip title="循环间隔"><InputNumber size="small" min={0} style={{ width: 58 }}
+          <Tooltip title={t('label.loopInterval')}><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.loop_interval_ms}
             onChange={(v) => update(r.id, { loop_interval_ms: Number(v) || 0 })} /></Tooltip>
-          <Tooltip title="后置延时"><InputNumber size="small" min={0} style={{ width: 58 }}
+          <Tooltip title={t('col.delayAfter')}><InputNumber size="small" min={0} style={{ width: 58 }}
             value={r.delay_after_ms}
             onChange={(v) => update(r.id, { delay_after_ms: Number(v) || 0 })} /></Tooltip>
         </Space>
@@ -382,20 +498,34 @@ export default function ExecutionPlanner() {
 
   return (
     <div style={{ padding: 4 }}>
+      {/* Top toolbar: new / undo */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+        <Space>
+          <Button icon={<FileAddOutlined />} onClick={newPlan}>{t('btn.newPlan')}</Button>
+          <Tooltip title={t('tip.undo')}>
+            <Button icon={<UndoOutlined />} disabled={!history.length} onClick={undo}>
+              t('common.undo'){history.length ? `（${history.length}）` : ''}
+            </Button>
+          </Tooltip>
+          {planId && <Tag>t('label.editing')：{planName}</Tag>}
+        </Space>
+        <Text type="secondary" style={{ fontSize: 12 }}>{t('planner.hint')}</Text>
+      </div>
+
       <Row gutter={12}>
-        {/* ---------- 左：用例库 ---------- */}
+        {/* ---------- left: test case library ---------- */}
         <Col span={6}>
-          <Card size="small" title="用例库" extra={
+          <Card size="small" title={t('card.caseLibrary')} extra={
             <Button size="small" icon={<ReloadOutlined />} onClick={loadBase} />
           }>
-            <Input.Search size="small" placeholder="搜索用例" allowClear
+            <Input.Search size="small" placeholder={t('ph.searchCases')} allowClear
               value={keyword} onChange={(e) => setKeyword(e.target.value)}
               style={{ marginBottom: 8 }} />
             <div style={{ maxHeight: 420, overflowY: 'auto' }}>
               <Checkbox.Group style={{ width: '100%' }}
                 value={selected} onChange={(v) => setSelected(v as string[])}>
                 <List size="small" dataSource={filteredCases}
-                  locale={{ emptyText: <Empty description="无用例" /> }}
+                  locale={{ emptyText: <Empty description={t('msg.noCases')} /> }}
                   renderItem={(c) => (
                     <List.Item style={{ padding: '4px 0' }}>
                       <Checkbox value={c.id}>
@@ -406,26 +536,52 @@ export default function ExecutionPlanner() {
               </Checkbox.Group>
             </div>
             <Button block type="dashed" icon={<PlusOutlined />} style={{ marginTop: 8 }}
-              onClick={addSelected}>加入计划（{selected.length}）</Button>
+              onClick={addSelected}>t('btn.addToPlanPrefix'){selected.length}）</Button>
           </Card>
 
-          <Card size="small" title="已有计划" style={{ marginTop: 12 }}>
+          <Card size="small" title={t('card.existingPlans')} style={{ marginTop: 12 }}
+            extra={<Text type="secondary" style={{ fontSize: 11 }}>{t('tip.clickToEdit')}</Text>}>
             <List size="small" dataSource={plans}
-              locale={{ emptyText: <Empty description="暂无" /> }}
-              renderItem={(p: any) => (
-                <List.Item style={{ padding: '4px 0' }}>
-                  <Space>
-                    <Button size="small" type="link" onClick={() => openPlan(p.id)}>
-                      {p.name}
-                    </Button>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{p.item_count} 项</Text>
-                  </Space>
-                </List.Item>
-              )} />
+              locale={{ emptyText: <Empty description={t('label.none')} /> }}
+              renderItem={(p: any) => {
+                const active = p.id === planId
+                return (
+                  <List.Item
+                    style={{
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      background: active ? 'var(--app-accent-subtle)' : undefined,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => openPlan(p.id)}
+                  >
+                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space size={4}>
+                        <Button size="small" type="link" style={{ padding: 0 }}
+                          onClick={(e) => { e.stopPropagation(); openPlan(p.id) }}>
+                          <Text strong={active}>{p.name}</Text>
+                        </Button>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{p.item_count} {t('label.items')}</Text>
+                      </Space>
+                      <Space size={0}>
+                        <Tooltip title={t('btn.copyPlan')}>
+                          <Button size="small" type="text" icon={<CopyOutlined />}
+                            onClick={(e) => { e.stopPropagation(); duplicatePlan(p.id, p.name) }} />
+                        </Tooltip>
+                        <Popconfirm title={`${t('msg.deletePlanPrefix')}${p.name}」？`}
+                          onConfirm={() => deletePlan(p.id, p.name)}>
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                            onClick={(e) => e.stopPropagation()} />
+                        </Popconfirm>
+                      </Space>
+                    </Space>
+                  </List.Item>
+                )
+              }} />
           </Card>
         </Col>
 
-        {/* ---------- 中：执行序列 ---------- */}
+        {/* ---------- middle: execution sequence ---------- */}
         <Col span={13}>
           <Card size="small"
             title={<Space>
@@ -436,52 +592,74 @@ export default function ExecutionPlanner() {
             extra={<Space>
               <Button size="small" icon={<CopyOutlined />}
                 onClick={async () => {
-                  if (!planId) return message.warning('请先保存')
+                  if (!planId) return message.warning(t('msg.saveFirst'))
                   const d = extractData(await planAPI.duplicate(planId))
                   openPlan(d.id); loadBase()
-                }}>复制</Button>
+                }}>{t('common.copy')}</Button>
               <Button size="small" icon={<SaveOutlined />} loading={loading}
-                onClick={save}>保存</Button>
+                onClick={save}>{t('common.save')}</Button>
             </Space>}>
             <Space size={12} style={{ marginBottom: 10 }} wrap>
               <Space size={4}>
-                <Text type="secondary">计划循环</Text>
+                <Text type="secondary">{t('label.planLoop')}</Text>
                 <InputNumber size="small" min={1} max={1000} style={{ width: 70 }}
                   value={planLoop} onChange={(v) => setPlanLoop(Number(v) || 1)} />
               </Space>
               <Space size={4}>
-                <Text type="secondary">最大并行</Text>
+                <Text type="secondary">{t('label.maxParallel')}</Text>
                 <InputNumber size="small" min={1} max={16} style={{ width: 70 }}
                   value={maxParallel} onChange={(v) => setMaxParallel(Number(v) || 4)} />
               </Space>
               <Space size={4}>
-                <Text type="secondary">失败策略</Text>
+                <Text type="secondary">{t('label.onError')}</Text>
                 <Select size="small" style={{ width: 120 }} value={onError}
                   onChange={setOnError}
                   options={[
-                    { value: 'abort_all', label: '停止全部' },
-                    { value: 'continue', label: '继续' },
-                    { value: 'abort_group', label: '停止本组' },
+                    { value: 'abort_all', label: t('onError.abortAll') },
+                    { value: 'continue', label: t('onError.continue') },
+                    { value: 'abort_group', label: t('onError.abortGroup') },
                   ]} />
               </Space>
             </Space>
 
-            <Table size="small" rowKey="id" pagination={false}
+            {/* Bulk actions for ticked plan items */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+              <Button size="small" icon={<CopyOutlined />}
+                disabled={!itemSelected.length} onClick={copyItems}>
+                t('btn.copySelectedPrefix'){itemSelected.length}）
+              </Button>
+              <Button size="small" danger icon={<DeleteOutlined />}
+                disabled={!itemSelected.length} onClick={removeItems}>
+                t('btn.deleteSelectedPrefix'){itemSelected.length}）
+              </Button>
+              <Button size="small" type="link"
+                disabled={!itemSelected.length}
+                onClick={() => setItemSelected(items.map((i) => i.id))}>{t('common.selectAll')}</Button>
+              <Button size="small" type="link"
+                disabled={!itemSelected.length} onClick={() => setItemSelected([])}>{t('btn.deselectAll')}</Button>
+            </div>
+
+            <DataTable size="small" rowKey="id" pagination={false}
               dataSource={items} columns={itemColumns}
+              rowSelection={{
+                selectedRowKeys: itemSelected,
+                onChange: (keys) => setItemSelected(keys as string[]),
+                columnWidth: 36,
+              }}
               rowClassName={(r) => (errorItemIds.has(r.id) ? 'plan-row-error' : '')}
-              locale={{ emptyText: <Empty description="从左侧勾选用例加入" /> }} />
+              locale={{ emptyText: <Empty description={t('tip.addFromLeft')} /> }} />
           </Card>
         </Col>
 
-        {/* ---------- 右：校验面板 ---------- */}
+        {/* ---------- right: validation panel ---------- */}
         <Col span={5}>
-          <Card size="small" title="执行前校验">
-            {!validation && <Empty description="添加用例后自动校验" />}
+          <Card size="small" title={t('card.precheck')}>
+            {!validation && <Empty description={t('tip.autoValidate')} />}
 
             {!!(validation?.errors || []).length && (
               <Alert type="error" showIcon icon={<WarningOutlined />}
                 style={{ marginBottom: 8 }}
-                message={`${validation.errors.length} 个冲突，必须处理`}
+                message={`${validation.errors.length} ${t('msg.conflictsSuffix')}`}
                 description={
                   <div>
                     {validation.errors.map((e: any, i: number) => (
@@ -490,16 +668,14 @@ export default function ExecutionPlanner() {
                       </div>
                     ))}
                     <Button size="small" style={{ marginTop: 8 }}
-                      onClick={() => setItems(autoSerialize(items))}>
-                      自动串行化(推荐)
-                    </Button>
+                      onClick={() => setItems(autoSerialize(items))}>{t('btn.autoSerialize')}</Button>
                   </div>
                 } />
             )}
 
             {!!(validation?.warnings || []).length && (
               <Alert type="warning" showIcon style={{ marginBottom: 8 }}
-                message={`${validation.warnings.length} 个警告`}
+                message={`${validation.warnings.length} ${t('msg.warningsSuffix')}`}
                 description={validation.warnings.map((w: any, i: number) => (
                   <div key={i} style={{ fontSize: 12, marginTop: 4 }}>· {w.message}</div>
                 ))} />
@@ -511,16 +687,16 @@ export default function ExecutionPlanner() {
             )}
 
             <Divider style={{ margin: '10px 0' }} />
-            <Tooltip title={blocking ? '存在冲突，无法执行' : !planId ? '请先保存计划' : ''}>
+            <Tooltip title={blocking ? t('tip.blocked') : !planId ? t('msg.savePlanFirst') : ''}>
               <Button block type="primary" icon={<PlayCircleOutlined />}
                 disabled={blocking || !items.length}
-                onClick={startRun}>开始执行</Button>
+                onClick={startRun}>{t('btn.startRun')}</Button>
             </Tooltip>
 
             {run && (
               <div style={{ marginTop: 10 }}>
                 <Button block size="small" onClick={() => setMonitorOpen(true)}>
-                  查看最近批次（{run.status}）
+                  t('btn.viewLastBatch'){run.status}）
                 </Button>
               </div>
             )}
@@ -528,25 +704,25 @@ export default function ExecutionPlanner() {
         </Col>
       </Row>
 
-      {/* ---------- 运行监控 ---------- */}
-      <Drawer title="批量运行监控" width={620} open={monitorOpen}
+      {/* ---------- run monitor ---------- */}
+      <Drawer title={t('dlg.batchMonitor')} width={620} open={monitorOpen}
         onClose={() => setMonitorOpen(false)}
         extra={run?.status === 'running' && (
           <Button danger size="small" icon={<StopOutlined />}
             onClick={async () => {
-              if (runId) { await planRunAPI.stop(runId); message.info('已请求停止') }
-            }}>停止批次</Button>
+              if (runId) { await planRunAPI.stop(runId); message.info(t('msg.stopRequested')) }
+            }}>{t('btn.stopBatch')}</Button>
         )}>
         {!run ? <Spin /> : (
           <>
             <Space direction="vertical" style={{ width: '100%' }} size={8}>
-              <Title level={5} style={{ margin: 0 }}>状态：{run.status}</Title>
+              <Title level={5} style={{ margin: 0 }}>t('label.statusColon'){run.status}</Title>
               <Progress percent={run.total_items
                 ? Math.round((run.completed_items || 0) / run.total_items * 100) : 0} />
               <Space size={16} wrap>
-                <Text>通过 {run.passed_items || 0}</Text>
-                <Text type="danger">失败 {run.failed_items || 0}</Text>
-                <Text type="secondary">耗时 {run.duration_ms ? (run.duration_ms / 1000).toFixed(1) + 's' : '-'}</Text>
+                <Text>t('status.passed') {run.passed_items || 0}</Text>
+                <Text type="danger">t('status.failed') {run.failed_items || 0}</Text>
+                <Text type="secondary">t('col.duration') {run.duration_ms ? (run.duration_ms / 1000).toFixed(1) + 's' : '-'}</Text>
               </Space>
             </Space>
             <Divider />
@@ -555,7 +731,7 @@ export default function ExecutionPlanner() {
                 <List.Item>
                   <Space direction="vertical" style={{ width: '100%' }} size={2}>
                     <Space>
-                      <Tag>组{it.group_no}</Tag>
+                      <Tag>t('col.group'){it.group_no}</Tag>
                       <Text strong>{it.testcase_name || it.testcase_id}</Text>
                       <Tag color={
                         it.status === 'passed' ? 'green'
@@ -564,8 +740,8 @@ export default function ExecutionPlanner() {
                       }>{it.status}</Tag>
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      迭代 {it.iteration || 0} / {it.loop_count || 1}
-                      {it.execution_id ? ` · 执行 ${it.execution_id}` : ''}
+                      t('label.iteration') {it.iteration || 0} / {it.loop_count || 1}
+                      {it.execution_id ? ` · ${t('label.execution')} ${it.execution_id}` : ''}
                     </Text>
                   </Space>
                 </List.Item>
@@ -575,8 +751,8 @@ export default function ExecutionPlanner() {
       </Drawer>
 
       <style>{`
-        .plan-row-error { background: #fff1f0; }
-        .plan-row-error:hover > td { background: #ffe7e5 !important; }
+        .plan-row-error { background: var(--app-danger-bg); }
+        .plan-row-error:hover > td { background: var(--app-danger-bg) !important; }
       `}</style>
     </div>
   )

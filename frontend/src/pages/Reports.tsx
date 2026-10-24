@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, message, Typography, Modal, Form,
   Input, Select, Row, Col, Empty, Popconfirm, List
 } from 'antd'
+import { DataTable } from '../components/ui'
 import {
   PlusOutlined, FileTextOutlined, DownloadOutlined,
   ReloadOutlined, EyeOutlined, FilePdfOutlined, FileExcelOutlined
@@ -10,10 +11,12 @@ import {
 import { reportAPI, executionAPI } from '../services/api'
 import { extractData, extractItems, handleApiError } from '../services/apiHelper'
 import type { TestReport, ReportTemplate, TestExecution } from '../types'
+import { useI18n } from '../i18n'
 
 const { Title, Text } = Typography
 
 export default function Reports() {
+  const { t } = useI18n()
   const [reports, setReports] = useState<TestReport[]>([])
   const [templates, setTemplates] = useState<ReportTemplate[]>([])
   const [executions, setExecutions] = useState<TestExecution[]>([])
@@ -35,7 +38,7 @@ export default function Reports() {
       setTemplates(extractData(templatesRes, []))
       setExecutions(extractItems(execsRes))
     } catch (err) {
-      handleApiError(err, '加载数据失败')
+      handleApiError(err, t('msg.loadDataFailed'))
     } finally {
       setLoading(false)
     }
@@ -54,12 +57,12 @@ export default function Reports() {
         fields: values.fields ? (typeof values.fields === 'string' ? JSON.parse(values.fields) : values.fields) : {},
       }
       await reportAPI.generate(payload)
-      message.success('报告已生成')
+      message.success(t('msg.reportGenerated'))
       setModalVisible(false)
       form.resetFields()
       loadData()
     } catch (err) {
-      handleApiError(err, '生成报告失败')
+      handleApiError(err, t('msg.generateReportFailed'))
     }
   }
 
@@ -74,28 +77,29 @@ export default function Reports() {
         }))
       }
       await reportAPI.createTemplate({ ...values, fields })
-      message.success('模板已创建')
+      message.success(t('msg.templateCreated'))
       setTemplateModalVisible(false)
       templateForm.resetFields()
       loadData()
     } catch (err) {
-      handleApiError(err, '创建模板失败')
+      handleApiError(err, t('msg.createTemplateFailed'))
     }
   }
 
   const formatIcon = (format: string) => {
     switch (format) {
-      case 'pdf': return <FilePdfOutlined style={{ color: '#ff4d4f' }} />
-      case 'csv': return <FileExcelOutlined style={{ color: '#52c41a' }} />
+      case 'pdf': return <FilePdfOutlined style={{ color: 'var(--app-fail)' }} />
+      case 'csv': return <FileExcelOutlined style={{ color: 'var(--app-pass)' }} />
       default: return <FileTextOutlined />
     }
   }
 
   const reportColumns = [
     {
-      title: '报告名称',
+      title: t('col.reportName'),
       dataIndex: 'title',
       key: 'title',
+      width: 240,
       render: (name: string, record: TestReport) => (
         <Space>
           {formatIcon(record.format)}
@@ -104,52 +108,56 @@ export default function Reports() {
       ),
     },
     {
-      title: '格式',
+      title: t('col.format'),
       dataIndex: 'format',
       key: 'format',
+      width: 90,
       render: (f: string) => <Tag>{f.toUpperCase()}</Tag>,
     },
     {
-      title: '执行数量',
+      title: t('col.execCount'),
       dataIndex: 'execution_ids',
       key: 'execution_ids',
+      width: 110,
       render: (ids: string[]) => ids?.length || 0,
     },
     {
-      title: '生成时间',
+      title: t('col.generatedAt'),
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: '操作',
+      title: t('col.actions'),
       key: 'actions',
+      width: 160,
       render: (_: any, record: TestReport) => (
         <Button
           size="small"
           icon={<DownloadOutlined />}
           disabled={!record.file_path}
-          onClick={() => message.info('下载功能开发中')}
-        >
-          下载
-        </Button>
+          onClick={() => message.info(t('msg.downloadTodo'))}
+        >{t('common.download')}</Button>
       ),
     },
   ]
 
   const templateColumns = [
-    { title: '模板名称', dataIndex: 'name', key: 'name' },
-    { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true },
+    { title: t('col.templateName'), dataIndex: 'name', key: 'name' },
+    { title: t('col.description'), dataIndex: 'description', key: 'description', ellipsis: true },
     {
-      title: '字段数',
+      title: t('col.fieldCount'),
       dataIndex: 'fields',
       key: 'fields',
+      width: 140,
       render: (fields: any[]) => fields?.length || 0,
     },
     {
-      title: '创建时间',
+      title: t('col.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
   ]
@@ -157,17 +165,15 @@ export default function Reports() {
   return (
     <div className="page-container">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>测试报告</Title>
+        <Title level={3} style={{ margin: 0 }}>{t('page.reports')}</Title>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadData}>{t('common.refresh')}</Button>
           <Button
             onClick={() => {
               setTemplateModalVisible(true)
               templateForm.resetFields()
             }}
-          >
-            创建模板
-          </Button>
+          >{t('btn.createTemplate')}</Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -175,34 +181,32 @@ export default function Reports() {
               setModalVisible(true)
               form.resetFields()
             }}
-          >
-            生成报告
-          </Button>
+          >{t('btn.generateReport')}</Button>
         </Space>
       </div>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
-          <Card title="报告列表">
-            <Table
+          <Card title={t('card.reportList')}>
+            <DataTable
               columns={reportColumns}
               dataSource={reports}
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
-              locale={{ emptyText: <Empty description="暂无报告" /> }}
+              locale={{ emptyText: <Empty description={t('msg.noReports')} /> }}
             />
           </Card>
         </Col>
         <Col xs={24} lg={10}>
-          <Card title="报告模板">
-            <Table
+          <Card title={t('card.reportTemplates')}>
+            <DataTable
               columns={templateColumns}
               dataSource={templates}
               rowKey="id"
               loading={loading}
               pagination={false}
-              locale={{ emptyText: <Empty description="暂无模板" /> }}
+              locale={{ emptyText: <Empty description={t('msg.noTemplates')} /> }}
             />
           </Card>
         </Col>
@@ -210,34 +214,34 @@ export default function Reports() {
 
       {/* Generate Report Modal */}
       <Modal
-        title="生成测试报告"
+        title={t('btn.generateReport')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
         width={560}
       >
         <Form form={form} layout="vertical" onFinish={handleGenerate}>
-          <Form.Item name="name" label="报告名称" rules={[{ required: true }]}>
-            <Input placeholder="输入报告名称" />
+          <Form.Item name="name" label={t('col.reportName')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.reportName')} />
           </Form.Item>
-          <Form.Item name="execution_ids" label="选择执行记录" rules={[{ required: true }]}>
+          <Form.Item name="execution_ids" label={t('ph.pickExecutions')} rules={[{ required: true }]}>
             <Select
               mode="multiple"
-              placeholder="选择要包含的执行记录"
+              placeholder={t('label.pickExecutions')}
               options={executions.map(e => ({
                 label: `${e.id?.slice(0, 8)}... - ${e.status}`,
                 value: e.id,
               }))}
             />
           </Form.Item>
-          <Form.Item name="template_id" label="报告模板">
+          <Form.Item name="template_id" label={t('card.reportTemplates')}>
             <Select
               allowClear
-              placeholder="选择模板（可选）"
+              placeholder={t('label.templateOptional')}
               options={templates.map(t => ({ label: t.name, value: t.id }))}
             />
           </Form.Item>
-          <Form.Item name="format" label="输出格式" initialValue="pdf">
+          <Form.Item name="format" label={t('label.outputFormat')} initialValue="pdf">
             <Select
               options={[
                 { label: 'PDF', value: 'pdf' },
@@ -247,10 +251,10 @@ export default function Reports() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="fields" label="自定义字段 (JSON)">
+          <Form.Item name="fields" label={t('label.customJson')}>
             <Input.TextArea
               rows={3}
-              placeholder='{"测试人员": "", "测试环境": "", "备注": ""}'
+              placeholder='{"tester": "", "test_env": "", "remarks": ""}'
             />
           </Form.Item>
         </Form>
@@ -258,23 +262,23 @@ export default function Reports() {
 
       {/* Create Template Modal */}
       <Modal
-        title="创建报告模板"
+        title={t('dlg.newTemplate')}
         open={templateModalVisible}
         onCancel={() => setTemplateModalVisible(false)}
         onOk={() => templateForm.submit()}
         width={560}
       >
         <Form form={templateForm} layout="vertical" onFinish={handleCreateTemplate}>
-          <Form.Item name="name" label="模板名称" rules={[{ required: true }]}>
-            <Input placeholder="输入模板名称" />
+          <Form.Item name="name" label={t('col.templateName')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.templateName')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={2} placeholder="模板描述" />
+          <Form.Item name="description" label={t('col.description')}>
+            <Input.TextArea rows={2} placeholder={t('label.templateDesc')} />
           </Form.Item>
-          <Form.Item name="fields" label="字段定义（逗号分隔）" rules={[{ required: true }]}>
-            <Input placeholder="测试人员, 测试环境, 测试日期, 备注" />
+          <Form.Item name="fields" label={t('label.fieldsComma')} rules={[{ required: true }]}>
+            <Input placeholder={t('ph.reportFields')} />
           </Form.Item>
-          <Form.Item name="template_content" label="Jinja2 模板内容">
+          <Form.Item name="template_content" label={t('label.jinjaBody')}>
             <Input.TextArea rows={6} placeholder="<h1>{{ report_title }}</h1>..." />
           </Form.Item>
         </Form>
