@@ -5,6 +5,18 @@ This demonstrates how to create a custom communication protocol plugin.
 To use:
 1. Place this file in the plugins/ directory
 2. Install via the plugin management API
+
+.. warning::
+   **This plugin returns MOCK data — it never talks to a real device.**
+   Do NOT point it at a production PLC or instrument: every read silently
+   returns zeros, so a test built on it will "pass" against nothing.
+
+   For real Modbus communication use ``modbus_tcp_plugin.py``
+   (protocol ``modbus_tcp``, PLC / robot / instruments) instead.
+
+   The protocol name ``modbus_rtu`` used below is a demo placeholder and will
+   be renamed to ``demo_virtual`` once the real Modbus RTU driver lands —
+   two plugins must never claim the same protocol name.
 """
 
 from app.services.plugin_service import BaseProtocolPlugin

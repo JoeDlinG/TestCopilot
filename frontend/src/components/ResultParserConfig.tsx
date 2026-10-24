@@ -22,6 +22,7 @@ export const DATA_TYPES = [
 const UNITS = [
   { value: 'byte', label: '字节 (byte)' },
   { value: 'bit', label: '位 (bit)' },
+  { value: 'text', label: '文本 (text)' },
 ]
 
 export type ParserSpec = {
@@ -29,7 +30,7 @@ export type ParserSpec = {
   data_type: 'hex' | 'bin' | 'bool' | 'dec' | 'string'
   start: number
   length: number
-  unit: 'bit' | 'byte'
+  unit: 'bit' | 'byte' | 'text'
   /** which "0x.." field of the reply is the payload when there are several */
   hex_field?: string
   conditions?: {
@@ -206,7 +207,7 @@ export default function ResultParserConfig({
         showIcon
         style={{ marginBottom: 12 }}
         message={`测试步骤：${stepLabel}`}
-        description="选择数据类型后，按「起始位 + 数据长度 + 单位」从返回结果中取值，再设置判断条件。判断不通过时该步骤将判定为失败。"
+        description="选择数据类型后，按「起始位 + 数据长度 + 单位」从返回结果中取值，再设置判断条件。判断不通过时该步骤将判定为失败。单位选「文本」时直接对整条响应取值（Modbus、SCPI 数值等纯文本协议用此项，否则 1700 会被误解析成十六进制字节）。"
       />
 
       {/* ---------- parser definitions ---------- */}

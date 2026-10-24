@@ -19,6 +19,10 @@ python-can==4.3.1
 # pyserial: RS232/RS485 serial ports (cross-platform)
 pyserial==3.5
 pyserial-asyncio==0.6
+# pymodbus: Modbus TCP/RTU master for PLCs, robots and field instruments.
+# BSD-3-Clause + pure Python (no native deps) -> safe to bundle in the
+# closed-source distribution. Wheel is ~167 KB.
+pymodbus==3.16.1
 # pyusb: Raw USB device access (for devices without kernel drivers)
 pyusb==1.2.1
 

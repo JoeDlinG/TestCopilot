@@ -38,6 +38,9 @@ hiddenimports += ["pyvisa_py"]
 # CAN / serial / USB
 hiddenimports += collect_submodules("can")
 hiddenimports += ["serial.serialwin32", "serial.tools.list_ports_windows"]
+# Modbus TCP/RTU (PLC / robot / instruments). pymodbus resolves framers and
+# client classes dynamically, so collect the whole package.
+hiddenimports += collect_submodules("pymodbus")
 hiddenimports += ["usb.backend.libusb1"]
 # App + restart helper
 hiddenimports += ["restart_helper", "app", "app.main"]

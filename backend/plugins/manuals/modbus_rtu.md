@@ -1,5 +1,11 @@
 # Modbus RTU 插件使用手册
 
+> ⚠️ **本手册描述的是演示插件，返回的是模拟数据，不会与真实设备通信。**
+> 请勿用于生产 PLC / 仪表——每次读取都静默返回零值，基于它建的用例"通过"是假通过。
+>
+> 真实 Modbus 通信请使用 **Modbus TCP 插件**（`protocol = modbus_tcp`，见 `manuals/modbus_tcp.md`），
+> 它同时服务 PLC、机械臂与工业仪表。真实 Modbus RTU 驱动已在规划中（P1 第二批）。
+
 ## 1. 概述
 
 Modbus RTU 示例插件，演示如何为 AITestLab 编写自定义协议插件。通过串口与 Modbus RTU 从站设备通信。

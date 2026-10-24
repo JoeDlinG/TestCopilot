@@ -6,6 +6,9 @@ keywords: modbus, modbus rtu, 寄存器, 线圈
 
 # Modbus RTU 测试用例生成 Skill
 
+> ⚠️ **演示插件，返回模拟数据。** 生成真实设备的用例请改用
+> `protocol: modbus_tcp` 对应的 Skill（Modbus TCP，覆盖 PLC / 机械臂 / 仪表）。
+
 本 Skill 指导 AI 为 Modbus RTU 设备生成测试用例。
 
 ## 命令生成规则

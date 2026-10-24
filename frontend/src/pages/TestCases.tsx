@@ -192,7 +192,11 @@ export default function TestCases() {
                   {ps.map((p, i) => (
                     <Tooltip
                       key={i}
-                      title={`类型 ${p.data_type} · 起始 ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · 长度 ${p.length}`}
+                      title={
+                        p.unit === 'text'
+                          ? `类型 ${p.data_type} · 文本整体取值`
+                          : `类型 ${p.data_type} · 起始 ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · 长度 ${p.length}`
+                      }
                     >
                       <Tag color="purple">
                         {p.name || `字段${i + 1}`}({DATA_TYPES.find(d => d.value === p.data_type)?.label.split(' ')[0] || p.data_type})

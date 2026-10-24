@@ -141,6 +141,31 @@ def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_fie
     if is_empty_frame(raw):
         # empty frame / timeout: nothing to judge
         return "unknown"
+    if unit == "text":
+        # Plain-text protocols (Modbus, SCPI numbers): take the reply as-is.
+        # Slicing bytes would misread a numeric reply like "1700" as 0x17 0x00.
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="replace").strip()
+        else:
+            text = str(raw).strip()
+        if data_type == "hex":
+            try:
+                return "0x%X" % int(text, 0)
+            except (TypeError, ValueError):
+                return text
+        if data_type == "bin":
+            try:
+                return format(int(text, 0), "b")
+            except (TypeError, ValueError):
+                return text
+        if data_type == "bool":
+            return text.lower() not in ("", "0", "false", "no", "off")
+        if data_type == "dec":
+            try:
+                return float(text) if re.search(r"[.eE]", text) else int(text)
+            except (TypeError, ValueError):
+                return text
+        return text
     data = _to_bytes(raw, hex_field)
     if unit == "bit":
         bits = "".join(f"{b:08b}" for b in data)

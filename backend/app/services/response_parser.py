@@ -26,7 +26,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Public data types offered by the configuration UI
 DATA_TYPES = ("hex", "bin", "bool", "dec", "string")
-UNITS = ("bit", "byte")
+# "text" treats the reply as a plain string and skips byte/bit slicing. It is
+# required for text-numeric protocols (Modbus, SCPI numbers): slicing would
+# misread a purely numeric reply such as "1700" as the hex bytes 0x17 0x00.
+UNITS = ("bit", "byte", "text")
 
 # Shown when a reply carries no payload at all (empty frame / timeout).
 # It is deliberately a string so the UI can display it and so it never
@@ -211,6 +214,33 @@ class ResponseParser:
     # ------------------------------------------------------------------ #
 
     @staticmethod
+    def _convert_text(value: Any, data_type: str) -> Any:
+        """Convert a whole-string reply (``unit = "text"``) to the target type."""
+        if isinstance(value, bool):
+            return value if data_type != "dec" else int(value)
+        if isinstance(value, (int, float)):
+            return value
+        text = str(value).strip()
+        if data_type == "hex":
+            try:
+                return f"0x{int(text, 0):X}"
+            except (TypeError, ValueError):
+                return text
+        if data_type == "bin":
+            try:
+                return format(int(text, 0), "b")
+            except (TypeError, ValueError):
+                return text
+        if data_type == "bool":
+            return text.lower() not in ("", "0", "false", "no", "off")
+        if data_type == "dec":
+            try:
+                return float(text) if re.search(r"[.eE]", text) else int(text)
+            except (TypeError, ValueError):
+                return text
+        return text
+
+    @staticmethod
     def to_number(value: Any) -> Optional[float]:
         """Numeric view of a parsed value (hex/bin strings included)."""
         if isinstance(value, bool):
@@ -311,7 +341,7 @@ class ResponseParser:
         base = {
             "name": name,
             "data_type": data_type,
-            "unit": spec.get("unit", "byte"),
+            "unit": str(spec.get("unit") or "byte").lower(),
             "start": spec.get("start", 0),
             "length": spec.get("length", 1),
         }
@@ -326,6 +356,19 @@ class ResponseParser:
                 "status": "unknown",
                 "ok": True,
                 "detail": "空帧（无数据 / 超时），跳过判定",
+            }
+
+        if base["unit"] == "text":
+            # Plain-text protocols: take the reply as-is, no byte/bit slicing.
+            value = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+            converted = cls._convert_text(value, data_type)
+            ok, detail = cls.evaluate(converted, spec.get("conditions"))
+            return {
+                **base,
+                "value": converted,
+                "status": "ok" if ok else "fail",
+                "ok": ok,
+                "detail": detail,
             }
 
         value, err = cls.extract(raw, spec)

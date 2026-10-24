@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-10-24: Modbus TCP 真实协议驱动落地（Pro 版 P1 第一号交付物）
+
+### 背景
+
+Pro 版规划确立「**以通信协议为分类主轴**」：不对 PLC 编程，只做通信层交互与控制；
+同协议不同品牌共用同一驱动，设备 = 协议 + 连接参数，不建点位表。
+用户确认 PLC 与机械臂均优先 **Modbus TCP**，故 Modbus TCP 成为 P1 首个落地协议——
+一个驱动同时覆盖 PLC、机械臂 IO/寄存器协作、电力/温控仪表。
+
+### 改动
+
+| # | 文件 | 内容 |
+|---|---|---|
+| 1 | `backend/plugins/modbus_tcp_plugin.py`（新增） | 真实 Modbus TCP 主站驱动，基于 `pymodbus==3.16.1`（BSD-3、纯 Python、167KB、无原生依赖）。覆盖 FC01/02/03/04/05/06/15/16；支持裸地址与 `40001`/`30001`/`10001`/`00001` 引用地址自动换算；`dtype` 解码 uint16/int16/uint32/int32/uint64/int64/float32/float64/bool/string/raw；`byte_order` + `word_order` 可配 |
+| 2 | `backend/plugins/selftest/modbus_tcp_selftest.py`（新增） | 自检脚本。内置一个**独立手写的最小 Modbus TCP 从站**（raw asyncio socket，刻意不用 pymodbus server，以免库自身的 bug 被自己验过去） |
+| 3 | `backend/plugins/manuals/modbus_tcp.md`（新增） | 原语手册：连接参数、8 个原语、地址写法、dtype 表、错误语义、判定配置、自检方法 |
+| 4 | `backend/plugins/skills/modbus_tcp_skill.md`（新增） | AI 用例生成知识，含 PLC / 机械臂 / 仪表三类典型用例与负向用例 |
+| 5 | `backend/app/services/response_parser.py` | **新增 `text` 单位**：纯文本数值响应直接取整体值，跳过字节/位切片。修复既有隐患——响应 `1700` 在 byte 单位下会被 `to_bytes()` 当作十六进制解析成 `0x17 0x00`（实测值 5888） |
+| 6 | `backend/app/services/codegen_service.py` | 同步 `parse_field()`（生成脚本内嵌的那份解析实现）的 `text` 分支。**两处解析实现必须保持一致** |
+| 7 | `frontend/src/components/ResultParserConfig.tsx`、`frontend/src/pages/TestCases.tsx` | 单位下拉新增「文本 (text)」；`ParserSpec.unit` 类型扩展为 `'bit' \| 'byte' \| 'text'`；解析项 tooltip 适配 |
+| 8 | `backend/requirements.txt`、`backend/aitestlab.spec` | 新增 `pymodbus==3.16.1`；PyInstaller `collect_submodules("pymodbus")`（该库动态解析 framer 与 client 类，不收集会在打包后 ImportError） |
+| 9 | `backend/plugins/example_plugin.py`、`manuals/modbus_rtu.md`、`skills/modbus_rtu_skill.md` | 给返回**模拟数据**的 demo 插件加显式警示：不可用于真实设备；真实 Modbus 走 `modbus_tcp` |
+
+### 关键设计决策
+
+| 决策 | 理由 |
+|---|---|
+| **两类错误语义分离**：设备应答了 Modbus 异常码 → 返回 `ERROR: ILLEGAL_DATA_ADDRESS(0x02)` 且**保持连接**；无应答（超时/掉线）→ 抛 `ConnectionError` 让设备自动离线 | 前者链路是好的，负向用例要能断言它；后者链路确实断了。若一律抛异常，负向用例会把设备踢下线 |
+| **`receive()` 默认返回空** | Modbus 严格主从，设备不主动上报。平台的设备监控以 100ms 轮询 `receive()`，若实现成"重读上次地址"会以 10Hz 轰炸 PLC。改为可选 `poll` + `poll_interval_ms` 配置 |
+| **`retries=0`** | 测试判定必须可复现，超时即失败，不静默重试 |
+| **`response_format` 双格式** | 阶段一返回字符串（兼容现有 `ResponseParser` 与断言），`typed` 返回 `TypedResult` 结构，为 P0-1 类型化改造预留开关，届时无需回头改驱动 |
+| 依赖选 `pymodbus` 而非自研 socket | BSD-3 纯 Python 167KB 零依赖，可直接进核心包；且已处理好 MBAP 分帧、异常响应校验、长度校验等边界 |
+
+### 验证
+
+```
+python backend/plugins/selftest/modbus_tcp_selftest.py
+→ 合计 20 项：通过 20，失败 0
+```
+
+覆盖：连接 / FC03 读（裸地址 + 40011 引用地址 + 单值标量）/ FC06 写后读回 /
+float32 双向字序（big 与 little 都得 1.5，且证明字序开关确实改变结果）/
+FC01 读线圈 / FC05 写线圈回读 / 非法地址返回 ERROR 且连接保持 /
+无响应抛 ConnectionError / 4 类非法命令被拒绝。
+
+其他验证：
+- `text` 单位判定链路实测：`17000`→17000（值域通过）、`1700`→1700、**`23.5`→23.5**、bool、错误文本 equals 全部正确；对照组 byte 单位下 `1700`→5888（证明改动必要）。
+- 向后兼容：`0x1122` byte 单位、位域 bit 单位行为不变。
+- 前端 `tsc --noEmit` 仅有既有报错 `ExecutionPlanner.tsx:336`（已登记 Issue #18），本次改动未引入新错误。
+
+### 待办（未做，需真机）
+
+- **真机联调**：上述 20 项全部跑在内置模拟从站上，尚未连接用户实际的 Modbus TCP PLC。
+  真机验收清单见 `docs/PRD_v0.11.0_TestCopilot_Pro_工业协议与插件生态.md` §4.1-F（V1–V8）。
+- Modbus RTU 驱动（P1 第二批）：需先将 `example_plugin.py` 的协议名从 `modbus_rtu`
+  改名为 `demo_virtual`，避免两个插件争用同一协议名。
+- 机械臂 Modbus TCP 场景用例待机械臂到场后补充验证（V7 项）。
+
+---
+
 ## 2026-10-13: AI 助手增强 + 项目工程文件 + 流程图代码生成修复（v0.10.0）
 
 ### 0. 版本号统一（遗留项）
