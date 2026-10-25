@@ -4,6 +4,77 @@
 
 ---
 
+## 2026-10-25: 修复安装版界面白屏 —— antd 分包循环依赖（v2.3.1）
+
+### 现象
+
+v2.3.0 的 Windows 安装包装完启动后，浏览器打开是**整页纯白**：`#root` 里一个节点都没有，
+但 HTTP 层一切正常 —— 首页 200、`index-*.js` 200、`/api/health` 200。
+也就是说 `curl` 全通、界面全空。
+
+### 根因
+
+不是打包漏文件，是**生产构建的 `manualChunks` 拆错了**。
+
+`vite.config.ts` 把 `@ant-design/icons` 单独切成 `vendor-icons`，其余 `@ant-design/*`
+（含 `@ant-design/colors`）切进 `vendor-antd`。但这两者本身就互相引用：
+
+- `@ant-design/icons` 在**模块顶层**执行 `setTwoToneColor(blue.primary)`，
+  其中 `blue` 来自 `@ant-design/colors`
+- antd 自身又 import `@ant-design/icons`
+
+于是两个 chunk 互相 `import`，谁先被求值，另一侧的导出还是未初始化的 `undefined`。
+浏览器里报：
+
+```
+TypeError: Cannot read properties of undefined (reading 'primary')
+    at /assets/vendor-icons-*.js
+```
+
+React 在挂载前就抛异常 → 白屏。dev 模式（Vite 预打包，不跑 `manualChunks`）不复现，
+所以本地开发一直看着是好的；**任何生产构建都是坏的**，与 exe / 安装包无关。
+
+### 修复
+
+1. **`frontend/vite.config.ts`** —— 删除 `vendor-icons` 分支，把 `antd` / `@ant-design/*` /
+   `@rc-component/` / `rc-*` / `dayjs` 全部合并进 `vendor-antd`。
+   antd 全家（含 icons 与 `@ant-design/colors`）在同一个闭包里求值，循环不复存在。
+   代价是 icons 不再单独缓存，但它们几乎每页都用，实际收益本就不大。
+2. **`backend/app/main.py`** —— 顺手堵掉升级场景的同类白屏：
+   - `index.html` 响应加 `Cache-Control: no-store, must-revalidate`。SPA 外壳里写的是
+     **带 hash 的资源名**，一旦被浏览器缓存，升级后就会去请求新版本已删除的旧 bundle。
+   - 缺失的 `/assets/*` 返回 404 JSON，不再回落到 `index.html`。
+     否则浏览器按 `text/html` 的 MIME 拒绝以模块加载，同样是一片白且毫无提示。
+3. **`backend/run.py`** —— 新增 `AITESTLAB_PORT` 端口覆盖（默认仍 8000）、
+   `AITESTLAB_NO_BROWSER=1` 抑制自动开浏览器。端口被占时（例如旧进程卡住退不出）
+   至少能换个端口把应用跑起来，也让自动化冒烟不会抢占桌面。
+4. **`backend/aitestlab.nsi`** —— 安装前 best-effort `taskkill /F /IM AITestLab.exe`：
+   升级时旧进程会锁住 `_internal` 里的 DLL，导致文件复制失败、装出半个残缺环境。
+   > 提权运行的实例杀不掉（`taskkill` / `Stop-Process` 均 Access denied），此时仍需用户手动关闭。
+5. **`AppLayout.tsx`** —— 语言切换 `Select` 的 `onChange` 补显式类型（TS7006）。
+   这是 v2.3.0 分支自带的编译错误，`tsc` 过不去，不改就出不了包。
+
+版本号 2.3.0 → **2.3.1**（`app/core/config.py` 与 `aitestlab.nsi` 同步）。
+
+### 验证
+
+- **chunk 依赖图程序化检查**：遍历 27 个 chunk 的头部 `import`，两两互为依赖的情况为 **0**
+  （修复前 `vendor-antd ⇄ vendor-icons` 是一对 2-环）
+- **真实浏览器渲染**（Playwright，不再只看状态码）：`/`、`/devices`、`/testcases`、`/executions`、
+  `/plugins`、`/logs`、`/dashboards` 七条路由 `#root.innerHTML` 均在 36k 字符以上，`pageerror` 为 0
+- **安装版真机 E2E**：静默安装到临时目录 → 以 `AITESTLAB_PORT=8010` 启动
+  （8000 被提权旧实例占用且杀不掉）→ `/api/health` 返回 `2.3.1`、
+  5 个核心 API 全 200、首页 `cache-control: no-store`、请求已删的旧 asset 返回 404、
+  七条路由全部正常渲染；卸载后目录与开始菜单项清理干净
+- 产物 `backend/dist/AITestLab-Setup-v2.3.1.exe`（32.3 MB），内置 Python 3.13 运行时与全部依赖
+
+### 教训
+
+`curl` 200 + 首页 HTML 正常，**不能**证明界面可用。前端产物必须用真实浏览器渲染一次
+（至少断言 `#root` 有内容、`pageerror` 为空）才算验证完成。这条已写入项目长期记忆。
+
+---
+
 ## 2026-10-22: 品牌标识、帮助中心、首次引导 + Issue #25 / #26（v2.3.0）
 
 ### 1. 替换 Logo

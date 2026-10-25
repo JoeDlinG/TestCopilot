@@ -351,7 +351,7 @@ export default function AppLayout() {
             <Tooltip title={t('common.language')}>
               <Select
                 value={locale}
-                onChange={(v) => setLocale(v)}
+                onChange={(v: any) => setLocale(v)}
                 size="small"
                 style={{ width: 100 }}
                 options={LOCALES.map((l) => ({ value: l.value, label: l.label }))}

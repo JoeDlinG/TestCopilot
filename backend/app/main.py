@@ -240,6 +240,12 @@ async def _api_trailing_slash(request, call_next):
 _STATIC_INDEX = os.path.join(settings.STATIC_DIR, "index.html")
 _HAS_STATIC = os.path.isfile(_STATIC_INDEX)
 
+# The SPA shell must never be cached: it names the content-hashed asset files,
+# so a stale copy makes the browser request bundles that the new build no
+# longer ships — the page then loads nothing and shows a blank screen after an
+# upgrade. Hashed assets under /assets are immutable and keep default caching.
+_INDEX_HEADERS = {"Cache-Control": "no-store, must-revalidate"}
+
 if _HAS_STATIC:
     _assets_dir = os.path.join(settings.STATIC_DIR, "assets")
     if os.path.isdir(_assets_dir):
@@ -249,7 +255,7 @@ if _HAS_STATIC:
 @app.get("/")
 async def root():
     if _HAS_STATIC:
-        return FileResponse(_STATIC_INDEX)
+        return FileResponse(_STATIC_INDEX, headers=_INDEX_HEADERS)
     # NOTE: there is no plain "/ws" endpoint — advertising it (as the docs and
     # this response used to do) sent clients to a 403 (issue #10).
     return {
@@ -273,10 +279,15 @@ if _HAS_STATIC:
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """Serve static assets; fall back to index.html for SPA routes."""
+        if full_path.startswith("assets/"):
+            # A missing bundle means the client holds a stale index.html. Answer
+            # 404 rather than handing back HTML, which the browser would reject
+            # as a module with the wrong MIME type and render as a blank page.
+            return JSONResponse({"detail": "Asset not found"}, status_code=404)
         candidate = os.path.join(settings.STATIC_DIR, full_path)
         if full_path and os.path.isfile(candidate):
             return FileResponse(candidate)
-        return FileResponse(_STATIC_INDEX)
+        return FileResponse(_STATIC_INDEX, headers=_INDEX_HEADERS)
 
 
 # ---------------------------------------------------------------------------

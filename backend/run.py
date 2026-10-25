@@ -26,6 +26,19 @@ def _data_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _port() -> int:
+    """HTTP port for the UI + API.
+
+    Defaults to 8000. ``AITESTLAB_PORT`` overrides it, which is the escape hatch
+    when another copy of the app (or anything else) already owns 8000 and the
+    user cannot close it.
+    """
+    raw = os.environ.get("AITESTLAB_PORT", "").strip()
+    if raw.isdigit() and 1 <= int(raw) <= 65535:
+        return int(raw)
+    return 8000
+
+
 def main() -> None:
     # Detached restart helper: kill anything on the port, then relaunch.
     if "--restart-helper" in sys.argv:
@@ -43,6 +56,8 @@ def main() -> None:
 
     os.chdir(_data_dir())
 
+    port = _port()
+
     import uvicorn
 
     if getattr(sys, "frozen", False):
@@ -51,18 +66,25 @@ def main() -> None:
         from app.main import app
 
         # Convenience: open the browser once the server is up.
-        _open_browser_later()
+        _open_browser_later(port=port)
 
-        uvicorn.run(app, host="0.0.0.0", port=8000, reload=False, log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=port, reload=False, log_level="info")
     else:
         # Dev: import string enables reload; CWD is already backend/.
         uvicorn.run(
-            "app.main:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
+            "app.main:app", host="0.0.0.0", port=port, reload=True, log_level="info"
         )
 
 
-def _open_browser_later(delay: float = 2.5) -> None:
-    """Open the default browser to the app after the server finishes booting."""
+def _open_browser_later(port: int = 8000, delay: float = 2.5) -> None:
+    """Open the default browser to the app after the server finishes booting.
+
+    ``AITESTLAB_NO_BROWSER=1`` suppresses it (used by the packaging smoke test,
+    which drives the UI headlessly and must not hijack the desktop).
+    """
+    if os.environ.get("AITESTLAB_NO_BROWSER") == "1":
+        return
+
     import threading
     import webbrowser
 
@@ -70,7 +92,7 @@ def _open_browser_later(delay: float = 2.5) -> None:
         import time
         time.sleep(delay)
         try:
-            webbrowser.open("http://localhost:8000")
+            webbrowser.open(f"http://localhost:{port}")
         except Exception:
             pass
 

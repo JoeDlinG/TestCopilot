@@ -1,9 +1,14 @@
-; AITestLab Windows installer script (NSIS 3.x)
+﻿; AITestLab Windows installer script (NSIS 3.x)
 ; Packages the PyInstaller onedir output into a per-user setup.exe.
 
 ; ---- Basic metadata ----
+; Unicode installer: the script contains Chinese shortcut labels (卸载 ...).
+; Without this the compiler reads the file in the ANSI codepage and the
+; Start-Menu label comes out as mojibake (e.g. "鍗歌浇 AITestLab.lnk").
+Unicode true
+
 !define APP_NAME "AITestLab"
-!define APP_VERSION "2.3.0"
+!define APP_VERSION "2.3.1"
 !define APP_PUBLISHER "AITestLab"
 !define APP_EXE "AITestLab.exe"
 
@@ -29,6 +34,14 @@ SetCompressor /SOLID lzma
 ; ---- Install ----
 Section "Install"
   SetOutPath "$INSTDIR"
+
+  ; Close a running copy first: an upgrade would otherwise hit locked files in
+  ; _internal (the process holds its own DLLs) and abort halfway, leaving the
+  ; install broken. taskkill is best-effort — if the other copy runs elevated
+  ; this silently fails and the copy step reports the error itself.
+  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
+  Sleep 1200
+
   File /r "dist\AITestLab\*.*"
 
   ; Start Menu + Desktop shortcuts

@@ -52,17 +52,25 @@ export default defineConfig({
         manualChunks(id: string) {
           if (!id.includes('node_modules')) return undefined
           if (id.includes('react-flow') || id.includes('@reactflow')) return 'vendor-flow'
-          // The icon package ships every icon as its own module and is pulled in
-          // by toolbar buttons on almost every page; isolate it so the rest of
-          // antd can be cached independently.
-          if (id.includes('@ant-design/icons')) return 'vendor-icons'
-          // ``rc-*`` are antd's internal primitives — they must travel with it,
-          // otherwise they end up in the catch-all chunk and get loaded
-          // separately from the components that own them.
+          // antd, its rc-* / @rc-component primitives, @ant-design/* helpers and
+          // @ant-design/icons MUST share one chunk.
+          //
+          // They used to be split (icons in `vendor-icons`, everything else in
+          // `vendor-antd`) to cache the icon set separately. That was wrong:
+          // `@ant-design/icons` reads `blue.primary` from `@ant-design/colors`
+          // at *module top level*, while antd itself imports icons. The split
+          // made the two chunks import each other, so whichever loaded first
+          // evaluated that top-level expression against an uninitialised
+          // binding -> `TypeError: Cannot read properties of undefined
+          // (reading 'primary')` -> React never mounted -> blank white page.
+          // Merging the family is what makes the graph acyclic.
+          // ``dayjs`` rides along: antd imports it on nearly every page.
           if (
-            id.includes('antd')
-            || id.includes('@ant-design')
+            id.includes('/antd/')
+            || id.includes('/@ant-design/')
+            || id.includes('/@rc-component/')
             || id.includes('/rc-')
+            || id.includes('/dayjs/')
           ) {
             return 'vendor-antd'
           }
