@@ -282,7 +282,7 @@ export default function TestCases() {
                   {ps.map((p, i) => (
                     <Tooltip
                       key={i}
-                      title={`${t('col.type')} ${p.data_type} · t('label.start')} ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · ${t('label.length')} ${p.length}`}
+                      title={`${t('col.type')} ${p.data_type} · ${t('label.start')}} ${p.start}${p.unit === 'bit' ? 'bit' : 'byte'} · ${t('label.length')} ${p.length}`}
                     >
                       <Tag color="purple">
                         {p.name || `${t('label.field')}${i + 1}`}({DATA_TYPES.find(d => d.value === p.data_type)?.label.split(' ')[0] || p.data_type})
@@ -394,7 +394,7 @@ export default function TestCases() {
       if (failed) {
         message.warning(`${t('msg.clearedBut')} ${failed} ${t('msg.deleteFailedSuffix')}`)
       } else {
-        message.success(`${t('msg.cleared')} ${testCases.length} t('label.count')}${t('col.testCase')}`)
+        message.success(`${t('msg.cleared')} ${testCases.length} ${t('label.count')}}${t('col.testCase')}`)
       }
       await loadTestCases()
     } finally {
@@ -659,7 +659,7 @@ export default function TestCases() {
         </Form>
         {renaming && (
           <div style={{ color: 'var(--app-fg-muted)', fontSize: 12 }}>
-            t('label.currentName'){renaming.name}（ID {renaming.id}）
+            {t('label.currentName')}{renaming.name}（ID {renaming.id}）
           </div>
         )}
       </Modal>
@@ -730,9 +730,9 @@ export default function TestCases() {
             <Text strong>{t('label.switchResult')}</Text>
             <div style={{ marginTop: 6 }}>
               <Tag color="green">
-                t('msg.switched') {switchResult.changed_count} t('unit.steps') → {switchResult.device?.device_key}
+                {t('msg.switched')} {switchResult.changed_count} {t('unit.steps')} → {switchResult.device?.device_key}
               </Tag>
-              <Tag color="blue">t('msg.regenerated'){switchResult.code?.length ?? 0} {t('label.chars')}</Tag>
+              <Tag color="blue">{t('msg.regenerated')}{switchResult.code?.length ?? 0} {t('label.chars')}</Tag>
             </div>
           </div>
         )}

@@ -273,7 +273,7 @@ function PlanPreview({
         if (!ids || ids.length === 0) return <Text type="secondary">{t('label.autoResolve')}</Text>
         return (
           <span title={ids.join(', ')}>
-            {ids.map((d) => deviceNames[d] || d).join('、')}
+            {ids.map((d) => deviceNames[d] || d).join(t('punct.enum'))}
           </span>
         )
       },
@@ -286,10 +286,10 @@ function PlanPreview({
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
       <Space size={[6, 4]} wrap>
-        <Tag color="processing">t('label.planLoopShort') {plan?.plan_loop_count ?? 1} {t('label.times')}</Tag>
-        <Tag>t('label.maxParallel') {plan?.max_parallel ?? '-'}</Tag>
-        <Tag>t('label.onErrorColon'){ON_ERROR_LABEL(t)[plan?.on_error] || plan?.on_error || '-'}</Tag>
-        <Tag>t('label.planItems') {items.length}</Tag>
+        <Tag color="processing">{t('label.planLoopShort')} {plan?.plan_loop_count ?? 1} {t('label.times')}</Tag>
+        <Tag>{t('label.maxParallel')} {plan?.max_parallel ?? '-'}</Tag>
+        <Tag>{t('label.onErrorColon')}{ON_ERROR_LABEL(t)[plan?.on_error] || plan?.on_error || '-'}</Tag>
+        <Tag>{t('label.planItems')} {items.length}</Tag>
       </Space>
       {items.length === 0 ? (
         <Empty
@@ -502,7 +502,7 @@ export default function ProjectManager() {
     setBusy('wizard')
     try {
       await projectAPI.save(name, wizardSections)
-      message.success(`${t('label.projectPrefix')}${name}」t('msg.createdParen')}${wizardSections.length} ${t('unit.sectionsParen')}`)
+      message.success(`${t('label.projectPrefix')}${name}」${t('msg.createdParen')}}${wizardSections.length} ${t('unit.sectionsParen')}`)
       setWizardOpen(false)
       load()
     } catch (err) {
@@ -575,6 +575,12 @@ export default function ProjectManager() {
   }
 
   const activeRow = projects.find((p) => p.name === detailName) || null
+  /** Display name of a project section, translated (issue #27). */
+  const sectionLabel = (key: string) => {
+    const found = PROJECT_SECTIONS.find((s) => s.key === key)
+    return found ? t(found.labelKey) : key
+  }
+
   const activeSection = selected ? parseTreeKey(selected).section : null
   const visibleSections = PROJECT_SECTIONS.filter(
     (s) => !activeSection || s.key === activeSection,
@@ -623,7 +629,7 @@ export default function ProjectManager() {
           key: `s:${p.name}:${s.key}`,
           title: (
             <Space size={4}>
-              <Text style={{ fontSize: 12, opacity: n ? 1 : 0.45 }}>{s.label}</Text>
+              <Text style={{ fontSize: 12, opacity: n ? 1 : 0.45 }}>{t(s.labelKey)}</Text>
               <Text type="secondary" style={{ fontSize: 11 }}>{n}</Text>
             </Space>
           ),
@@ -655,7 +661,7 @@ export default function ProjectManager() {
           <div>
             <Text strong style={{ marginRight: 8 }}>{t('project.sections')}</Text>
             <Checkbox.Group
-              options={PROJECT_SECTIONS.map((s) => ({ label: s.label, value: s.key }))}
+              options={PROJECT_SECTIONS.map((s) => ({ label: t(s.labelKey), value: s.key }))}
               value={sections}
               onChange={(v) => setSections(v as string[])}
             />
@@ -705,15 +711,15 @@ export default function ProjectManager() {
             <Alert type="error" showIcon message={importResult.error} />
           ) : (
             <Space direction="vertical" size={4}>
-              <Text>t('label.sourceColon'){importResult.from}　t('label.modeColon'){importResult.mode}</Text>
+              <Text>{t('label.sourceColon')}{importResult.from}　{t('label.modeColon')}{importResult.mode}</Text>
               <Space size={[6, 6]} wrap>
                 {Object.entries(importResult.sections || {}).map(([key, v]: any) => (
                   <Tag
                     key={key}
                     color={v.created > 0 ? 'green' : 'blue'}
                   >
-                    {PROJECT_SECTIONS.find((s) => s.key === key)?.label || key}
-                    ：t('common.create') {v.created} / t('label.updated') {v.updated}
+                    {sectionLabel(key)}
+                    {t('punct.colon')}{t('common.create')} {v.created} / {t('label.updated')} {v.updated}
                     {v.skipped > 0 && ` / ${t('status.skip')} ${v.skipped}`}
                   </Tag>
                 ))}
@@ -730,14 +736,16 @@ export default function ProjectManager() {
             <Space size={[6, 6]} wrap>
               {Object.entries(newResult.cleared || {}).map(([key, n]: any) => (
                 <Tag key={key} color="red">
-                  {PROJECT_SECTIONS.find((s) => s.key === key)?.label || key}：{n}
+                  {sectionLabel(key)}{t('punct.colon')}{n}
                 </Tag>
               ))}
             </Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('project.kept')}{(newResult.kept || [])
-                .map((k: string) => PROJECT_SECTIONS.find((s) => s.key === k)?.label || k)
-                .join('、') || t('label.none')}
+                .map((k: string) => PROJECT_SECTIONS.find((s) => s.key === k)?.labelKey
+                    ? t(PROJECT_SECTIONS.find((s) => s.key === k)!.labelKey)
+                    : k)
+                .join(t('punct.enum')) || t('label.none')}
             </Text>
           </Space>
         </Card>
@@ -793,7 +801,7 @@ export default function ProjectManager() {
                   {activeRow.app_version && <Tag color="processing">v{activeRow.app_version}</Tag>}
                   {activeSection && (
                     <Tag>
-                      {PROJECT_SECTIONS.find((s) => s.key === activeSection)?.label || activeSection}
+                      {sectionLabel(activeSection)}
                     </Tag>
                   )}
                 </Space>
@@ -859,7 +867,7 @@ export default function ProjectManager() {
                           setExpanded((ks) => Array.from(new Set([...ks, `p:${activeRow.name}`])))
                         }}
                       >
-                        {s.label} {n}
+                        {t(s.labelKey)} {n}
                       </Tag>
                     )
                   })}
@@ -874,7 +882,7 @@ export default function ProjectManager() {
                       key={s.key}
                       type="inner"
                       size="small"
-                      title={`${s.label}（${rows.length}）`}
+                      title={`${t(s.labelKey)} ${t('punct.countParen', { n: rows.length })}`}
                       style={{ marginBottom: 12 }}
                     >
           {/* Dashboards are unreadable as raw parameters — draw the layout instead */}
@@ -996,7 +1004,7 @@ export default function ProjectManager() {
             <Text type="secondary">{t('wizard.pickSections')}</Text>
             <div style={{ marginTop: 10 }}>
               <Checkbox.Group
-                options={PROJECT_SECTIONS.map((s) => ({ label: s.label, value: s.key }))}
+                options={PROJECT_SECTIONS.map((s) => ({ label: t(s.labelKey), value: s.key }))}
                 value={wizardSections}
                 onChange={(v) => setWizardSections(v as string[])}
               />
@@ -1006,7 +1014,7 @@ export default function ProjectManager() {
 
         {wizardStep === 1 && (
           <div>
-            <Text type="secondary">t('ph.nameProject')_&lt;t('col.name')&gt;.json）：</Text>
+            <Text type="secondary">{t('ph.nameProject')}_&lt;{t('col.name')}&gt;.json){t('punct.colon')}</Text>
             <Input
               style={{ marginTop: 10 }}
               value={wizardName}
@@ -1028,7 +1036,7 @@ export default function ProjectManager() {
                   ? <Text type="danger">{t('msg.noSectionSelected')}</Text>
                   : wizardSections.map((k) => (
                       <Tag key={k} color="blue">
-                        {PROJECT_SECTIONS.find((s) => s.key === k)?.label || k}
+                        {sectionLabel(k)}
                       </Tag>
                     ))}
               </div>
@@ -1074,7 +1082,7 @@ export default function ProjectManager() {
           <Text strong>{t('label.willBeClearedColon')}</Text>
           <div style={{ marginTop: 6 }}>
             {PROJECT_SECTIONS.filter((s) => s.key !== 'models').map((s) => (
-              <Tag key={s.key} color="red">{s.label}</Tag>
+              <Tag key={s.key} color="red">{t(s.labelKey)}</Tag>
             ))}
             {!keepModels && <Tag color="red">{t('page.modelConfig')}</Tag>}
           </div>

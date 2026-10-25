@@ -280,6 +280,7 @@ function InitNode({ data, selected }: NodeProps) {
 
 /** 延时节点：按毫秒等待，支持 {占位符} 引用前序节点输出 */
 function DelayNode({ data, selected }: NodeProps) {
+  const { t } = useI18n()
   const ms = (data as any)?.duration
   return (
     <NodeRuntimeRing data={data}>
@@ -292,7 +293,7 @@ function DelayNode({ data, selected }: NodeProps) {
         <div>
           <div>{data.label}</div>
           <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2 }}>
-            t('node.delay') {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
+            {t('node.delay')} {ms === undefined || ms === null || ms === '' ? '?' : ms} ms
           </div>
           <NodeIoBadges data={data} />
         </div>
@@ -730,7 +731,7 @@ export default function TestFlowEditor() {
     setNodes((nds) => nds.filter((n) => !nodeIds.has(n.id)))
     // FIXED: was e.selected (kept selected edges), now !e.selected (removes selected edges)
     setEdges((eds) => eds.filter((e) => !e.selected && !nodeIds.has(e.source) && !nodeIds.has(e.target)))
-    message.success(`${t('msg.deleted')} ${selectedNodes.length} t('label.node')}, ${selectedEdges.length} ${t('label.edge')}`)
+    message.success(`${t('msg.deleted')} ${selectedNodes.length} ${t('label.node')}}, ${selectedEdges.length} ${t('label.edge')}`)
   }, [nodes, edges, setNodes, setEdges])
 
   // ---- Drag-over from palette ----
@@ -908,7 +909,7 @@ export default function TestFlowEditor() {
     const { copies, newEdges } = cloneSelection(clip.nodes, clip.edges)
     setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...copies])
     setEdges((eds) => [...eds, ...newEdges])
-    message.success(`${t('msg.pasted')} ${copies.length} t('label.count')}${t('label.node')}`)
+    message.success(`${t('msg.pasted')} ${copies.length} ${t('label.count')}}${t('label.node')}`)
   }, [cloneSelection, pushHistory, setNodes, setEdges])
 
   const handleDuplicate = useCallback(() => {
@@ -1226,7 +1227,7 @@ export default function TestFlowEditor() {
                 rules={[{ required: true }]}
                 extra={loopType === 'while'
                   ? `Python ${t('ph.loopCondition')}_count < 10`
-                  : `for: t('ph.loopCountOrWhile')}`}
+                  : `for: ${t('ph.loopCountOrWhile')}}`}
               >
                 <Input placeholder={loopType === 'while' ? 'retry_count < 10' : '3'} />
               </Form.Item>
@@ -1254,7 +1255,7 @@ export default function TestFlowEditor() {
                     ]} />
                   </Form.Item>
                   <Form.Item name="break_condition" label={t('label.breakCondition')}
-                    extra="t('flow.breakFull')'">
+                    extra={t('flow.breakFull')}>
                     <Input placeholder="response == 'OK'" />
                   </Form.Item>
                   <Form.Item name="max_iterations" label={t('label.maxIterations')}
@@ -1373,7 +1374,7 @@ export default function TestFlowEditor() {
                       </Form.List>
                     </Form.Item>
 
-                    <Text type="secondary" style={{ fontSize: 12 }}>{t('flow.refHint')}<code>{`t('label.varName')}`}</code> {t('label.thenReference')}
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('flow.refHint')}<code>{`${t('label.varName')}}`}</code> {t('label.thenReference')}
                       {t('parser.sameRules')}
                     </Text>
                   </>
@@ -1388,11 +1389,11 @@ export default function TestFlowEditor() {
       <Drawer
         title={(
           <>
-            t('dlg.generatedCode'){' '}
+            {t('dlg.generatedCode')}{' '}
             {/* 生成中 = 运行中（琥珀）；就绪 = 中性。紫/青/蓝等 AntD 预设色
                 不受主题控制，已全部移除。 */}
             {codeLoading
-              ? <Tag style={{ color: 'var(--a-fg)', borderColor: 'var(--a-fg)', background: 'transparent' }}>t('label.generating')...</Tag>
+              ? <Tag style={{ color: 'var(--a-fg)', borderColor: 'var(--a-fg)', background: 'transparent' }}>{t('label.generating')}...</Tag>
               : <Tag>{t('label.ready')}</Tag>}
           </>
         )}

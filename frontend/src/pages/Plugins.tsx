@@ -220,12 +220,12 @@ function PluginManagement({ onOpenTab }: { onOpenTab?: (tab: string) => void }) 
         <Text strong>{t('link.howToPlugin')}</Text>
         <div style={{ marginTop: 8, color: 'var(--app-fg-subtle)' }}>
           <p>
-            1. t('plugin.inheritHint') <code>BaseProtocolPlugin</code>
+            1. {t('plugin.inheritHint')} <code>BaseProtocolPlugin</code>
           </p>
-          <p>2. t('label.implement') <code>connect</code>、<code>disconnect</code>、<code>send</code>、<code>receive</code>{t('label.method')}</p>
+          <p>2. {t('label.implement')} <code>connect</code>、<code>disconnect</code>、<code>send</code>、<code>receive</code>{t('label.method')}</p>
           <p>
-            3. t('plugin.dropHint') <code>plugins/</code>{t('plugin.installHint')}</p>
-          <p>{t('label.reference')}<code>plugins/example_plugin.py</code> (Modbus RTU t('col.protocol'))</p>
+            3. {t('plugin.dropHint')} <code>plugins/</code>{t('plugin.installHint')}</p>
+          <p>{t('label.reference')}<code>plugins/example_plugin.py</code> (Modbus RTU {t('col.protocol')})</p>
           <p>{t('label.betterOpen')}<a onClick={() => (onOpenTab ? onOpenTab('editor') : navigate('/plugin-editor'))}>{t('tab.pluginEditor')}</a>」
             {t('plugin.templateHint')}
             Skill（AI {t('btn.generateCases')}{t('label.guideInPanel')}<a onClick={() => (onOpenTab ? onOpenTab('skill') : navigate('/skill-editor'))}>{t('tab.skillEditor')}</a>」{t('label.importEditSuffix')}

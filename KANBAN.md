@@ -126,6 +126,24 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.3.2 — Issue #27（i18n 盲区收口）+ AI 助手未配置提示（2026-10-25，分支 `feature/flow-enhancements`）
+
+- [x] **#27 P0-1 常量里的显示文案**：`PROJECT_SECTIONS` 改 `labelKey` + 8 处渲染点过 `t()`；
+      抽出 `sectionLabel(key)` helper；新增 `section.*` 词条；**中文标点也按语言切换**
+      （`punct.colon`/`punct.enum`/`punct.countParen`）
+- [x] **同类同构一并治理**：`types/index.ts` 的 `DEVICE_TYPES`/`INTERFACE_TYPES` 改 key 驱动
+      （新增 `deviceType.*`/`iface.*`）；`dashboard/registry.tsx` 的 `WIDGET_META`/`STATUS_LABEL`
+      改 **`t` 工厂**（`makeWidgetMeta`/`makeWidgetList`/`makeStatusLabel`，`newWidget(type, t)`）
+- [x] **#27 P0-2 `t()` 纯文本泄漏 59 处**：用 `@babel/parser` 写一次性修复脚本按 AST 跨度精确
+      包裹（自动 58 处 + 手工 3 处：DelayNode 补 hook、属性串误写、Python 代码模板内误替换）
+- [x] **#27 P1 守门脚本** `frontend/scripts/i18n-guard.mjs`：B 类（裸 `t('`）**零容忍**、
+      A 类（硬编码 CJK）**棘轮只降不升**；接入 `"build": "tsc && node scripts/i18n-guard.mjs && vite build"`
+- [x] **AI 助手未配置提示**：顶部醒目 Alert（加载完成且为空才显示，避免闪烁）+ **「去配置模型」**
+      直达 `/model-config` + 「重新检测」
+- [x] 验证：英文配置段 = `Model Config / Devices / Plugins / Skills / Test Cases /
+      Execution Manager / Dashboards`；中文仍中文；页面裸 `t()` 0 处；守门 B=0、A=221（原 268）；
+      `tsc`+`build`（含闸门）通过；`Test/` 7 个全 PASS；端点 19/19；仪表盘未回归
+
 ### v2.3.0 — Logo / 帮助中心 / 首次引导 + Issue #25 #26（2026-10-22，分支 `feature/flow-enhancements`）
 
 - [x] **替换 Logo**：白底用边缘洪水填充去除（保住剪贴板内部白）；图标靠**连通域**分离

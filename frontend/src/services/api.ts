@@ -314,14 +314,21 @@ export const helpAPI = {
   getDoc: (id: string) => api.get(`/help/docs/${id}`),
 }
 
+/**
+ * Project sections (issue #27).
+ *
+ * ``labelKey`` — not ``label``. The names used to be hard-coded Chinese here,
+ * which put them permanently out of ``t()``'s reach: English users saw Chinese
+ * no matter how complete the catalogue was. Render sites call ``t(s.labelKey)``.
+ */
 export const PROJECT_SECTIONS = [
-  { key: 'models', label: '模型配置' },
-  { key: 'devices', label: '设备配置' },
-  { key: 'plugins', label: '插件配置' },
-  { key: 'skills', label: 'Skill 配置' },
-  { key: 'test_cases', label: '测试用例' },
-  { key: 'execution_plans', label: '执行管理器' },
-  { key: 'dashboards', label: '仪表盘配置' },
+  { key: 'models', labelKey: 'section.models' },
+  { key: 'devices', labelKey: 'section.devices' },
+  { key: 'plugins', labelKey: 'section.plugins' },
+  { key: 'skills', labelKey: 'section.skills' },
+  { key: 'test_cases', labelKey: 'section.testCases' },
+  { key: 'execution_plans', labelKey: 'section.executionPlans' },
+  { key: 'dashboards', labelKey: 'section.dashboards' },
 ]
 
 export const MEMORY_SECTIONS = PROJECT_SECTIONS

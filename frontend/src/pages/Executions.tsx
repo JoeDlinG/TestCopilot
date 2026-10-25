@@ -305,7 +305,7 @@ function StepList({ steps, stepStatusConfig }: {
               <div style={{ marginTop: 4, paddingLeft: 28 }}>
                 {(s.samples?.length || 0) > 1 && (
                   <Tag style={{ marginBottom: 2, fontSize: 11 }}>
-                    t('label.total') {s.samples.length} {t('label.lastSample')}
+                    {t('label.total')} {s.samples.length} {t('label.lastSample')}
                   </Tag>
                 )}
                 {s.parsed.map((p: any, i: number) => {
@@ -411,7 +411,7 @@ function ComMonitorCard({ title, m, devices, height = 260 }: {
         <div ref={m.endRef} />
       </div>
       <div style={{ marginTop: 6, color: 'var(--app-fg-muted)', fontSize: 12 }}>
-        t('label.total') {m.lines.length} ${t('label.rowsKept')} {MAX_LINES} {t('unit.rowsParen')}
+        {t('label.total')} {m.lines.length} ${t('label.rowsKept')} {MAX_LINES} {t('unit.rowsParen')}
         {m.paused && ` · ${t('label.cachedWhilePaused')} ${m.bufferRef.current.length} ${t('unit.row')}`}
       </div>
     </Card>
@@ -1114,9 +1114,9 @@ export default function Executions() {
               <div style={{ marginBottom: 8 }}>
                 {trackedInfo ? (
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    t('label.total') {trackedInfo.total_steps ?? 0} {t('unit.stepDot')}
-                    t('status.passed') {trackedInfo.passed_steps ?? 0} ·
-                    t('status.failed') {trackedInfo.failed_steps ?? 0}
+                    {t('label.total')} {trackedInfo.total_steps ?? 0} {t('unit.stepDot')}
+                    {t('status.passed')} {trackedInfo.passed_steps ?? 0} ·
+                    {t('status.failed')} {trackedInfo.failed_steps ?? 0}
                   </Text>
                 ) : (
                   <Text type="secondary" style={{ fontSize: 12 }}>{t('ph.pickRun')}</Text>
@@ -1155,8 +1155,8 @@ export default function Executions() {
                           <Text strong style={{ fontSize: 12 }}>{col.title}</Text>
                         </Space>
                         <Space size={4}>
-                          <Tag color="success" style={{ marginInlineEnd: 0, fontSize: 11 }}>t('status.passed') {passed}</Tag>
-                          <Tag color="error" style={{ marginInlineEnd: 0, fontSize: 11 }}>t('status.failed') {failed}</Tag>
+                          <Tag color="success" style={{ marginInlineEnd: 0, fontSize: 11 }}>{t('status.passed')} {passed}</Tag>
+                          <Tag color="error" style={{ marginInlineEnd: 0, fontSize: 11 }}>{t('status.failed')} {failed}</Tag>
                           <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>{col.steps.length} {t('unit.step')}</Tag>
                         </Space>
                       </div>
@@ -1263,7 +1263,7 @@ export default function Executions() {
           <Space>
             <LineChartOutlined />
             <span>{t('tab.history')}</span>
-            <Tag color="blue">t('label.recent') {trendData?.executions?.length ?? 0} {t('unit.runs')}</Tag>
+            <Tag color="blue">{t('label.recent')} {trendData?.executions?.length ?? 0} {t('unit.runs')}</Tag>
           </Space>
         }
         open={trendOpen}
@@ -1303,7 +1303,7 @@ export default function Executions() {
 
             <div style={{ marginTop: 8 }}>
               <Text type="secondary" style={{ fontSize: 11 }}>
-                t('exec.trendSource') {trendData?.total_points ?? 0} {t('unit.samplePoints')}
+                {t('exec.trendSource')} {trendData?.total_points ?? 0} {t('unit.samplePoints')}
                 {t('exec.samplingNote')}
                 {t('exec.failNote')}
               </Text>

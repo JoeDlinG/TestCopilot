@@ -103,7 +103,7 @@ export default function Logs() {
       dataIndex: 'protocol',
       key: 'protocol',
       width: 100,
-      render: (type: string) => <Tag>{INTERFACE_TYPES[type] || type}</Tag>,
+      render: (type: string) => <Tag>{t(INTERFACE_TYPES[type] || type)}</Tag>,
     },
     {
       title: t('col.direction'),
@@ -167,7 +167,7 @@ export default function Logs() {
               style={{ width: '100%' }}
               value={filters.interface_type}
               onChange={(val: any) => setFilters({ ...filters, interface_type: val })}
-              options={Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: v, value: k }))}
+              options={Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))}
             />
           </Col>
         </Row>

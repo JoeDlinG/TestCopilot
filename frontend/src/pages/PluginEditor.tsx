@@ -161,7 +161,7 @@ export default function PluginEditor() {
         setCheckResult(null)
       }
     } catch (err) {
-      handleApiError(err, `${t('btn.create')}t('label.plugin')${t('status.failed')}`)
+      handleApiError(err, `${t('btn.create')}${t('label.plugin')}${t('status.failed')}`)
     }
   }
 
@@ -268,7 +268,7 @@ export default function PluginEditor() {
                 <Button icon={<CheckCircleOutlined />} onClick={handleValidate}>{t('btn.syntaxCheck')}</Button>
           <Tooltip title={t('dlg.insertSendSkeleton')}>
                   <Button size="small" onClick={() => insertSnippet(
-                    "\n    async def send(self, data):\n        if not self._connected:\n            raise ConnectionError(\"t('label.noDevice')\")\n        return str(data)\n",
+                    "\n    async def send(self, data):\n        if not self._connected:\n            raise ConnectionError(\"not connected\")\n        return str(data)\n",
             )}>{t('btn.insertSendExample')}</Button>
                 </Tooltip>
               </Space>

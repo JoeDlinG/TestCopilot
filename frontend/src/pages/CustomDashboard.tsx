@@ -20,7 +20,7 @@ import type {
 } from '../types'
 import { useI18n } from '../i18n'
 import { handleApiError } from '../services/apiHelper'
-import { WIDGET_LIST, newWidget, STATUS_COLOR } from '../components/dashboard/registry'
+import { makeWidgetList, newWidget, STATUS_COLOR } from '../components/dashboard/registry'
 import { WidgetBody } from '../components/dashboard/widgets'
 import WidgetConfigDrawer from '../components/dashboard/WidgetConfigDrawer'
 
@@ -207,12 +207,12 @@ export default function CustomDashboard() {
   )
 
   const addWidget = (type: WidgetType) => {
-    const w = newWidget(type)
+    const w = newWidget(type, t)
     const maxY = layoutOf.reduce((m, l) => Math.max(m, l.y + l.h), 0)
     const item: DashboardLayoutItem = {
       i: w.id, x: 0, y: maxY,
-      w: Math.min(GRID_COLS, WIDGET_LIST.find((m) => m.type === type)?.size.w || 6),
-      h: WIDGET_LIST.find((m) => m.type === type)?.size.h || 4,
+      w: Math.min(GRID_COLS, makeWidgetList(t).find((m) => m.type === type)?.size.w || 6),
+      h: makeWidgetList(t).find((m) => m.type === type)?.size.h || 4,
       minW: 2, minH: 2,
     }
     patchCurrent({ widgets: [...widgetsOf, w], layout: [...layoutOf, item] })
@@ -685,7 +685,7 @@ export default function CustomDashboard() {
         width={420}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          {WIDGET_LIST.map((m) => (
+          {makeWidgetList(t).map((m) => (
             <Card
               key={m.type}
               size="small"

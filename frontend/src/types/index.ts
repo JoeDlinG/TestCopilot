@@ -287,26 +287,34 @@ export interface DashboardSnapshot {
   }
 }
 
+/**
+ * Device types (issue #27).
+ *
+ * These used to hold the display text directly, which made them untranslatable.
+ * They now hold **i18n keys**; call sites render them with
+ * ``t(DEVICE_TYPES[type] || type)``.
+ */
 export const DEVICE_TYPES: Record<string, string> = {
-  power_supply: '可编程电源',
-  oscilloscope: '示波器',
-  multimeter: '万用表',
-  signal_generator: '信号发生器',
-  spectrum_analyzer: '频谱分析仪',
-  can_tool: 'CAN 工具',
-  gateway: '网关',
-  generic: '通用设备',
+  power_supply: 'deviceType.powerSupply',
+  oscilloscope: 'deviceType.oscilloscope',
+  multimeter: 'deviceType.multimeter',
+  signal_generator: 'deviceType.signalGenerator',
+  spectrum_analyzer: 'deviceType.spectrumAnalyzer',
+  can_tool: 'deviceType.canTool',
+  gateway: 'deviceType.gateway',
+  generic: 'deviceType.generic',
 }
 
+/** Interface types — see DEVICE_TYPES for why these are keys, not labels. */
 export const INTERFACE_TYPES: Record<string, string> = {
-  scpi: 'SCPI',
-  can: 'CAN',
-  usb: 'USB',
-  serial: '串口',
-  ethernet: '以太网',
-  gpib: 'GPIB',
-  pcie: 'PCIe',
-  pxi: 'PXI / PXIe',
-  custom: '自定义',
-  mini_gateway100: 'Mini Gateway 100',
+  scpi: 'iface.scpi',
+  can: 'iface.can',
+  usb: 'iface.usb',
+  serial: 'iface.serial',
+  ethernet: 'iface.ethernet',
+  gpib: 'iface.gpib',
+  pcie: 'iface.pcie',
+  pxi: 'iface.pxi',
+  custom: 'iface.custom',
+  mini_gateway100: 'iface.miniGateway100',
 }

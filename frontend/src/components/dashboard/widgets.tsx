@@ -6,12 +6,13 @@ import {
 import { ClearOutlined, WarningOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import ReactMarkdown from 'react-markdown'
+import { useI18n } from '../../i18n'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import type { DashboardWidget, DashboardSnapshot, ParsedPoint } from '../../types'
-import { STATUS_COLOR, STATUS_LABEL } from './registry'
+import { STATUS_COLOR, makeStatusLabel } from './registry'
 
 const { Text, Paragraph } = Typography
 
@@ -37,6 +38,7 @@ export interface WidgetProps {
 /* ------------------------------------------------------------------ */
 
 function StatusTag({ status, big }: { status?: string | null; big?: boolean }) {
+  const { t } = useI18n()
   if (!status) return <Tag>无数据</Tag>
   const color = STATUS_COLOR[status] || 'var(--app-fg-subtle)'
   return (
@@ -44,7 +46,7 @@ function StatusTag({ status, big }: { status?: string | null; big?: boolean }) {
       color={color}
       style={{ fontSize: big ? 16 : 12, padding: big ? '2px 12px' : undefined, margin: 0 }}
     >
-      {STATUS_LABEL[status] || status}
+      {makeStatusLabel(t)[status] || status}
     </Tag>
   )
 }
@@ -488,6 +490,7 @@ export function DeviceStatusWidget({ widget, snapshot, big }: WidgetProps) {
 export function ExecutionStatsWidget({
   widget, snapshot, big, since, onSinceChange,
 }: WidgetProps) {
+  const { t } = useI18n()
   const e = snapshot?.executions
   if (!e) return <Spin />
 
@@ -542,7 +545,7 @@ export function ExecutionStatsWidget({
       )}
       {e.recent?.length > 0 && (
         <div style={{ fontSize: big ? 15 : 12, color: 'var(--app-fg-subtle)' }}>
-          最近：{e.recent[0].id?.slice(0, 12)} · {STATUS_LABEL[e.recent[0].status] || e.recent[0].status}
+          最近：{e.recent[0].id?.slice(0, 12)} · {makeStatusLabel(t)[e.recent[0].status] || e.recent[0].status}
           {' · '}{fmtTime(e.recent[0].created_at)}
         </div>
       )}

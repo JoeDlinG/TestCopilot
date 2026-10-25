@@ -125,4 +125,8 @@ export const HELP_KEYS: Record<string, [string, string]> = {
   '重复崩溃已合并计数': ['fb.deduped', 'Same crash as before — occurrence counted'],
   '页面渲染出错': ['fb.renderFailed', 'This page crashed while rendering.'],
   重试: ['common.retry', 'Retry'],
+  '尚未配置 AI 模型': ['ai.noModelTitle', 'No AI model configured yet'],
+  'AI 助手需要一个模型才能工作。请到「模型配置」添加一个模型（填入厂商、API Key 等），然后回到本页即可使用。':
+    ['ai.noModelDesc', 'The AI assistant needs a model before it can do anything. Add one under Model Configuration (vendor, API key, …) and come back to this page.'],
+  '重新检测': ['btn.recheck', 'Re-check'],
 }

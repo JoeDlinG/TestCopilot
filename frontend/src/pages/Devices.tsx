@@ -223,14 +223,14 @@ export default function Devices() {
       dataIndex: 'type',
       key: 'type',
       width: 140,
-      render: (type: string) => DEVICE_TYPES[type] || type,
+      render: (type: string) => t(DEVICE_TYPES[type] || type),
     },
     {
       title: t('device.interfaceType'),
       dataIndex: 'protocol',
       key: 'protocol',
       width: 130,
-      render: (type: string) => <Tag color="blue">{INTERFACE_TYPES[type] || type}</Tag>,
+      render: (type: string) => <Tag color="blue">{t(INTERFACE_TYPES[type] || type)}</Tag>,
     },
     {
       title: t('common.address'),
@@ -370,12 +370,12 @@ export default function Devices() {
           </Form.Item>
           <Form.Item name="device_type" label={t('label.deviceType')} rules={[{ required: true }]}>
             <Select placeholder={t('ph.deviceType')} options={
-              Object.entries(DEVICE_TYPES).map(([k, v]) => ({ label: v, value: k }))
+              Object.entries(DEVICE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
             } />
           </Form.Item>
           <Form.Item name="interface_type" label={t('iface.type')} rules={[{ required: true }]}>
             <Select placeholder={t('msg.selectInterface')} options={
-              Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: v, value: k }))
+              Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
             } />
           </Form.Item>
           <Form.Item name="visa_address" label={t('ph.visaAddress')}>
@@ -435,7 +435,7 @@ export default function Devices() {
       >
         {discoveredDevices.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 24, color: 'var(--app-fg-subtle)' }}>{t('device.noneFound')}<br />
-            <small>t('device.driverHint')_acm）。</small>
+            <small>{t('device.driverHint')}_acm）。</small>
           </div>
         ) : (
           <Table

@@ -11,6 +11,7 @@ import {
   ClearOutlined, ApiOutlined, ImportOutlined, CheckCircleOutlined,
   EyeOutlined, BulbOutlined, SaveOutlined, DeleteOutlined,
   FileMarkdownOutlined, EditOutlined, PaperClipOutlined, FileOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { aiAPI, testCaseAPI, pluginAPI, deviceAPI, memoryAPI } from '../services/api'
@@ -85,6 +86,9 @@ export default function AIChat() {
 
   // --- local UI-only state ---
   const [models, setModels] = useState<AIModel[]>([])
+  // Distinguishes "still loading" from "genuinely none configured" so the
+  // setup hint never flashes before the request resolves.
+  const [modelsLoaded, setModelsLoaded] = useState(false)
   const [activeModel, setActiveModel] = useState<string>('')
   const [chatLoading, setChatLoading] = useState(false)
   const [genLoading, setGenLoading] = useState(false)
@@ -157,6 +161,8 @@ export default function AIChat() {
       if (best?.id) setActiveModel(best.id)
     } catch (err) {
       console.error('Failed to load models:', err)
+    } finally {
+      setModelsLoaded(true)
     }
   }
 
@@ -465,6 +471,35 @@ export default function AIChat() {
       </div>
 
           {/* ---------- output area (top): reply / result ---------- */}
+      {modelsLoaded && models.length === 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('ai.noModelTitle')}
+          description={t('ai.noModelDesc')}
+          action={
+            <Space>
+              <Button
+                type="primary"
+                size="small"
+                icon={<SettingOutlined />}
+                onClick={() => navigate('/model-config')}
+              >
+                {t('btn.goConfigureModel')}
+              </Button>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={loadModels}
+              >
+                {t('btn.recheck')}
+              </Button>
+            </Space>
+          }
+        />
+      )}
+
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
@@ -523,7 +558,7 @@ export default function AIChat() {
                             type="primary" icon={<ImportOutlined />}
                             onClick={handleImportAll} loading={importingAll}
                           >
-                            t('btn.addAllPrefix'){caseCount} {t('label.itemsParen')}
+                            {t('btn.addAllPrefix')}{caseCount} {t('label.itemsParen')}
                           </Button>
                         )}
                       </div>
@@ -662,7 +697,7 @@ export default function AIChat() {
                             title={<Space><Text strong>{m.name}</Text>
                               <Text type="secondary" style={{ fontSize: 12 }}>{m.file_name}</Text></Space>}
                             description={<Text type="secondary" style={{ fontSize: 12 }}>
-                              {m.section_count} t('unit.recordsDot') {m.preview || `（${t('label.noSummary')}`}</Text>}
+                              {m.section_count} {t('unit.recordsDot')} {m.preview || `（${t('label.noSummary')}`}</Text>}
                           />
                         </List.Item>
                       )} />
@@ -694,7 +729,7 @@ export default function AIChat() {
                     <div>
                       <Title level={5}>{t('card.queryResult')}</Title>
                       <Text type="secondary">SQL: {queryResult.sql_generated}</Text>
-                      <p>t('label.foundTotal') {queryResult.result_count} {t('unit.records')}</p>
+                      <p>{t('label.foundTotal')} {queryResult.result_count} {t('unit.records')}</p>
                       {queryResult.results?.length > 0 && (
                         <pre style={{ background: 'var(--app-surface-sunken)', padding: 16, borderRadius: 8, overflow: 'auto' }}>
                           {JSON.stringify(queryResult.results, null, 2)}
@@ -780,7 +815,7 @@ export default function AIChat() {
             >
               <Tooltip title={t('btn.attachFull')}>
                 <Button icon={<PaperClipOutlined />} disabled={!activeModel}>
-                  t('label.attachment'){attachments.length > 0 ? ` (${attachments.length})` : ''}
+                  {t('label.attachment')}{attachments.length > 0 ? ` (${attachments.length})` : ''}
                 </Button>
               </Tooltip>
             </Upload>
@@ -796,7 +831,7 @@ export default function AIChat() {
               }))}
             />
             {selectedSkills.length > 0 && (
-              <Tag color="blue">t('status.enabled') {selectedSkills.length} {t('unit.skills')}</Tag>
+              <Tag color="blue">{t('status.enabled')} {selectedSkills.length} {t('unit.skills')}</Tag>
             )}
           </Space>
           <Space>

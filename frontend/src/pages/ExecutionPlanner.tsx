@@ -418,7 +418,7 @@ export default function ExecutionPlanner() {
       title: t('col.group'), width: 130,
       render: (_: any, r: PlanItem, idx: number) => (
         <Space size={4}>
-          <Tag color={errorItemIds.has(r.id) ? 'red' : 'blue'}>t('col.group'){r.group_no}</Tag>
+          <Tag color={errorItemIds.has(r.id) ? 'red' : 'blue'}>{t('col.group')}{r.group_no}</Tag>
           <Tooltip title={t('tip.mergeWithPrev')}>
             <Button size="small" type="text" disabled={idx === 0}
               onClick={() => mergeWithPrev(idx)}>↰</Button>
@@ -504,10 +504,10 @@ export default function ExecutionPlanner() {
           <Button icon={<FileAddOutlined />} onClick={newPlan}>{t('btn.newPlan')}</Button>
           <Tooltip title={t('tip.undo')}>
             <Button icon={<UndoOutlined />} disabled={!history.length} onClick={undo}>
-              t('common.undo'){history.length ? `（${history.length}）` : ''}
+              {t('common.undo')}{history.length ? `（${history.length}）` : ''}
             </Button>
           </Tooltip>
-          {planId && <Tag>t('label.editing')：{planName}</Tag>}
+          {planId && <Tag>{t('label.editing')}：{planName}</Tag>}
         </Space>
         <Text type="secondary" style={{ fontSize: 12 }}>{t('planner.hint')}</Text>
       </div>
@@ -536,7 +536,7 @@ export default function ExecutionPlanner() {
               </Checkbox.Group>
             </div>
             <Button block type="dashed" icon={<PlusOutlined />} style={{ marginTop: 8 }}
-              onClick={addSelected}>t('btn.addToPlanPrefix'){selected.length}）</Button>
+              onClick={addSelected}>{t('btn.addToPlanPrefix')}{selected.length}）</Button>
           </Card>
 
           <Card size="small" title={t('card.existingPlans')} style={{ marginTop: 12 }}
@@ -626,11 +626,11 @@ export default function ExecutionPlanner() {
             <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
               <Button size="small" icon={<CopyOutlined />}
                 disabled={!itemSelected.length} onClick={copyItems}>
-                t('btn.copySelectedPrefix'){itemSelected.length}）
+                {t('btn.copySelectedPrefix')}{itemSelected.length}）
               </Button>
               <Button size="small" danger icon={<DeleteOutlined />}
                 disabled={!itemSelected.length} onClick={removeItems}>
-                t('btn.deleteSelectedPrefix'){itemSelected.length}）
+                {t('btn.deleteSelectedPrefix')}{itemSelected.length}）
               </Button>
               <Button size="small" type="link"
                 disabled={!itemSelected.length}
@@ -696,7 +696,7 @@ export default function ExecutionPlanner() {
             {run && (
               <div style={{ marginTop: 10 }}>
                 <Button block size="small" onClick={() => setMonitorOpen(true)}>
-                  t('btn.viewLastBatch'){run.status}）
+                  {t('btn.viewLastBatch')}{run.status}）
                 </Button>
               </div>
             )}
@@ -716,13 +716,13 @@ export default function ExecutionPlanner() {
         {!run ? <Spin /> : (
           <>
             <Space direction="vertical" style={{ width: '100%' }} size={8}>
-              <Title level={5} style={{ margin: 0 }}>t('label.statusColon'){run.status}</Title>
+              <Title level={5} style={{ margin: 0 }}>{t('label.statusColon')}{run.status}</Title>
               <Progress percent={run.total_items
                 ? Math.round((run.completed_items || 0) / run.total_items * 100) : 0} />
               <Space size={16} wrap>
-                <Text>t('status.passed') {run.passed_items || 0}</Text>
-                <Text type="danger">t('status.failed') {run.failed_items || 0}</Text>
-                <Text type="secondary">t('col.duration') {run.duration_ms ? (run.duration_ms / 1000).toFixed(1) + 's' : '-'}</Text>
+                <Text>{t('status.passed')} {run.passed_items || 0}</Text>
+                <Text type="danger">{t('status.failed')} {run.failed_items || 0}</Text>
+                <Text type="secondary">{t('col.duration')} {run.duration_ms ? (run.duration_ms / 1000).toFixed(1) + 's' : '-'}</Text>
               </Space>
             </Space>
             <Divider />
@@ -731,7 +731,7 @@ export default function ExecutionPlanner() {
                 <List.Item>
                   <Space direction="vertical" style={{ width: '100%' }} size={2}>
                     <Space>
-                      <Tag>t('col.group'){it.group_no}</Tag>
+                      <Tag>{t('col.group')}{it.group_no}</Tag>
                       <Text strong>{it.testcase_name || it.testcase_id}</Text>
                       <Tag color={
                         it.status === 'passed' ? 'green'
@@ -740,7 +740,7 @@ export default function ExecutionPlanner() {
                       }>{it.status}</Tag>
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      t('label.iteration') {it.iteration || 0} / {it.loop_count || 1}
+                      {t('label.iteration')} {it.iteration || 0} / {it.loop_count || 1}
                       {it.execution_id ? ` · ${t('label.execution')} ${it.execution_id}` : ''}
                     </Text>
                   </Space>

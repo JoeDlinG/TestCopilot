@@ -73,6 +73,89 @@ React 在挂载前就抛异常 → 白屏。dev 模式（Vite 预打包，不跑
 `curl` 200 + 首页 HTML 正常，**不能**证明界面可用。前端产物必须用真实浏览器渲染一次
 （至少断言 `#root` 有内容、`pageerror` 为空）才算验证完成。这条已写入项目长期记忆。
 
+## 2026-10-25: Issue #27（英文界面残留中文 + `t()` 泄漏）+ AI 助手未配置提示（v2.3.2）
+
+### Issue #27 —— 两类 i18n 盲区
+
+v2.2.0 的「英文界面补全」是**按页面扫 JSX 字面量**做的，因此漏掉了两类字符串，
+且当时的构建链（`tsc` + `vite build`）对这两类都**完全无感**。
+
+#### P0-1 常量里的显示文案（配置段名称）
+
+`services/api.ts` 的 `PROJECT_SECTIONS` 把 7 个配置段名写成中文常量，
+`ProjectManager.tsx` 有 8 处把 `s.label` 直接当 UI 文本渲染 —— `t()` 从头到尾没参与，
+所以英文界面下「Sections to include:」右侧永远是中文。
+
+- 常量改为 `labelKey`，渲染处统一 `t(s.labelKey)`，并抽出 `sectionLabel(key)` helper
+  （原来那 4 处重复的 `PROJECT_SECTIONS.find(...)?.labelKey ? t(...) : key` 实在没法读）
+- 新增 `section.*` 词条（中英双份）
+- **中文标点也按语言切换**：新增 `punct.colon`（：/ : ）、`punct.enum`（、/ , ）、
+  `punct.countParen`（（{n}）/  ({n})），不再硬编码全角符号
+
+同类同构的 `types/index.ts` 也一并改了：`DEVICE_TYPES` / `INTERFACE_TYPES` 改为 i18n key，
+`Devices.tsx` / `Logs.tsx` 渲染处过 `t()`；新增 `deviceType.*` / `iface.*` 词条。
+
+`components/dashboard/registry.tsx` 的 `WIDGET_META`（label / desc / defaultTitle / STATUS_LABEL）
+改为 **`t` 工厂** `makeWidgetMeta(t)` / `makeWidgetList(t)` / `makeStatusLabel(t)`，
+`newWidget(type, t)`；新增 `widget.*` 词条。
+
+#### P0-2 `t()` 被当纯文本渲染（59 处）
+
+`t('label.sourceColon')` 写在 JSX 文本位置而不是 `{}` 里，React 原样输出 ——
+**中文用户同样会看到 `t('label.sourceColon')`**，比英文残留更糟。
+
+写了基于 `@babel/parser` 的一次性修复脚本（按 AST 节点跨度精确包裹，保留周围文字与标点），
+自动包裹 **58 处**（JSX 文本 → `{}`、模板字符串 → `${}`），剩余 3 处手工处理：
+
+- `DelayNode` 缺 `useI18n`（补 hook）
+- `extra={t('flow.breakFull')}`（属性串误写）
+- 插件编辑器里 Python 代码模板内的 `t('label.noDevice')` → 改为真实代码文本 `not connected`
+
+> 踩到一个坑：Pillow/Pupeteer 之外，Python 的 `str.replace` 对**含全角引号**的文本匹配会静默失败，
+> 有一处替换试了三次才命中（末尾多了一个 `'`）。
+
+#### P1 i18n 守门脚本（新增 `frontend/scripts/i18n-guard.mjs`）
+
+用 `@babel/parser`（已是传递依赖，无需新增包）解析 `src/**/*.{ts,tsx}`：
+
+| 类别 | 规则 |
+|---|---|
+| **B 类（零容忍）** | `JSXText` / `TemplateElement` / JSX 属性串中出现 `t('` → 失败并列出 `file:line` |
+| **A 类（棘轮）** | 非 `src/i18n/` 目录下含 CJK 的字符串数量，**只允许下降**；基线存 `scripts/i18n-baseline.json` |
+
+- 接入构建：`"build": "tsc && node scripts/i18n-guard.mjs && vite build"`
+- 单独跑：`npm run i18n-guard`（`--update-baseline` 更新基线）
+- 当前：**B = 0**，**A = 221**（基线 221，相比修复前 268 已下降 47）
+
+#### 验收结果
+
+- 英文 `/projects` 配置段复选框：`Model Config / Devices / Plugins / Skills / Test Cases / Execution Manager / Dashboards` ✅
+- 中文界面仍为中文（无反向问题）✅
+- 页面无 `t('...')` 裸文本 ✅
+- 英文页面残留的中文经逐节点核查**全是用户数据**（Skill Markdown 内容、测试用例名/描述），非 UI 文案 ✅
+
+### AI 助手未配置模型时的提示（持续优化）
+
+之前只有下拉框里有个「去配置模型」按钮，**不打开下拉就完全看不到**；
+且没有任何说明告诉用户为什么发不出去（发送按钮是禁用的，但没有解释）。
+
+`AIChat.tsx` 顶部新增醒目 `Alert`（仅当模型列表加载完成且为空时出现，避免加载中闪烁）：
+
+- 标题「尚未配置 AI 模型」+ 说明「需要到「模型配置」添加一个模型（填入厂商、API Key 等）」
+- **「去配置模型」按钮** → 直接跳转到 `/model-config`
+- 「重新检测」按钮 → 重新拉一次模型列表
+
+### 验证
+
+- `tsc --noEmit` 通过；`npm run build` 通过（含守门脚本）
+- 浏览器实测：英文/中文配置段、AI 提示横幅 + 跳转（用请求拦截模拟空模型列表）、
+  点击后 URL 变为 `/model-config`
+- `Test/` 7 个脚本全 PASS；端点 **19/19**；用例 89 条
+- 仪表盘复核：注册表改工厂后未回归（改绑到有执行记录的用例后正常渲染判定汇总 52 条与执行统计）
+
+> 备注：`/projects` 绑定用例 `tc_831f2219` 当前**没有执行记录**，所以仪表盘显示「暂无解析数据」。
+> 这是数据现状而非代码问题 —— 改绑到 `tc_1af8a2b8` 即正常出数（已验证并还原）。
+
 ---
 
 ## 2026-10-22: 品牌标识、帮助中心、首次引导 + Issue #25 / #26（v2.3.0）

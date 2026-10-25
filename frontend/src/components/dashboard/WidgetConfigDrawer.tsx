@@ -1,6 +1,7 @@
 import { Drawer, Form, Input, InputNumber, Select, Switch, Typography, Empty } from 'antd'
 import type { DashboardWidget, DashboardSnapshot } from '../../types'
-import { WIDGET_META } from './registry'
+import { makeWidgetMeta } from './registry'
+import { useI18n } from '../../i18n'
 
 const { Text } = Typography
 
@@ -15,9 +16,10 @@ type Props = {
 export default function WidgetConfigDrawer({
   open, widget, snapshot, onClose, onChange,
 }: Props) {
+  const { t } = useI18n()
   if (!widget) return null
 
-  const meta = WIDGET_META[widget.type]
+  const meta = makeWidgetMeta(t)[widget.type]
   const fields: string[] = snapshot?.parsed?.fields || []
   const setCfg = (patch: Record<string, any>) =>
     onChange({ ...widget, config: { ...widget.config, ...patch } })

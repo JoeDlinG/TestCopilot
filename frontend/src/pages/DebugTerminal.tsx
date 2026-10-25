@@ -374,7 +374,7 @@ function TerminalWindow({ deviceId }: { deviceId: string }) {
             textAlign: 'center',
             paddingTop: 40,
           }}>
-            t('term.waiting')... {t('term.sendBelow')}
+            {t('term.waiting')}... {t('term.sendBelow')}
           </div>
         ) : (
           tab.messages.map(msg => (

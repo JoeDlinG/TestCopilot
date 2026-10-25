@@ -279,7 +279,7 @@ export default function Dashboard() {
                     avatar={<span style={{ fontSize: 24 }}>{statusIcon(item.status)}</span>}
                     title={
                       <span style={{ color: 'var(--app-on-dark)', fontSize: 17 }}>
-                        t('label.execution') {item.id?.slice(0, 8)} · {item.status}
+                        {t('label.execution')} {item.id?.slice(0, 8)} · {item.status}
                       </span>
                     }
                     description={
