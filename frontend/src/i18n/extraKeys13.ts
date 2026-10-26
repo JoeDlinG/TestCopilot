@@ -42,7 +42,6 @@ export const HELP_KEYS: Record<string, [string, string]> = {
   后端版本: ['help.backendVersion', 'Backend'],
   前端构建: ['help.frontendBuild', 'Frontend build'],
   '运行平台': ['help.platform', 'Platform'],
-  '开源地址': ['help.repo', 'Source'],
   '问题跟踪': ['help.issues', 'Issues'],
   '本软件用于硬件自动化测试：接入设备、编写用例、执行并产出报告。':
     ['help.aboutBody', 'A hardware test automation workbench: connect instruments, author cases, run them and produce reports.'],

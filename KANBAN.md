@@ -126,6 +126,14 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.3.3 — 帮助「关于」移除开源网址（2026-10-26，分支 `feature/flow-enhancements`）
+
+- [x] 基础软件免费但不开源 → 删除「关于」弹窗里的「开源地址 / Source」行
+- [x] 同步移除已无引用的 `help.repo` 词条；「关于」只保留版本 / 前端构建 / 运行平台
+- [x] 后端 `GITHUB_REPO` 保留（仅供反馈转发调用 GitHub Issues API，不在界面展示）
+- [x] 验证：`src/` 下 grep `github.com` / `开源` 为 0；`tsc` 通过；守门 B=0、A=221；
+      浏览器实测「关于」不含 GitHub 字样
+
 ### v2.3.2 — Issue #27（i18n 盲区收口）+ AI 助手未配置提示（2026-10-25，分支 `feature/flow-enhancements`）
 
 - [x] **#27 P0-1 常量里的显示文案**：`PROJECT_SECTIONS` 改 `labelKey` + 8 处渲染点过 `t()`；

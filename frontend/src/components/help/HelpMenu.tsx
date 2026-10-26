@@ -267,11 +267,12 @@ function AboutModal({ open, onClose }: { open: boolean; onClose: () => void }) {
         pagination={false}
         showHeader={false}
         rowKey="k"
+        // The base product is free to use but NOT open source, so no source
+        // repository is advertised here (and never in the shipped UI).
         dataSource={[
           { k: 'v', label: t('help.version'), value: backend.version || '—' },
           { k: 'b', label: t('help.frontendBuild'), value: 'Vite / React 18' },
           { k: 'p', label: t('help.platform'), value: navigator.platform || '—' },
-          { k: 'r', label: t('help.repo'), value: 'github.com/JoeDlinG/TestCopilot' },
         ]}
         columns={[
           { dataIndex: 'label', width: 150, render: (v: string) => <Text type="secondary">{v}</Text> },
