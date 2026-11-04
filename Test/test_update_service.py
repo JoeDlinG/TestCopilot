@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,8 +41,19 @@ import requests  # noqa: E402
 
 BASE = os.environ.get("AITESTLAB_API", "http://localhost:8000/api")
 FEED_ROOT = os.path.join(tempfile.gettempdir(), "testcopilot_feedtest")
-FEED_PORT = 8899
 FAKE_VERSION = "99.9.0"
+
+
+def _free_port() -> int:
+    """Never collide with a leftover feed server from an earlier run."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+FEED_PORT = _free_port()
 
 _failures = []
 

@@ -75,6 +75,90 @@ React 在挂载前就抛异常 → 白屏。dev 模式（Vite 预打包，不跑
 
 ---
 
+---
+
+## 2026-11-05: MGW100 连接报错修复 —— #11 同类问题复发（v2.3.4）
+
+### 现象
+
+`POST /api/devices/connect` 连 Mini Gateway 100 返回 400：
+
+```
+[Errno 2] could not open port /dev/ttyACM0: [Errno 2] No such file or directory: '/dev/ttyACM0'
+```
+
+两个 MG100 设备（`DEV-002`、`DEV-006`）的 `config` 都是
+`{"transport": "serial", "port": "/dev/ttyACM0", ..., "host": "192.168.0.120", "tcp_port": 6025}` ——
+填了以太网参数，却仍走串口，且报错只是一句原始 OSError，没有任何自救提示。
+
+### 根因（代码层）
+
+1. **硬编码路径被持久化**：`mini_gateway100_plugin.py` 的配置 schema 把
+   `port.default = _default_port()`（POSIX 恒为 `/dev/ttyACM0`）写进表单默认值。
+   新建设备（`DEV-006` 于 2026-11-03 创建）自动继承这个路径；本机**没有任何可用串口**
+   （`list_ports.comports()` 返回空），连接必然失败。
+2. **以太网根本选不到**：v0.11.0 给插件加了 `transport=ethernet`，但
+   `PUT /devices/{id}/interface` 只写地址列和通用 config 键，**从不写 `config.transport`** ——
+   全后端 grep `transport` 只有插件在读，没有任何写入路径。于是即便用户在「配置接口」里
+   选了以太网、填了 IP，插件依旧去开串口。
+3. **切接口会毁掉插件协议**：该端点原本会把 `device.protocol` 覆盖成接口 spec 的
+   通用协议（`ethernet`），MG100 就会绕过插件、丢掉 `@11_...;` 帧格式。
+4. **报错无引导**：`pyserial` 的 `SerialException` 原样冒泡到前端。
+
+> 本机物理状态：0 个可用串口；`192.168.0.120:6025` 连接超时；逐个探测
+> `/dev/ttyTHS* /ttyS* /ttyTCU0 /ttyGS0` 均无 MG100 应答。因此**没有硬件时连接仍会失败**，
+> 本次修的是「配置根本选不对 + 报错看不懂」这个代码缺陷，失败信息现在可操作。
+
+### 为什么「早已修复」却又复发
+
+对应已关闭的 **Issue #11**（插件把 POSIX 设备路径硬编码为默认值 → 必然连接失败且提示无引导）。
+复核发现那次修复**没有真正收口**：
+
+| #11 的处置 | 实际状态 |
+|---|---|
+| RIGOL `connect()` 改为必须显式填 `device` | ✅ 已改 |
+| RIGOL schema 的 `"default": "/dev/usbtmc0"` | ❌ **仍在**（本次静态扫描第一枪就抓到） |
+| 建议 #4：给 `backend/plugins/` 加静态检查防后续插件重蹈覆辙 | ❌ **从未实现** |
+| 跨插件回归测试 | ❌ 从来没有；v0.11.0 加 MG100 以太网时也没验证 transport 能否从界面选到 |
+
+即：**修的是单个插件的一个函数，不是这一类 bug**；既没有共享防线，也没有测试，
+所以 MG100 原样保留了同一模式，每新增一台设备就把坏默认值重新种一遍。
+
+### 修复
+
+1. **MG100 插件** —— `_connect_serial()` 前置校验 + `_serial_error()`：
+   报出失败的端口、枚举当前可用串口、给出「填正确串口 / 改以太网 / Windows 用 COM3」的引导；
+   `pyserial.SerialException` 统一转成可操作错误。空串口号也明确拒绝。
+   `os.path.exists()` 检查只在 POSIX 做（`COM3` 不是文件，Windows 交给 pyserial 判定）。
+2. **schema 不再持久化假路径** —— MG100 `port` 与 RIGOL `device` 的 `default` 改为
+   `placeholder`（示例）并要求显式填写；从源头掐掉坏默认值的传播。
+3. **接口注册表加映射**（`app/core/interfaces.py`）——
+   `PLUGIN_TRANSPORT_BINDINGS` + `apply_plugin_transport()`：`connection_type` 切换时同步写
+   `config.transport`，把 `ip_address/port` 映射为插件的 `host/tcp_port`（或 `serial_port` → `port`），
+   并清掉另一种传输残留的 config 键。`PUT /devices/{id}/interface` 调用它，
+   且**自定义插件协议不再被通用接口协议覆盖**。
+4. **补上 #11 欠下的防线** —— 新增 `Test/test_mgw100_connect.py`：
+   - AST 静态扫描**全部**插件，禁止任何 `/dev/`、`/tmp/` 字面量作为 schema `default`
+   - MG100 缺失/空白串口给出可操作报错（含 Windows COM 路径不被误判）
+   - 以太网用 mock TCP 服务器实测 `connect` + `@11_HELLO;` 往返
+   - 接口↔transport 双向映射（含清理旧键）
+5. **让防线真的会跑** —— 新增仓库级 `Test/run_all.sh`（此前只有 /tmp 里的临时脚本），
+   覆盖 11 个套件；硬件依赖的实机测试在无设备时 **SKIP 而不是误报 FAIL**。
+   顺带把 `test_update_service.py` 的假源端口改为动态分配，避免与遗留进程抢 8899。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_mgw100_connect.py` | **12/12 PASS** |
+| `bash Test/run_all.sh` | **11/11 PASS**（实机 1 项无硬件 SKIP） |
+| 端点 | 14/14 |
+| API 连接报错 | 含「串口 / 以太网 / ttyACM0」引导 |
+| 接口切换（临时设备，含显式传 `protocol="ethernet"`） | `protocol` 保持 `mini_gateway100`、`transport=ethernet`、host/tcp_port 正确、旧串口键清除 |
+| mock TCP 以太网 | `@11_HELLO;` → `2,11,12` |
+
+---
+
 ## 2026-10-26: 帮助「关于」移除开源网址（v2.3.3）
 
 基础软件**免费使用，但不开源**，因此界面上不再宣传源码仓库地址。

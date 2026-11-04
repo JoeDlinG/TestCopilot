@@ -610,8 +610,12 @@ class RigolOscilloscopePlugin(BaseProtocolPlugin):
                 "device": {
                     "type": "string",
                     "title": "USB-TMC 设备路径",
-                    "default": "/dev/usbtmc0",
-                    "description": "transport=usbtmc 时使用",
+                    # issue #11: the connect() path was fixed to require an
+                    # explicit device, but this hard-coded POSIX default was
+                    # left behind — the UI kept pre-filling it and device
+                    # creation persisted it. Show it as an example instead.
+                    "placeholder": "/dev/usbtmc0",
+                    "description": "transport=usbtmc 时使用，必须显式填写实际设备路径",
                 },
                 "resource": {
                     "type": "string",

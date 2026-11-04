@@ -126,6 +126,23 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.3.4 — MGW100 连接报错修复：#11 同类问题复发（2026-11-05，分支 `feature/flow-enhancements`）
+
+- [x] **根因**：MG100 schema 把 `/dev/ttyACM0` 当 `port.default` 持久化；而
+      `PUT /devices/{id}/interface` **从不写 `config.transport`**，v0.11.0 加的以太网在 UI 上根本选不到；
+      切接口还会把插件协议覆盖成通用 `ethernet`；失败只抛原始 OSError
+- [x] **为什么复发**：#11 当年只改了 RIGOL 的 `connect()`，**schema default 仍在**
+      （静态扫描直接抓到 `/dev/usbtmc0`），建议 #4 的插件静态检查**从未实现**，
+      也没有跨插件回归测试 → MG100 原样保留同一模式，新建设备就重新种下坏默认值
+- [x] **修复**：MG100 串口失败给可操作报错（枚举可用串口 / 提示改以太网 / Windows COM3）；
+      MG100+RIGOL schema 的 `default` 改 `placeholder`；新增 `PLUGIN_TRANSPORT_BINDINGS` +
+      `apply_plugin_transport()` 把接口选择同步进 `config.transport`；自定义插件协议不再被覆盖
+- [x] **防再发**：`Test/test_mgw100_connect.py` AST 扫描全部插件禁止硬编码 `/dev/`、`/tmp/` 默认值，
+      12 项断言；新增仓库级 `Test/run_all.sh`（11 套件，无硬件时 SKIP 而非 FAIL）
+- [x] 验证：12/12 + 11/11 PASS；端点 14/14；接口切换端到端正确；mock TCP 以太网收发正常
+- [x] 说明：本机 0 个可用串口且 `192.168.0.120:6025` 超时，**无硬件时仍连不上**，
+      修的是「配置选不对 + 报错看不懂」
+
 ### v2.3.3 — 帮助「关于」移除开源网址（2026-10-26，分支 `feature/flow-enhancements`）
 
 - [x] 基础软件免费但不开源 → 删除「关于」弹窗里的「开源地址 / Source」行

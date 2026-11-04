@@ -244,3 +244,67 @@ def foreign_config_keys(interface_type: str, keep: set) -> set:
             continue
         out.update(f["key"] for f in spec["fields"] if f["store"] == "config")
     return out - set(keep)
+
+# --------------------------------------------------------------------------- #
+# Custom-protocol plugins and their physical transport
+# --------------------------------------------------------------------------- #
+# Some plugins (MG100, RIGOL) implement their OWN transport selection via a
+# ``config.transport`` key. That key is not part of INTERFACE_SPECS, so the
+# generic "configure interface" dialog used to fill ip_address/port columns but
+# never touch it — the plugin kept opening the serial path from its schema
+# default. This is the regression behind the "already fixed" MG100 error: the
+# Ethernet support existed in the plugin but was unreachable from the UI.
+#
+# protocol -> interface type -> binding
+#   transport            value written to config["transport"]
+#   from_column          config_key -> device column to copy the value from
+#   drop                 config keys that must not survive this interface
+PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "mini_gateway100": {
+        "serial": {
+            "transport": "serial",
+            "from_column": {"port": "serial_port"},
+            "drop": ("host", "tcp_port"),
+        },
+        "usb": {
+            "transport": "serial",
+            "from_column": {"port": "serial_port"},
+            "drop": ("host", "tcp_port"),
+        },
+        "ethernet": {
+            "transport": "ethernet",
+            "from_column": {"host": "ip_address", "tcp_port": "port"},
+            "drop": ("port", "baudrate"),
+        },
+    },
+}
+
+
+def apply_plugin_transport(
+    protocol: str,
+    interface_type: str,
+    columns: Dict[str, Any],
+    device_columns: Dict[str, Any],
+    stored: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Sync a plugin's private ``transport`` config with the chosen interface.
+
+    Returns a NEW dict; ``columns`` holds values just submitted by the user and
+    ``device_columns`` the already-persisted column values (used as a fallback
+    so an omitted optional field does not erase a good value).
+    """
+    binding = PLUGIN_TRANSPORT_BINDINGS.get(protocol, {}).get(interface_type)
+    if not binding:
+        return dict(stored)
+
+    out = dict(stored)
+    for key in binding.get("drop", ()):
+        out.pop(key, None)
+    out["transport"] = binding["transport"]
+    for config_key, column_key in binding.get("from_column", {}).items():
+        value = columns.get(column_key)
+        if value in (None, ""):
+            value = device_columns.get(column_key)
+        if value not in (None, ""):
+            out[config_key] = value
+    return out

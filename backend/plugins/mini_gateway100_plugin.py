@@ -228,6 +228,41 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         )
         return True
 
+    @staticmethod
+    def _available_serial_ports() -> List[str]:
+        """Enumerate real ports so a failed connect can tell the user what to do."""
+        try:
+            from serial.tools import list_ports
+
+            return [f"{p.device} ({p.description or 'unknown'})"
+                    for p in list_ports.comports()]
+        except Exception:
+            return []
+
+    @classmethod
+    def _serial_error(cls, port: str, reason: str = "") -> ConnectionError:
+        """Actionable message — issue #11's fix was only applied to the RIGOL
+        plugin, so MG100 still leaked a raw ``[Errno 2]`` with no guidance.
+
+        The message names the port that failed, lists what IS available, and
+        points at both ways out (fix the serial path / switch to Ethernet).
+        """
+        parts = [f"无法打开 Mini Gateway 100 串口 {port!r}。"]
+        if reason:
+            parts.append(f"原因：{reason}")
+        ports = cls._available_serial_ports()
+        if ports:
+            parts.append("当前检测到的串口：" + "、".join(ports[:8]) + "。")
+        else:
+            parts.append("当前系统未检测到任何可用串口（设备可能未插入，或未枚举为 USB-CDC）。")
+        parts.append(
+            "请在「设备管理 → 配置接口」填写正确的串口号；"
+            "若设备是通过网线连接的，请把连接方式改为「以太网」并填写 IP 与端口。"
+        )
+        if os.name == "nt":
+            parts.append("Windows 下串口形如 COM3，不是 /dev/ttyACM0。")
+        return ConnectionError(" ".join(parts))
+
     async def _connect_serial(self, config: Dict[str, Any]) -> None:
         try:
             import serial
@@ -236,21 +271,35 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                 "pyserial is not installed. Install with: pip install pyserial"
             ) from e
 
-        port = config.get("port")
+        port = str(config.get("port") or "").strip()
         if not port:
-            raise ValueError("Missing 'port' in plugin config (serial device path)")
+            raise ValueError(
+                "缺少串口号：请在「设备管理 → 配置接口」填写 Mini Gateway 100 的 "
+                "USB-CDC 串口路径，或把连接方式改为「以太网」。"
+                f"（当前系统可用串口：{self._available_serial_ports() or '无'}）"
+            )
+
+        # Fail early with a hint instead of letting pyserial's raw OSError
+        # escape. Only POSIX has device *files*; on Windows "COM3" is a pyserial
+        # name and os.path.exists() would always be False, so let pyserial try
+        # and classify its SerialException instead.
+        if os.name != "nt" and not os.path.exists(port):
+            raise self._serial_error(port, "设备文件不存在")
 
         # Opening the port can take hundreds of ms — keep it off the event loop.
-        self._serial = await run_blocking(
-            lambda: serial.Serial(
-                port=port,
-                baudrate=int(config.get("baudrate", 115200)),
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=float(config.get("timeout", 2.0)),
+        try:
+            self._serial = await run_blocking(
+                lambda: serial.Serial(
+                    port=port,
+                    baudrate=int(config.get("baudrate", 115200)),
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    timeout=float(config.get("timeout", 2.0)),
+                )
             )
-        )
+        except serial.SerialException as e:
+            raise self._serial_error(port, str(e)) from e
 
     async def _connect_ethernet(self, config: Dict[str, Any]) -> None:
         host = str(config.get("host") or DEFAULT_ETH_HOST).strip()
@@ -416,8 +465,17 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                 "port": {
                     "type": "string",
                     "title": "串口号 / 设备路径",
-                    "default": _default_port(),
-                    "description": "transport=serial 时使用。Mini Gateway 100 USB-C CDC 串口设备路径",
+                    # No hard-coded ``default``: a POSIX path baked into the
+                    # schema gets persisted on every new device and is wrong on
+                    # any machine where the CDC port enumerates differently (or
+                    # isn't plugged in at all). Show it as a placeholder instead
+                    # and require the user to pick a real port. This is the
+                    # generalised form of issue #11 (fixed only for RIGOL).
+                    "placeholder": _default_port(),
+                    "description": (
+                        "transport=serial 时使用。请填写实际串口路径（示例："
+                        f"{_default_port()}），或在「设备管理 → 扫描设备」中选择。"
+                    ),
                 },
                 "baudrate": {
                     "type": "integer",

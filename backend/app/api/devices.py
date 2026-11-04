@@ -21,6 +21,7 @@ from app.core.exceptions import DeviceNotFoundError, DeviceConnectionError
 from app.core.timeutils import utc_now
 from app.core.interfaces import (
     INTERFACE_SPECS,
+    apply_plugin_transport,
     clear_other_columns,
     foreign_config_keys,
     get_interface_spec,
@@ -33,6 +34,10 @@ from app.schemas.schemas import (
 from app.services.device_service import device_service
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
+
+# Protocols handled by the generic communication layer rather than by a plugin.
+# Keep in sync with device_service._STANDARD_PROTOCOLS.
+_STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
 
 
 class DeviceInterfaceIn(BaseModel):
@@ -138,9 +143,33 @@ async def update_device_interface(
     if device.port == "":
         device.port = None
 
+    # A custom-protocol plugin must keep its protocol when the physical
+    # interface changes. Overwriting ``mini_gateway100`` with the generic
+    # ``ethernet`` protocol would bypass the plugin (and its MG100 framing)
+    # entirely. Only standard protocols follow the interface spec's protocol.
+    plugin_protocol = device.protocol
+    is_custom_protocol = plugin_protocol not in _STANDARD_PROTOCOLS
+
+    # Mirror the interface choice into the plugin's private transport key.
+    # Without this the plugin keeps reading the stale ``transport: serial``
+    # from its schema default even after the user configured Ethernet (issue
+    # #11's bug class resurfacing in MG100).
+    stored = apply_plugin_transport(
+        plugin_protocol,
+        data.connection_type,
+        columns,
+        {col: getattr(device, col, None) for col in columns},
+        stored,
+    )
+
     device.config = device_service._to_json_field(stored)
     device.connection_type = data.connection_type
-    device.protocol = data.protocol or spec.get("protocol") or device.protocol
+    if is_custom_protocol:
+        # A plugin protocol owns its framing; even an explicit `protocol` in
+        # the payload must not replace it with a generic bus name.
+        device.protocol = plugin_protocol
+    else:
+        device.protocol = data.protocol or spec.get("protocol") or device.protocol
     device.updated_at = utc_now()
     await db.commit()
     await db.refresh(device)
