@@ -1,6 +1,6 @@
 # TestCopilot 使用手册
 
-> **版本**: v2.3.4 | **更新日期**: 2026-11-05
+> **版本**: v2.3.5 | **更新日期**: 2026-11-05
 
 ---
 
@@ -212,6 +212,17 @@ Mini Gateway 100 由插件驱动，两种物理链路共用同一套协议，通
 | `transport` | 参数 | 默认值 |
 |---|---|---|
 | `serial`（默认） | `port`（串口号）、`baudrate` | `/dev/ttyACM0`（Windows 为 `COM3`）、115200 |
+
+> **USB 插上却连不上（Linux）**：部分主机（尤其是 Jetson/嵌入式内核，或热插拔后）
+> 的 `cdc_acm` 驱动未绑定，系统不会生成 `/dev/ttyACM*`，此时「扫描设备」也看不到串口。
+> 软件会自动识别 `0483:5740` 并改用 USB 原生批量端点通信，但需要一次 USB 访问授权：
+>
+> ```bash
+> sudo bash backend/install/install_usb_rules.sh
+> ```
+>
+> 执行后重新插拔一次 MG100 USB 线即可。该规则同时会让 `cdc_acm` 重新绑定，
+> 之后普通串口方式也能正常工作。也可以在「设备管理 → 配置接口」把连接方式设为 **USB** 直接走原生通道。
 | `ethernet` | `host`、`tcp_port`、`connect_timeout` | `192.168.0.120`、`6025`、5.0 s |
 
 公共参数：`board_id`（默认 11）、`timeout`（默认 2.0 s）。

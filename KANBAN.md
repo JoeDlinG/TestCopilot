@@ -126,6 +126,25 @@
 
 ## ✅ 已完成 (Done) — 最近更新
 
+### v2.3.5 — MGW100 USB 真正连上：内核未绑定 cdc_acm 的根治（2026-11-05，分支 `feature/flow-enhancements`）
+
+- [x] **纠正上一版误判**：与以太网/IP 无关。USB 确实插着（`lsusb` 有 `0483:5740`），
+      但 `cdc_acm` 未绑定（`Driver=` 空、引用 0），内核**没生成任何 `/dev/ttyACM*`**；
+      插拔时刻 `find /dev` 只多出 `/dev/bus/usb/001/010`
+- [x] **新增 `transport=usb`**：pyusb 占用 CDC Data 接口 bulk 端点直接收发 `@11_...;` 帧，
+      不依赖内核 tty 驱动；`_write_frame`/`_read_frame`/`_flush_input`/`disconnect` 全扩展，
+      阻塞调用走 `run_blocking`
+- [x] **自动回退**：serial 端口不存在但 USB 设备在 → 自动切 USB，现有设备写死的
+      `/dev/ttyACM0` 无需改动；VID/PID 可配置且按十六进制解析
+- [x] **一次性 udev 配置**：`backend/install/99-mg100-usb.rules` + `install_usb_rules.sh`
+      （授权 `0664 plugdev uaccess` + 写 `cdc_acm/new_id` 触发重新 probe），已入 `aitestlab.spec` datas
+- [x] 权限不足时错误直接给出 `sudo bash backend/install/install_usb_rules.sh`
+- [x] 按反馈**移除以太网测试**：`test_mgw100_connect.py` 改为纯 USB 模拟端点
+- [x] 验证：19/19 + 全量 11/11 PASS；真机连接已识别 USB 并自动回退；
+      模拟端点 `@11_HELLO;` → `2,11,12`
+- [ ] 待使用者执行一次 `sudo bash backend/install/install_usb_rules.sh` 并重插 USB
+      （本环境 sudo 需密码 / polkit 无代理，无法代执行）
+
 ### v2.3.4 — MGW100 连接报错修复：#11 同类问题复发（2026-11-05，分支 `feature/flow-enhancements`）
 
 - [x] **根因**：MG100 schema 把 `/dev/ttyACM0` 当 `port.default` 持久化；而

@@ -77,6 +77,67 @@ React 在挂载前就抛异常 → 白屏。dev 模式（Vite 预打包，不跑
 
 ---
 
+---
+
+## 2026-11-05: MGW100 USB 真正连上 —— 内核未绑定 cdc_acm 的根治（v2.3.5）
+
+### 上一版为什么「依然失败」
+
+v2.3.4 只修了配置与报错，**没有让 USB 真正连通**。复核硬件后才看清：
+
+- `lsusb` 明确看到 `0483:5740 STMicroelectronics Virtual COM Port`（USB 确实插着）
+- 但 `lsusb -t` 里两个接口 `Driver=` **为空**，`cdc_acm` 模块加载了却引用数 0
+- 因此内核**没有生成任何 `/dev/ttyACM*` 节点**，`pyserial.list_ports.comports()` 返回空
+- `find /dev -newermt 插拔时刻` 证实那一刻只创建了 `/dev/bus/usb/001/010`，没有任何 tty
+- `/dev/bus/usb/001/010` 是 `0664 root:root`，普通用户不可写；
+  `sysfs` 的 `bind` / `new_id` / `drivers_probe` 全部 root-only
+
+所以「USB 插着却连不上」的根因是**内核 CDC-ACM 驱动未绑定**，与以太网、IP 可达性毫无关系。
+上一版把范围误判为网络/硬件，是错的。
+
+### 修复：不依赖内核 tty 驱动的 USB 原生传输
+
+`mini_gateway100_plugin.py` 新增第三种传输 `usb`：
+
+- 通过 `pyusb` 找到 `0483:5740`，占用 **CDC Data 接口**（class 0x0A）的
+  bulk IN/OUT 端点（0x81 / 0x01），直接收发 `@11_...;` 帧
+- `_write_frame` / `_read_frame` / `_flush_input` / `disconnect` / `get_status` 全部扩展支持；
+  阻塞式 libusb 调用统一走 `run_blocking`，不占事件循环
+- **自动回退**：`transport=serial` 时若串口节点不存在但 USB 设备在（POSIX），
+  自动切到 `usb` —— 现有两台设备里写死的 `/dev/ttyACM0` 无需改动就能用
+- `usb_vid` / `usb_pid` 可配置（按十六进制解析，`"0483"` → `0x0483`）
+- 权限不足时给出明确指引，指向随软件附带的安装脚本
+- `app/core/interfaces.py` 的 `usb` 接口映射改为 `transport=usb`，并清掉旧的串口/以太网残留键
+
+### 一次性系统配置（udev）
+
+新增 `backend/install/99-mg100-usb.rules` + `install_usb_rules.sh`：
+
+1. 给 `0483:5740` 设 `MODE=0664 GROUP=plugdev TAG+=uaccess`（解决 raw USB 权限）
+2. udev RUN 里 `modprobe cdc_acm` + 写 `cdc_acm/new_id`，
+   **触发 driver_attach 重新探测已插入设备**，从而生成 `/dev/ttyACM0`（恢复正常串口路径）
+
+脚本已加入 `aitestlab.spec` 的 `datas`，随安装版一起分发。
+
+> 本环境 `sudo` 需要密码、`pkexec` 无认证代理，所以这一步由使用者执行一次：
+> `sudo bash backend/install/install_usb_rules.sh`，然后重新插拔一次 USB。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_mgw100_connect.py` | **19/19 PASS**（用模拟 libusb 设备，不依赖 root/硬件；按反馈**移除以太网测试**） |
+| `bash Test/run_all.sh` | 11/11 PASS（实机 1 项无驱动时 SKIP） |
+| 真机 `POST /devices/connect` | 已识别到 `0483:5740` 并自动切到 USB，只因 udev 权限未装而报出安装指引 |
+| USB 帧往返（模拟端点） | `@11_HELLO;` → `2,11,12` |
+
+测试覆盖：静态扫描禁止硬编码 `/dev/` 默认值、串口缺失/空白可操作报错、
+Windows `COM3` 不被 POSIX 文件检查误判、USB 原生 connect + 收发、
+串口节点缺失自动回退、VID/PID 十六进制解析、权限不足指引、udev 规则内容、
+接口↔transport 双向映射。
+
+---
+
 ## 2026-11-05: MGW100 连接报错修复 —— #11 同类问题复发（v2.3.4）
 
 ### 现象

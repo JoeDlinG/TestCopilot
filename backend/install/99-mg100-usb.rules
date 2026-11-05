@@ -1,0 +1,20 @@
+# Mini Gateway 100 — STM32 Virtual COM Port (USB VID 0483 / PID 5740)
+#
+# On some hosts (notably NVIDIA Jetson / embedded kernels) the cdc_acm driver
+# is loaded but never bound to this device after a hot replug, so NO
+# /dev/ttyACM* node is created even though the USB cable is plugged in. These
+# rules fix both halves of the problem:
+#
+#   1. grant the desktop user write access to the raw USB node (needed by the
+#      plugin's `transport=usb` libusb fallback);
+#   2. nudge cdc_acm to bind, so the normal serial transport works again.
+#
+# Install: sudo bash backend/install/install_usb_rules.sh
+# (then unplug/replug the MG100, or replug is not needed if cdc_acm binds).
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+
+# Writing the VID/PID to new_id makes cdc_acm re-run driver_attach, which probes
+# devices that are already present (the usual "replugged but no tty" case).
+# udev RUN executes as root, so this is the one place the sysfs write is allowed.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5740", RUN+="/bin/sh -c '/sbin/modprobe cdc_acm 2>/dev/null || true; echo 0483 5740 > /sys/bus/usb/drivers/cdc_acm/new_id 2>/dev/null || true'"

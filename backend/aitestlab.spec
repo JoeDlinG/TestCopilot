@@ -50,6 +50,8 @@ datas = [
     (os.path.join(backend_dir, "static"), "static"),
     # Markdown manuals for the in-app 帮助 centre (served by /api/help).
     (os.path.join(os.path.dirname(backend_dir), "docs"), "docs"),
+    # udev rule + installer for MG100 USB access (shown in the connect error).
+    (os.path.join(backend_dir, "install"), "install"),
 ]
 
 a = Analysis(

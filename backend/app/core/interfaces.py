@@ -267,9 +267,13 @@ PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "drop": ("host", "tcp_port"),
         },
         "usb": {
-            "transport": "serial",
-            "from_column": {"port": "serial_port"},
-            "drop": ("host", "tcp_port"),
+            # Prefer the raw-USB bulk transport when the interface is USB: it
+            # works even when cdc_acm is not bound and no /dev/ttyACM* exists.
+            "transport": "usb",
+            "from_column": {},
+            # Drop the stale serial path too — otherwise a leftover
+            # /dev/ttyACM0 keeps being retried after switching to USB.
+            "drop": ("port", "baudrate", "host", "tcp_port"),
         },
         "ethernet": {
             "transport": "ethernet",

@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 from app.core.blocking import run_blocking
@@ -57,9 +58,16 @@ def _default_port() -> str:
 # The Mini Gateway 100 speaks the very same request/response protocol over its
 # USB-C CDC port and over its Ethernet port — only the transport differs, so a
 # single plugin covers both.
-TRANSPORTS = ("serial", "ethernet")
+TRANSPORTS = ("serial", "ethernet", "usb")
 DEFAULT_ETH_HOST = "192.168.0.120"
 DEFAULT_ETH_PORT = 6025
+
+# Mini Gateway 100 enumerates as an STM32 CDC-ACM virtual COM port. When the
+# host kernel does not bind cdc_acm there is no /dev/ttyACM* node at all, so the
+# serial transport cannot work even though the USB cable is plugged in. The
+# ``usb`` transport talks to the CDC Data bulk endpoints directly via libusb.
+DEFAULT_USB_VID = 0x0483
+DEFAULT_USB_PID = 0x5740
 
 # Standard protocols handled by the communication layer (not plugins).
 _STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
@@ -78,6 +86,11 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         self._serial = None          # pyserial.Serial instance (transport=serial)
         self._reader = None          # asyncio.StreamReader (transport=ethernet)
         self._writer = None          # asyncio.StreamWriter (transport=ethernet)
+        # transport=usb (libusb bulk endpoints, no kernel tty driver needed)
+        self._usb_dev = None
+        self._usb_interface = None
+        self._usb_ep_in = None
+        self._usb_ep_out = None
         self._board_id = 11
         self._config: Dict[str, Any] = {}
         # Serialises access to the single serial port so that background
@@ -99,6 +112,10 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         """Human readable endpoint description used in logs and errors."""
         if self._transport == "ethernet":
             return f"{self._config.get('host', DEFAULT_ETH_HOST)}:{self._config.get('tcp_port', DEFAULT_ETH_PORT)}"
+        if self._transport == "usb":
+            vid = self._config.get("usb_vid", DEFAULT_USB_VID)
+            pid = self._config.get("usb_pid", DEFAULT_USB_PID)
+            return f"usb:{vid:04x}:{pid:04x}"
         return str(self._config.get("port") or _default_port())
 
     def _require_connection(self) -> None:
@@ -107,6 +124,9 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         if self._transport == "ethernet":
             if self._writer is None or self._reader is None:
                 raise ConnectionError("Mini Gateway 100 Ethernet link is not open")
+        elif self._transport == "usb":
+            if self._usb_ep_in is None or self._usb_ep_out is None:
+                raise ConnectionError("Mini Gateway 100 USB link is not open")
         elif self._serial is None:
             raise ConnectionError("Mini Gateway 100 serial port is not open")
 
@@ -118,6 +138,8 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         if self._transport == "ethernet":
             self._writer.write(data)
             await self._writer.drain()
+        elif self._transport == "usb":
+            await run_blocking(self._usb_ep_out.write, data, 1000)
         else:
             # pyserial is synchronous — see app.core.blocking for why this must
             # never run on the event loop.
@@ -135,6 +157,8 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                     break
                 if not extra:
                     break
+        elif self._transport == "usb":
+            await run_blocking(self._usb_drain_sync)
         elif self._serial is not None:
             await run_blocking(self._serial.reset_input_buffer)
 
@@ -166,11 +190,47 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                     return bytes(buf[:end])
             return bytes(buf)
 
+        if self._transport == "usb":
+            return await run_blocking(self._usb_read_frame_sync, timeout)
+
         # Serial: pyserial has its own read timeout, but ``read()`` still blocks
         # the calling thread for up to that timeout. Running the whole frame
         # read in the thread pool keeps the event loop free — otherwise a single
         # unanswered command stalls every other request (see app.core.blocking).
         return await run_blocking(self._serial_read_frame_sync, timeout)
+
+    def _usb_read_frame_sync(self, timeout: float) -> bytes:
+        """Blocking bulk read until the ``;`` terminator (or timeout)."""
+        import usb.core
+
+        deadline = time.monotonic() + max(0.01, timeout)
+        buf = bytearray()
+        while time.monotonic() < deadline:
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+            try:
+                chunk = self._usb_ep_in.read(64, timeout=remaining_ms)
+            except usb.core.USBTimeoutError:
+                break
+            except usb.core.USBError as e:
+                raise ConnectionError(f"Mini Gateway 100 USB 读取失败：{e}") from e
+            if not chunk:
+                continue
+            buf += bytes(chunk)
+            if b";" in buf:
+                end = buf.index(b";") + 1
+                return bytes(buf[:end])
+        return bytes(buf)
+
+    def _usb_drain_sync(self) -> None:
+        """Drop stale inbound bulk packets before a new request."""
+        import usb.core
+
+        for _ in range(8):
+            try:
+                if not self._usb_ep_in.read(64, timeout=10):
+                    break
+            except (usb.core.USBTimeoutError, usb.core.USBError):
+                break
 
     def _serial_read_frame_sync(self, timeout: float) -> bytes:
         """Blocking counterpart of the serial branch of :meth:`_read_frame`.
@@ -216,8 +276,25 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         self._transport = transport
         self._board_id = int(config.get("board_id", 11))
 
+        # USB is plugged in but the host kernel never bound cdc_acm, so there is
+        # no /dev/ttyACM* node: fall back to the raw USB bulk endpoints instead
+        # of failing. This is the common case on embedded/Jetson hosts and after
+        # a hot replug where the driver did not re-probe.
+        if transport == "serial":
+            port = str(config.get("port") or "").strip()
+            if os.name != "nt" and (not port or not os.path.exists(port)):
+                if self._usb_device_present(config):
+                    logger.warning(
+                        "MG100 serial port %r missing but USB device is present; "
+                        "using the libusb bulk transport", port
+                    )
+                    transport = "usb"
+                    self._transport = transport
+
         if transport == "ethernet":
             await self._connect_ethernet(config)
+        elif transport == "usb":
+            await self._connect_usb(config)
         else:
             await self._connect_serial(config)
 
@@ -301,6 +378,127 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
         except serial.SerialException as e:
             raise self._serial_error(port, str(e)) from e
 
+    @staticmethod
+    def _usb_ids(config: Dict[str, Any]):
+        def parse(value: Any, fallback: int) -> int:
+            if value is None or value == "":
+                return fallback
+            if isinstance(value, int):
+                return value
+            text = str(value).strip()
+            # USB IDs are written in hex in the UI ("0483" / "0x0483").
+            if text.lower().startswith("0x"):
+                return int(text, 16)
+            if all(c in "0123456789abcdefABCDEF" for c in text):
+                return int(text, 16)
+            return int(text, 10)
+
+        return (
+            parse(config.get("usb_vid"), DEFAULT_USB_VID),
+            parse(config.get("usb_pid"), DEFAULT_USB_PID),
+        )
+
+    @classmethod
+    def _usb_device_present(cls, config: Dict[str, Any]) -> bool:
+        """Cheap detection — no claim, no permission needed on most hosts."""
+        try:
+            import usb.core
+
+            vid, pid = cls._usb_ids(config)
+            return usb.core.find(idVendor=vid, idProduct=pid) is not None
+        except Exception:
+            return False
+
+    async def _connect_usb(self, config: Dict[str, Any]) -> None:
+        """Claim the CDC Data interface and talk over its bulk endpoints.
+
+        Used when the kernel did not create a tty node for the STM32 VCP
+        (``cdc_acm`` unbound). Requires the user to have write access to the
+        USB device — see ``backend/install/99-mg100-usb.rules``.
+        """
+        try:
+            import usb.core
+            import usb.util
+        except ImportError as e:
+            raise RuntimeError(
+                "pyusb is not installed. Install with: pip install pyusb"
+            ) from e
+
+        vid, pid = self._usb_ids(config)
+        try:
+            dev = usb.core.find(idVendor=vid, idProduct=pid)
+        except usb.core.USBError as e:
+            raise ConnectionError(f"枚举 MG100 USB 设备失败：{e}") from e
+        if dev is None:
+            raise ConnectionError(
+                f"未找到 Mini Gateway 100 USB 设备（{vid:04x}:{pid:04x}）。"
+                "请确认 USB 线已插好；串口方式请填写正确的串口号。"
+            )
+
+        try:
+            cfg = dev.get_active_configuration()
+        except usb.core.USBError as e:
+            if "Access denied" in str(e) or getattr(e, "errno", None) == 13:
+                raise ConnectionError(self._usb_permission_hint(vid, pid)) from e
+            raise ConnectionError(f"无法读取 MG100 USB 配置：{e}") from e
+
+        data_iface = None
+        for intf in cfg:
+            if intf.bInterfaceClass == 0x0A:  # CDC Data
+                data_iface = intf
+                break
+        if data_iface is None:
+            for intf in cfg:
+                eps = list(intf.endpoints())
+                if any(usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK
+                       for e in eps):
+                    data_iface = intf
+                    break
+        if data_iface is None:
+            raise ConnectionError("MG100 USB 设备上没有找到 CDC Data 批量端点")
+
+        try:
+            if dev.is_kernel_driver_active(data_iface.bInterfaceNumber):
+                dev.detach_kernel_driver(data_iface.bInterfaceNumber)
+            usb.util.claim_interface(dev, data_iface.bInterfaceNumber)
+        except usb.core.USBError as e:
+            if "Access denied" in str(e) or getattr(e, "errno", None) == 13:
+                raise ConnectionError(self._usb_permission_hint(vid, pid)) from e
+            raise ConnectionError(f"无法占用 MG100 USB 接口：{e}") from e
+
+        ep_out = usb.util.find_descriptor(
+            data_iface,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
+                and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK
+            ),
+        )
+        ep_in = usb.util.find_descriptor(
+            data_iface,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
+                and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK
+            ),
+        )
+        if ep_in is None or ep_out is None:
+            usb.util.release_interface(dev, data_iface.bInterfaceNumber)
+            raise ConnectionError("MG100 USB 批量端点不完整")
+
+        self._usb_dev = dev
+        self._usb_interface = data_iface.bInterfaceNumber
+        self._usb_ep_in = ep_in
+        self._usb_ep_out = ep_out
+        self._config["usb_vid"] = vid
+        self._config["usb_pid"] = pid
+
+    @staticmethod
+    def _usb_permission_hint(vid: int, pid: int) -> str:
+        return (
+            f"没有权限访问 MG100 USB 设备（{vid:04x}:{pid:04x}）。"
+            "请安装随软件附带的 udev 规则后重新插拔 USB："
+            "sudo bash backend/install/install_usb_rules.sh"
+        )
+
     async def _connect_ethernet(self, config: Dict[str, Any]) -> None:
         host = str(config.get("host") or DEFAULT_ETH_HOST).strip()
         try:
@@ -346,6 +544,19 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                 logger.warning(f"Error closing Mini Gateway 100 Ethernet link: {e}")
         self._writer = None
         self._reader = None
+
+        if self._usb_dev is not None:
+            try:
+                import usb.util
+
+                usb.util.release_interface(self._usb_dev, self._usb_interface)
+                usb.util.dispose_resources(self._usb_dev)
+            except Exception as e:
+                logger.warning(f"Error releasing Mini Gateway 100 USB interface: {e}")
+        self._usb_dev = None
+        self._usb_interface = None
+        self._usb_ep_in = None
+        self._usb_ep_out = None
 
         self._connected = False
         return True
@@ -460,7 +671,7 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                     "title": "连接方式",
                     "default": "serial",
                     "enum": list(TRANSPORTS),
-                    "description": "serial=USB-C CDC 串口；ethernet=以太网 TCP",
+                    "description": "serial=USB-C CDC 串口；usb=USB 原生批量端点（内核未生成串口节点时自动启用）；ethernet=以太网 TCP",
                 },
                 "port": {
                     "type": "string",
@@ -491,6 +702,18 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
                     "title": "IP 地址",
                     "default": DEFAULT_ETH_HOST,
                     "description": f"transport=ethernet 时使用。出厂默认 {DEFAULT_ETH_HOST}",
+                },
+                "usb_vid": {
+                    "type": "string",
+                    "title": "USB VID",
+                    "default": "0483",
+                    "description": "transport=usb 时使用，十六进制厂商 ID",
+                },
+                "usb_pid": {
+                    "type": "string",
+                    "title": "USB PID",
+                    "default": "5740",
+                    "description": "transport=usb 时使用，十六进制产品 ID",
                 },
                 "tcp_port": {
                     "type": "integer",
