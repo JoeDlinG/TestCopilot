@@ -38,12 +38,64 @@ const HIDDEN_KEYS = new Set([
   'api_key_encrypted', 'api_key', 'password', 'secret', 'token',
 ])
 
+/**
+ * Field names come straight out of the JSON bundle, so the preview table used
+ * to show a wall of English column headings (`id`, `device_key`,
+ * `connection_type`, …) in the Chinese UI. Map the well-known ones; anything
+ * genuinely custom keeps its raw name.
+ */
+const FIELD_LABEL_KEY: Record<string, string> = {
+  id: 'field.id',
+  name: 'field.name',
+  title: 'field.name',
+  device_key: 'field.deviceKey',
+  type: 'field.type',
+  protocol: 'field.protocol',
+  protocol_name: 'field.protocol',
+  connection_type: 'field.connectionType',
+  status: 'field.status',
+  config: 'field.config',
+  created_at: 'field.createdAt',
+  updated_at: 'field.updatedAt',
+  connected_at: 'field.createdAt',
+  exported_at: 'field.createdAt',
+  description: 'field.description',
+  version: 'field.version',
+  app_version: 'field.version',
+  provider: 'field.provider',
+  model_name: 'field.modelName',
+  is_default: 'field.isDefault',
+  enabled: 'field.enabled',
+  file_name: 'field.name',
+  key: 'field.key',
+  value: 'field.value',
+  base_url: 'label.baseUrl',
+  author: 'field.provider',
+  module_name: 'field.name',
+  channel: 'field.type',
+  interface: 'field.type',
+}
+
+/** Stored enum values shown as-is used to read as English in the Chinese UI. */
+const VALUE_LABEL_KEY: Record<string, string> = {
+  active: 'status.active',
+  inactive: 'status.inactive',
+  error: 'status.error',
+  connected: 'status.connected',
+  disconnected: 'status.disconnected',
+  enabled: 'status.enabled',
+  disabled: 'status.disabled',
+}
+
 function Cell({ value }: { value: any }) {
   const { t } = useI18n()
   if (value === null || value === undefined || value === '') {
     return <Text type="secondary">-</Text>
   }
   if (typeof value === 'boolean') return <span>{value ? t('common.yes') : t('common.no')}</span>
+  if (typeof value === 'string' && VALUE_LABEL_KEY[value]) {
+    return <span style={{ fontSize: 12 }}>{t(VALUE_LABEL_KEY[value])}</span>
+  }
   const raw = typeof value === 'object' ? JSON.stringify(value) : String(value)
   const shown = raw.length > 60 ? `${raw.slice(0, 60)}…` : raw
   return <span title={raw} style={{ fontSize: 12 }}>{shown}</span>
@@ -78,10 +130,10 @@ function SectionTable({ rows }: { rows: any[] }) {
   }
 
   const columns = keys.map((k, i) => ({
-    title: k,
+    title: FIELD_LABEL_KEY[k] ? t(FIELD_LABEL_KEY[k]) : k,
     dataIndex: k,
     key: k,
-    width: i === 0 ? 200 : 170,
+    width: i === 0 ? 170 : 150,
     ellipsis: true,
     render: (v: any) => <Cell value={v} />,
   }))
@@ -92,7 +144,7 @@ function SectionTable({ rows }: { rows: any[] }) {
       size="small"
       dataSource={list.slice(0, 200).map((r, i) => ({ ...r, _idx: i }))}
       columns={columns}
-      scroll={{ x: keys.length * 180, y: 340 }}
+      scroll={{ x: keys.length * 160, y: 340 }}
       pagination={list.length > 20 ? { pageSize: 20, simple: true } : false}
     />
   )
@@ -502,7 +554,7 @@ export default function ProjectManager() {
     setBusy('wizard')
     try {
       await projectAPI.save(name, wizardSections)
-      message.success(`${t('label.projectPrefix')}${name}」${t('msg.createdParen')}}${wizardSections.length} ${t('unit.sectionsParen')}`)
+      message.success(`${t('label.projectPrefix')}${name}」${t('msg.createdParen')}${wizardSections.length} ${t('unit.sectionsParen')}`)
       setWizardOpen(false)
       load()
     } catch (err) {
@@ -885,7 +937,7 @@ export default function ProjectManager() {
                       title={`${t(s.labelKey)} ${t('punct.countParen', { n: rows.length })}`}
                       style={{ marginBottom: 12 }}
                     >
-          {/* Dashboards are unreadable as raw parameters — draw the layout instead */}
+                      {/* Dashboards are unreadable as raw parameters — draw the layout instead */}
                       {s.key === 'dashboards' ? (
                         <Space direction="vertical" size={16} style={{ width: '100%' }}>
                           {rows.map((d: any) => (
@@ -1014,7 +1066,7 @@ export default function ProjectManager() {
 
         {wizardStep === 1 && (
           <div>
-            <Text type="secondary">{t('ph.nameProject')}_&lt;{t('col.name')}&gt;.json){t('punct.colon')}</Text>
+            <Text type="secondary">{t('ph.nameProject')}_&lt;{t('col.name')}&gt;.json）{t('punct.colon')}</Text>
             <Input
               style={{ marginTop: 10 }}
               value={wizardName}

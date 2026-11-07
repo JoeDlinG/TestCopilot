@@ -3,13 +3,14 @@
 Uses the communication layer abstraction for SCPI/CAN/Serial/Ethernet.
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.models.models import Device, CommunicationLog, DeviceStatus, LogDirection, LogStatus
 from app.schemas.schemas import DeviceCreate, DeviceUpdate
@@ -250,14 +251,47 @@ class DeviceService:
         return device
 
     async def delete_device(self, db: AsyncSession, device_id: str) -> bool:
+        """Delete a device and everything that could keep it alive.
+
+        Two things used to make the UI look as if a device "cannot be deleted":
+
+        * ``disconnect_device()`` awaits a plugin's ``disconnect`` with no
+          timeout. A stuck USB/CAN transport therefore hung the DELETE request
+          forever when the row was still marked ``connected``.
+        * ``communication_logs.device_id`` is a NO ACTION foreign key, and
+          ``Device.logs`` is an ORM cascade. An async session cannot lazy-load
+          that collection, and with foreign key enforcement on, leftover rows
+          turn the delete into an IntegrityError.
+
+        Tear down the transport under a timeout, remove dependent rows first
+        and finish with a bulk delete so no lazy relationship is touched.
+        """
         device = await self.get_device(db, device_id)
         if not device:
             return False
-        if device.status == DeviceStatus.CONNECTED.value:
-            await self.disconnect_device(db, device_id)
-        await db.delete(device)
+
+        # The persisted status and the in-memory connection can disagree after
+        # a restart, so clean up unconditionally instead of trusting `status`.
+        interface = _active_connections.pop(device_id, None)
+        if interface is not None:
+            try:
+                await asyncio.wait_for(interface.disconnect(), timeout=3.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out disconnecting %s before delete", device_id)
+            except Exception as e:
+                logger.warning("Error disconnecting %s before delete: %s", device_id, e)
+        _command_in_flight.pop(device_id, None)
+        try:
+            stop_device_monitor(device_id)
+        except Exception as e:
+            logger.warning("Error stopping monitor for %s: %s", device_id, e)
+
+        await db.execute(
+            delete(CommunicationLog).where(CommunicationLog.device_id == device_id)
+        )
+        result = await db.execute(delete(Device).where(Device.id == device_id))
         await db.commit()
-        return True
+        return bool(result.rowcount)
 
     async def connect_device(
         self, db: AsyncSession, device_id: str, config: Optional[Dict[str, Any]] = None

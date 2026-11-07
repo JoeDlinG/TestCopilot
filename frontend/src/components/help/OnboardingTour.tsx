@@ -102,6 +102,11 @@ export default function OnboardingTour({ open, onClose }: Props) {
       onClose={onClose}
       steps={steps}
       zIndex={1300}
+      // The spotlight mask dims the whole workspace and swallows every click
+      // until all eight steps are finished — users read that as a broken UI
+      // ("cannot delete / cannot connect"). The card still guides first-run
+      // users, but must never block real work behind it.
+      mask={false}
       indicatorsRender={(current, total) => (
         <span style={{ fontSize: 12, opacity: 0.65 }}>
           {t('tour.progress', { n: (current ?? 0) + 1, total })}

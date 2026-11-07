@@ -148,7 +148,7 @@ export default function ModelConfig() {
     }
   }
 
-    const handleTest = async (id: string) => {
+  const handleTest = async (id: string) => {
     setTestingId(id)
     try {
       const res = await aiAPI.testModel(id)
@@ -225,7 +225,7 @@ export default function ModelConfig() {
       key: 'model_name',
     },
     {
-      title: 'Base URL',
+      title: t('label.baseUrl'),
       dataIndex: 'base_url',
       key: 'base_url',
       ellipsis: true,
@@ -236,7 +236,9 @@ export default function ModelConfig() {
       dataIndex: 'status',
       key: 'status',
       render: (s: string) => (
-        <Tag color={s === 'active' ? 'green' : s === 'error' ? 'red' : 'default'}>{s}</Tag>
+        <Tag color={s === 'active' ? 'green' : s === 'error' ? 'red' : 'default'}>
+          {s === 'active' ? t('status.active') : s === 'error' ? t('status.error') : t('status.inactive')}
+        </Tag>
       ),
     },
     {
@@ -338,12 +340,12 @@ export default function ModelConfig() {
           </Form.Item>
           <Form.Item
             name="api_key"
-            label="API Key"
+            label={t('label.apiKey')}
             extra={editing ? t('model.keyHint') : t('model.storageNote')}
           >
             <Input.Password placeholder="sk-..." />
           </Form.Item>
-          <Form.Item name="base_url" label="Base URL" extra={t('model.baseUrlFull')}>
+          <Form.Item name="base_url" label={t('label.baseUrl')} extra={t('model.baseUrlFull')}>
             <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
           <Form.Item name="is_default" label={t('btn.setDefaultModel')} valuePropName="checked">
@@ -360,14 +362,14 @@ export default function ModelConfig() {
         open={chatVisible}
         onClose={() => setChatVisible(false)}
         width={520}
+        styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%', padding: 16 } }}
       >
         <div
           style={{
             flex: 1,
+            minHeight: 0,
             overflow: 'auto',
             padding: '8px 4px',
-            minHeight: 320,
-            maxHeight: 'calc(100vh - 180px)',
           }}
         >
           {chatMessages.length === 0 ? (

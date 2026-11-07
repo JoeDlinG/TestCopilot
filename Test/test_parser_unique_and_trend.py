@@ -64,7 +64,11 @@ def main():
         print("  [SKIP] mini_gateway100 无法连接（需要硬件），跳过本测试")
         return 0
 
-    flow = get_flow()
+    flow_resp = requests.get(f"{BASE}/testcases/{TC}/flow", timeout=20).json()
+    if not flow_resp.get("data"):
+        print(f"  [SKIP] 用例 {TC} 不存在或没有流程（工作区用例已变更），跳过本测试")
+        return 0
+    flow = flow_resp["data"]
     nodes, edges = flow["nodes"], flow["edges"]
     actions = [n for n in nodes if n.get("type") not in ("start", "end")]
     check(len(actions) >= 2, f"用例有 {len(actions)} 个可执行步骤")

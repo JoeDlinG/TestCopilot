@@ -39,6 +39,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -81,6 +82,7 @@ class PeakCANPlugin(BaseProtocolPlugin):
         self._is_fd: bool = False
         self._last_error: str = ""       # last connection failure (for the UI)
         self._attempts: List[str] = []   # per-candidate failure report
+        self._prepare_notes: List[str] = []  # automatic SocketCAN setup report
         # Periodic (cyclic) transmissions: key -> python-can CyclicSendTask.
         self._periodic: Dict[str, Any] = {}
         self._periodic_auto_stop: Dict[str, "asyncio.Task"] = {}
@@ -113,6 +115,11 @@ class PeakCANPlugin(BaseProtocolPlugin):
         fd_enabled = bool(config.get("fd", False))
         data_bitrate = int(config.get("data_bitrate", bitrate))
         f_clock = config.get("f_clock_mhz", None)
+
+        # A PEAK adapter can be plugged in with ``peak_usb`` unloaded and no
+        # ``can0`` at all; re-plugging does not fix that. Prepare the kernel
+        # interface first so the candidate list below sees a usable link.
+        self._prepare_notes = self._ensure_socketcan_ready(bitrate)
 
         # Ordered (interface, channel) candidates — best guess first, so a
         # connectable combination is found instead of blindly trying one.
@@ -219,6 +226,63 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 + cls._platform_hint()
             )
         return candidates[0]
+
+    @classmethod
+    def _ensure_socketcan_ready(cls, bitrate: int) -> List[str]:
+        """Best-effort, privilege-safe preparation of SocketCAN interfaces.
+
+        Loading ``peak_usb`` and bringing a CAN link UP both require root.
+        Re-plugging the adapter never does either, which is why an otherwise
+        healthy PCAN-USB stayed unconnectable. The udev rule shipped in
+        ``backend/install/99-peakcan-socketcan.rules`` performs this as root at
+        plug-in time; this helper is the second line of defence for installs
+        that run the app with privileges, and a harmless no-op otherwise.
+        """
+        notes: List[str] = []
+        if cls._is_windows():
+            return notes
+
+        ip_bin = shutil.which("ip") or "/sbin/ip"
+        modprobe_bin = shutil.which("modprobe") or "/sbin/modprobe"
+
+        channels = cls._socketcan_channels()
+        if not channels:
+            try:
+                proc = subprocess.run(
+                    [modprobe_bin, "peak_usb"], capture_output=True,
+                    text=True, timeout=5,
+                )
+                notes.append(
+                    "peak_usb loaded" if proc.returncode == 0 else
+                    f"peak_usb not loaded: {(proc.stderr or '').strip() or 'insufficient privileges'}"
+                )
+            except Exception as e:
+                notes.append(f"peak_usb unavailable: {e}")
+            # The module creates can* asynchronously; give udev a short window.
+            for _ in range(10):
+                channels = cls._socketcan_channels()
+                if channels:
+                    break
+                time.sleep(0.2)
+            if not channels:
+                notes.append("no SocketCAN interface appeared after modprobe")
+
+        for ch in channels:
+            if cls._operstate(ch) == "up":
+                continue
+            try:
+                proc = subprocess.run(
+                    [ip_bin, "link", "set", ch, "up", "type", "can",
+                     "bitrate", str(int(bitrate))],
+                    capture_output=True, text=True, timeout=5,
+                )
+                notes.append(
+                    f"{ch} up @ {bitrate}" if proc.returncode == 0 else
+                    f"{ch} not brought up: {(proc.stderr or '').strip() or 'insufficient privileges'}"
+                )
+            except Exception as e:
+                notes.append(f"{ch} setup failed: {e}")
+        return notes
 
     @classmethod
     def _candidate_list(
@@ -531,6 +595,8 @@ class PeakCANPlugin(BaseProtocolPlugin):
             "Linux 提示：SocketCAN 需要一个处于 UP 状态的内核 CAN 接口 —— "
             "`sudo modprobe peak_usb && sudo ip link set can0 up type can bitrate 500000` 即可启用；"
             "或安装 PEAK PCAN-Basic（chardev）后使用 interface='pcan'。"
+            "一次性修复（之后重新插拔即可自动识别）："
+            "`sudo bash backend/install/install_peakcan_rules.sh`。"
             "可用 {\"action\": \"diagnose\"} 查看检测结果。"
         )
         detail = cls._usb_hint()
@@ -951,6 +1017,7 @@ class PeakCANPlugin(BaseProtocolPlugin):
             "platform": sys.platform,
             "is_windows": self._is_windows(),
             "last_error": self._last_error or None,
+            "preparation": list(self._prepare_notes),
         }
 
         # Append available channels from both interfaces
@@ -994,6 +1061,8 @@ class PeakCANPlugin(BaseProtocolPlugin):
             info["candidate_order"] = []
             info["candidate_error"] = str(e)
         info["last_attempts"] = list(self._attempts)
+        info["preparation"] = list(self._prepare_notes)
+        info["install_script"] = "backend/install/install_peakcan_rules.sh"
         info["hint"] = self._platform_hint()
         return info
 

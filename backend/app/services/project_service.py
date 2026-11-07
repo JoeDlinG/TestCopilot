@@ -41,6 +41,7 @@ from app.models.models import (
     CommunicationLog,
     Dashboard,
     Device,
+    DeviceStatus,
     ExecutionPlan,
     ExecutionPlanItem,
     Plugin,
@@ -372,13 +373,25 @@ async def _import_devices(db: AsyncSession, rows: List[Dict[str, Any]]) -> Dict[
             continue
         obj = by_id.get(row.get("id")) or by_name.get(row.get("name"))
         if obj is None:
-            obj = Device(**_build_kwargs(Device, row, ("config", "metadata")))
+            kwargs = _build_kwargs(Device, row, ("config", "metadata"))
+            # A bundle records the *runtime* state at export time. Importing it
+            # on another machine used to resurrect devices marked "connected"
+            # with no live transport behind them (DEV-004). Such a ghost device
+            # cannot be deleted reliably and never connects — connection state
+            # is never project data.
+            for transient in ("status", "connected_at", "disconnected_at", "last_seen"):
+                kwargs.pop(transient, None)
+            obj = Device(**kwargs)
+            obj.status = DeviceStatus.DISCONNECTED.value
             db.add(obj)
             stats["created"] += 1
         else:
             # Keep the live connection state — importing a file must not claim
             # a device is connected when it is not.
-            _apply_row(obj, row, ("config", "metadata"), skip=("id", "status", "last_seen"))
+            _apply_row(
+                obj, row, ("config", "metadata"),
+                skip=("id", "status", "last_seen", "connected_at", "disconnected_at"),
+            )
             obj.updated_at = utc_now()
             stats["updated"] += 1
     return stats

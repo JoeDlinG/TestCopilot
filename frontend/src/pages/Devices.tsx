@@ -99,6 +99,9 @@ export default function Devices() {
   const handleDelete = async (id: string) => {
     try {
       await deviceAPI.delete(id)
+      // Remove the row immediately: a slow list refresh used to leave the
+      // device on screen, which read as "the delete did not work".
+      setDevices(prev => prev.filter(d => d.id !== id))
       message.success(t('msg.deviceDeleted'))
       loadDevices()
     } catch (err) {

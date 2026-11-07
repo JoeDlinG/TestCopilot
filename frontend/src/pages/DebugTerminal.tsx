@@ -122,7 +122,7 @@ function createWebSocket(deviceId: string, t: (k: string) => string): WebSocket 
             id: nextMsgId(),
             timestamp: ts,
             type: 'error',
-            content: `Error: ${msg.error}`,
+            content: `${t('term.errorColon')}${msg.error}`,
           })
           break
         case 'device_data':
@@ -580,7 +580,7 @@ export default function DebugTerminal() {
   }
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: 'calc(100vh - 64px)', minWidth: 860, overflow: 'hidden' }}>
       {/* Left sidebar - Device list */}
       <div style={{
         width: 250,
@@ -651,7 +651,7 @@ export default function DebugTerminal() {
                   </div>
                   <div style={{ marginTop: 4 }}>
                     <Text type="secondary" style={{ fontSize: 11 }}>
-                      {(device as any).protocol?.toUpperCase() || 'UNKNOWN'}
+                      {t('field.protocol')}{t('punct.colon')}{(device as any).protocol || t('label.unknown')}
                       {' · '}
                       {(device as any).serial_port || (device as any).visa_address || 'USB'}
                     </Text>

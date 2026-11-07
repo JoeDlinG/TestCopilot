@@ -1,0 +1,16 @@
+# TestCopilot — PEAK-System PCAN-USB / PCAN-USB FD (SocketCAN)
+#
+# Root cause of "DEV-002 cannot connect, even after unplug/replug": the adapter
+# is enumerated on USB (0c72:0012) but the in-kernel `peak_usb` module is not
+# loaded, so no can* interface exists. Even when one exists it is DOWN with no
+# bitrate configured and python-can cannot open it. Replugging alone changes
+# neither — both operations require root and must be done by the system.
+#
+# Install once with: sudo bash backend/install/install_peakcan_rules.sh
+# The default bitrate matches the PeakCAN plugin device template (500 kbit/s).
+
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0c72", RUN+="/sbin/modprobe peak_usb"
+
+# peak_usb creates can0/can1/... (ARPHRD_CAN). Configure and bring it UP so a
+# normal user can open the bus through python-can right after plugging in.
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="can*", RUN+="/bin/sh -c '/sbin/ip link set %k up type can bitrate 500000'"

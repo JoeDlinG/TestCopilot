@@ -311,6 +311,35 @@ async def validate_plan(
     devices = devices_result.scalars().all()
     devices_by_id: Dict[str, Any] = {d.id: d for d in devices}
 
+    # ---- E0: every plan item must still point at an existing test case ----
+    # ``execution_plan_items.testcase_id`` has NO foreign key, so deleting a
+    # case — or importing a project without its ``test_cases`` section — leaves
+    # dangling items behind. The runner used to accept such a plan, log
+    # "test case ... missing" on the first item and abort the whole batch; the
+    # UI only showed a bare "运行失败". Detect it here so /validate and /run
+    # explain the problem and offer the available cases as replacements.
+    cases_result = await db.execute(select(TestCase))
+    all_cases = cases_result.scalars().all()
+    known_case_ids = {tc.id for tc in all_cases}
+    replacement_suggestions = [
+        {"id": tc.id, "name": tc.name} for tc in all_cases[:20]
+    ]
+    for item in items:
+        case_id = str(_item_value(item, "testcase_id", ""))
+        if not case_id or case_id in known_case_ids:
+            continue
+        errors.append(Issue(
+            code="TESTCASE_NOT_FOUND",
+            level="error",
+            message=(
+                f"测试用例 {case_id} 不存在（可能已被删除，或工程文件未包含用例），"
+                "请在计划中重新选择用例"
+            ),
+            item_ids=[str(_item_value(item, "id", "") or case_id)],
+            group_no=int(_item_value(item, "group_no", 0) or 0),
+            suggestions=replacement_suggestions,
+        ))
+
     max_parallel = int(plan.get("max_parallel") or 4)
     plan_loop = int(plan.get("plan_loop_count") or 1)
 

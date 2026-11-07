@@ -21,6 +21,10 @@ SUITE=(
   test_update_service
   test_feedback
   test_mgw100_connect
+  test_device_delete
+  test_peakcan_prepare
+  test_i18n_zh_pages
+  test_plan_case_validation
 )
 
 # Hardware-only suites are skipped (not failed) when no MG100 is attached —
@@ -44,10 +48,19 @@ else
 fi
 
 failed=0
+skipped=0
 for t in "${SUITE[@]}" "${HARDWARE[@]}"; do
   printf '  %-36s ' "$t"
   if timeout 400 python3 "Test/$t.py" >/tmp/aitestlab_test_$t.log 2>&1 && ! grep -q '^FAILED' /tmp/aitestlab_test_$t.log; then
-    echo PASS
+    # Some suites need a specific test case / flow that lives in the workspace.
+    # A "new project" replaces those cases; that is missing fixture data, not a
+    # product regression, so report it honestly instead of a fake PASS.
+    if grep -q '\[SKIP\]' /tmp/aitestlab_test_$t.log; then
+      echo "SKIP (workspace fixture data missing)"
+      skipped=$((skipped + 1))
+    else
+      echo PASS
+    fi
   else
     echo FAIL
     echo "      see /tmp/aitestlab_test_$t.log"
@@ -60,4 +73,4 @@ if [ "$failed" -gt 0 ]; then
   echo "$failed suite(s) FAILED"
   exit 1
 fi
-echo "All $((${#SUITE[@]} + ${#HARDWARE[@]})) suites passed (${#HARDWARE[@]} hardware)."
+echo "All $((${#SUITE[@]} + ${#HARDWARE[@]} - skipped)) suites passed ($skipped data-skipped, ${#HARDWARE[@]} hardware)."

@@ -318,8 +318,11 @@ export default function ExecutionPlanner() {
   }
 
   // ---- persistence -----------------------------------------------------
-  const save = async () => {
-    if (!items.length) { message.warning(t('msg.planEmpty')); return }
+  const save = async (quiet = false): Promise<boolean> => {
+    if (!items.length) {
+      if (!quiet) message.warning(t('msg.planEmpty'))
+      return false
+    }
     setLoading(true)
     try {
       const payload = {
@@ -344,10 +347,12 @@ export default function ExecutionPlanner() {
       const data = extractData(res)
       setPlanId(data.id)
       setItems(data.items.map((it: any) => ({ ...it })))
-      message.success(t('msg.planSaved'))
+      if (!quiet) message.success(t('msg.planSaved'))
       loadBase()
+      return true
     } catch (e: any) {
-      message.error(e?.response?.data?.detail?.message || t('msg.saveFailed'))
+      if (!quiet) message.error(e?.response?.data?.detail?.message || t('msg.saveFailed'))
+      return false
     } finally {
       setLoading(false)
     }
@@ -365,6 +370,10 @@ export default function ExecutionPlanner() {
 
   const startRun = async () => {
     if (!planId) { message.warning(t('msg.savePlanFirst')); return }
+    // /run reads the persisted plan from the DB, not the editor state. Flush
+    // in-place fixes (e.g. a replacement case) before launching the batch,
+    // otherwise a fixed plan would still run with the old dangling ids.
+    if (!(await save(true))) { message.error(t('msg.saveFailed')); return }
     try {
       const res = await planAPI.run(planId)
       const data = extractData(res)
@@ -384,6 +393,11 @@ export default function ExecutionPlanner() {
               {errs.map((x: any, i: number) => (
                 <div key={i} style={{ marginTop: 6 }}>· {x.message}</div>
               ))}
+              {errs.some((x: any) => x.code === 'TESTCASE_NOT_FOUND') && (
+                <div style={{ marginTop: 10 }}>
+                  <Text type="secondary">{t('plan.pickCase')}</Text>
+                </div>
+              )}
             </div>
           ),
         })
@@ -430,8 +444,31 @@ export default function ExecutionPlanner() {
       ),
     },
     {
-      title: t('col.case'), width: 220, ellipsis: true,
-      render: (_: any, r: PlanItem) => r.testcase_name || r.testcase_id,
+      title: t('col.case'), width: 240,
+      render: (_: any, r: PlanItem) => {
+        const known = cases.find((c: any) => c.id === r.testcase_id)
+        if (known) return r.testcase_name || known.name || r.testcase_id
+        // Deleting a case (or importing a project without its cases) leaves
+        // the item pointing at a dead id. Instead of a bare id that can never
+        // run, offer the live cases right here so the plan is fixable in place.
+        return (
+          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+            <Tag color="red">{t('plan.caseMissing')}</Tag>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              placeholder={t('plan.pickCase')}
+              value={undefined}
+              onChange={(v: string) => {
+                const picked = cases.find((c: any) => c.id === v)
+                update(r.id, { testcase_id: v, testcase_name: picked?.name })
+              }}
+              options={cases.map((c: any) => ({ value: c.id, label: c.name || c.id }))}
+            />
+            <Text type="secondary" style={{ fontSize: 11 }} ellipsis>{r.testcase_id}</Text>
+          </Space>
+        )
+      },
     },
     {
       title: t('col.device'), width: 190,
@@ -597,7 +634,7 @@ export default function ExecutionPlanner() {
                   openPlan(d.id); loadBase()
                 }}>{t('common.copy')}</Button>
               <Button size="small" icon={<SaveOutlined />} loading={loading}
-                onClick={save}>{t('common.save')}</Button>
+                onClick={() => save()}>{t('common.save')}</Button>
             </Space>}>
             <Space size={12} style={{ marginBottom: 10 }} wrap>
               <Space size={4}>
