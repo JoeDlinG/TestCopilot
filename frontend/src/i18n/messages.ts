@@ -250,6 +250,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'field.value': '值',
     'plan.caseMissing': '用例已失效',
     'plan.pickCase': '重新选择用例',
+    'error.renderTitle': '界面渲染异常',
+    'error.reload': '重新加载',
   },
 
   'en-US': {
@@ -478,6 +480,8 @@ export const messages: Record<Locale, Record<string, string>> = {
     'field.value': 'Value',
     'plan.caseMissing': 'Case no longer exists',
     'plan.pickCase': 'Pick a replacement case',
+    'error.renderTitle': 'Rendering error',
+    'error.reload': 'Reload',
   },
 }
 

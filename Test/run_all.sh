@@ -25,6 +25,9 @@ SUITE=(
   test_peakcan_prepare
   test_i18n_zh_pages
   test_plan_case_validation
+  test_version_consistency
+  test_boot_guards
+  test_regression_guards
 )
 
 # Hardware-only suites are skipped (not failed) when no MG100 is attached —

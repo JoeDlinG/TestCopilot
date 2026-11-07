@@ -226,6 +226,19 @@ async def _api_trailing_slash(request, call_next):
     ):
         request.scope["path"] = f"{path}/"
         request.scope["raw_path"] = f"{path}/".encode()
+    elif (
+        path.startswith("/api/")
+        and path.endswith("/")
+        and path not in _API_ROUTE_PATHS
+        and path.rstrip("/") in _API_ROUTE_PATHS
+    ):
+        # The opposite direction matters in packaged mode: with the SPA
+        # catch-all registered, "/api/projects/" would otherwise fall through
+        # to index.html and be returned as HTML with status 200 (issue #8's
+        # failure mode resurfacing once static/ exists).
+        bare = path.rstrip("/")
+        request.scope["path"] = bare
+        request.scope["raw_path"] = bare.encode()
     return await call_next(request)
 
 
@@ -239,6 +252,71 @@ async def _api_trailing_slash(request, call_next):
 # ---------------------------------------------------------------------------
 _STATIC_INDEX = os.path.join(settings.STATIC_DIR, "index.html")
 _HAS_STATIC = os.path.isfile(_STATIC_INDEX)
+_ASSETS_DIR = os.path.join(settings.STATIC_DIR, "assets")
+
+# Windows registries sometimes associate .js with text/plain. Browsers apply a
+# strict MIME check to ES modules, so a wrong guess yields a completely blank
+# page with NO 404 and NO API calls (the classic "server logs are clean"
+# white screen). Never delegate this decision to `mimetypes`.
+_MEDIA_TYPES = {
+    # Do NOT embed "charset=" here: Starlette appends it for text/* types and
+    # a double "; charset=utf-8; charset=utf-8" was observed on /.
+    ".html": "text/html",
+    ".js": "application/javascript",
+    ".mjs": "application/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".map": "application/json; charset=utf-8",
+    ".wasm": "application/wasm",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+}
+
+
+def _media_type(path: str) -> str:
+    """Deterministic MIME for anything we serve, independent of the OS."""
+    return _MEDIA_TYPES.get(os.path.splitext(path)[1].lower(),
+                            "application/octet-stream")
+
+
+def _register_media_types() -> None:
+    """Also fix StaticFiles' guesses (it consults the mimetypes database)."""
+    import mimetypes
+
+    for ext, mime in _MEDIA_TYPES.items():
+        mimetypes.add_type(mime.split(";")[0], ext)
+    # Force the two extensions that cause the white screen on Windows.
+    mimetypes.add_type("application/javascript", ".js")
+    mimetypes.add_type("application/javascript", ".mjs")
+
+
+_register_media_types()
+
+if _HAS_STATIC:
+    try:
+        _asset_count = len(os.listdir(_ASSETS_DIR))
+    except OSError:
+        _asset_count = 0
+    logger.info(
+        "[boot] frontend bundle: dir=%s index=%s (%d bytes) assets=%d "
+        "entry_media_type=%s",
+        settings.STATIC_DIR, _STATIC_INDEX,
+        os.path.getsize(_STATIC_INDEX), _asset_count,
+        _media_type(_STATIC_INDEX),
+    )
+else:
+    logger.warning("[boot] frontend bundle: not found at %s (dev mode?)",
+                   settings.STATIC_DIR)
 
 # The SPA shell must never be cached: it names the content-hashed asset files,
 # so a stale copy makes the browser request bundles that the new build no
@@ -246,16 +324,53 @@ _HAS_STATIC = os.path.isfile(_STATIC_INDEX)
 # upgrade. Hashed assets under /assets are immutable and keep default caching.
 _INDEX_HEADERS = {"Cache-Control": "no-store, must-revalidate"}
 
-if _HAS_STATIC:
-    _assets_dir = os.path.join(settings.STATIC_DIR, "assets")
-    if os.path.isdir(_assets_dir):
-        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+if _HAS_STATIC and os.path.isdir(_ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
+
+
+@app.middleware("http")
+async def _static_diagnostics(request: Request, call_next):
+    """Make blank-screen incidents diagnosable from the server log."""
+    path = request.scope.get("path") or ""
+    response = await call_next(request)
+    if path.startswith("/assets/") and response.status_code >= 400:
+        logger.warning("[boot] asset %s -> %s (stale index.html?)",
+                       path, response.status_code)
+    elif path == "/":
+        logger.info("[boot] GET / -> %s media_type=%s",
+                    response.status_code, response.headers.get("content-type"))
+    return response
+
+
+@app.get("/api/system/diag")
+async def system_diag():
+    """One-call evidence bundle for blank-screen / startup incidents."""
+    return {
+        "version": settings.APP_VERSION,
+        "static_dir": settings.STATIC_DIR,
+        "has_static": _HAS_STATIC,
+        "index_exists": os.path.isfile(_STATIC_INDEX),
+        "index_media_type": _media_type(_STATIC_INDEX),
+        "entry_media_type": _media_type("entry.js"),
+        "index_headers": _INDEX_HEADERS,
+        "asset_count": _asset_count if _HAS_STATIC else 0,
+        "assets_dir": _ASSETS_DIR,
+        "boot_guards": {
+            "explicit_mime": True,
+            "index_no_store": _INDEX_HEADERS.get("Cache-Control", "").startswith("no-store"),
+            "health_probe": True,
+        },
+    }
 
 
 @app.get("/")
 async def root():
     if _HAS_STATIC:
-        return FileResponse(_STATIC_INDEX, headers=_INDEX_HEADERS)
+        return FileResponse(
+            _STATIC_INDEX,
+            media_type=_media_type(_STATIC_INDEX),
+            headers=_INDEX_HEADERS,
+        )
     # NOTE: there is no plain "/ws" endpoint — advertising it (as the docs and
     # this response used to do) sent clients to a 403 (issue #10).
     return {
@@ -279,6 +394,10 @@ if _HAS_STATIC:
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
         """Serve static assets; fall back to index.html for SPA routes."""
+        if full_path == "api" or full_path.startswith("api/"):
+            # Never disguise an unknown API path as a 200 HTML document: the
+            # frontend would try to parse index.html as JSON and go blank.
+            return JSONResponse({"detail": "API route not found"}, status_code=404)
         if full_path.startswith("assets/"):
             # A missing bundle means the client holds a stale index.html. Answer
             # 404 rather than handing back HTML, which the browser would reject
@@ -286,8 +405,12 @@ if _HAS_STATIC:
             return JSONResponse({"detail": "Asset not found"}, status_code=404)
         candidate = os.path.join(settings.STATIC_DIR, full_path)
         if full_path and os.path.isfile(candidate):
-            return FileResponse(candidate)
-        return FileResponse(_STATIC_INDEX, headers=_INDEX_HEADERS)
+            return FileResponse(candidate, media_type=_media_type(candidate))
+        return FileResponse(
+            _STATIC_INDEX,
+            media_type=_media_type(_STATIC_INDEX),
+            headers=_INDEX_HEADERS,
+        )
 
 
 # ---------------------------------------------------------------------------

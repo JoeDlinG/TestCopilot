@@ -5,6 +5,7 @@ import { ConfigProvider, theme } from 'antd'
 import App from './App'
 import { LanguageProvider } from './i18n'
 import { ThemeProvider, blue } from './theme'
+import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -24,7 +25,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       >
         <ThemeProvider>
           <LanguageProvider>
-            <App />
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
           </LanguageProvider>
         </ThemeProvider>
       </ConfigProvider>

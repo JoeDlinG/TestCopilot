@@ -9,13 +9,16 @@
  * The same component is reused by 帮助 ▸ 重新观看导航, which opens it without
  * touching the flag.
  */
+import { useEffect, useRef, useState } from 'react'
 import { Tour } from 'antd'
 import type { TourProps } from 'antd'
 
 import { useI18n } from '../../i18n'
 
-/** Where the "already seen" bit lives. Bump the suffix to re-run for everyone. */
-export const TOUR_STORAGE_KEY = 'testcopilot.onboarding.v1'
+/** Where the "already seen" bit lives. Bump the suffix to re-run for everyone.
+ *  v2: users who ran the broken v1 build were permanently flagged as "seen"
+ *  even though the card had been placed outside the viewport. */
+export const TOUR_STORAGE_KEY = 'testcopilot.onboarding.v2'
 
 export function markTourSeen() {
   try {
@@ -45,6 +48,28 @@ interface Props {
 
 export default function OnboardingTour({ open, onClose }: Props) {
   const { t } = useI18n()
+  const [tourKey, setTourKey] = useState(0)
+  const recovered = useRef(false)
+
+  // AntD can compute a placement that puts the card outside the viewport
+  // (e.g. when the anchor is a collapsed sider). The mask then stays while the
+  // card is invisible. Re-mount once to force a fresh placement calculation.
+  useEffect(() => {
+    if (!open || recovered.current) return
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector('.ant-tour-inner') as HTMLElement | null
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const outside = r.width < 40 || r.height < 40 ||
+        r.right <= 0 || r.bottom <= 0 ||
+        r.left >= window.innerWidth || r.top >= window.innerHeight
+      if (outside && !recovered.current) {
+        recovered.current = true
+        setTourKey(k => k + 1)
+      }
+    }, 1800)
+    return () => window.clearTimeout(timer)
+  }, [open, tourKey])
 
   const steps: TourProps['steps'] = [
     {
@@ -98,6 +123,7 @@ export default function OnboardingTour({ open, onClose }: Props) {
 
   return (
     <Tour
+      key={tourKey}
       open={open}
       onClose={onClose}
       steps={steps}

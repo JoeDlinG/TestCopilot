@@ -6,6 +6,60 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TestCopilot - AI 测试应用平台</title>
+    <script>
+      /* Boot guard: a blank page must never be silent. ES modules rejected on
+         MIME grounds, a missing asset or a thrown render error all produce an
+         empty #root with no 404 in the server log; show an actionable panel. */
+      (function () {
+        var shown = false;
+        function panel(title, detail) {
+          if (shown) return;
+          shown = true;
+          var root = document.getElementById('root') || document.body;
+          var box = document.createElement('div');
+          box.setAttribute('data-boot-guard', '1');
+          box.style.cssText = 'max-width:720px;margin:64px auto;padding:24px;border:1px solid #ffccc7;border-radius:8px;background:#fff2f0;font-family:system-ui,sans-serif;color:#1f1f1f';
+          var h = document.createElement('h2');
+          h.textContent = title;
+          h.style.fontSize = '18px';
+          var pre = document.createElement('pre');
+          pre.textContent = detail;
+          pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;padding:12px;background:#fff;border-radius:4px;font-size:12px';
+          var tips = document.createElement('p');
+          tips.textContent = '1. 强制刷新（Ctrl+F5）；2. 确认软件为最新版本；3. 若仍为空白，请把 /api/system/diag 的返回内容反馈给支持人员。';
+          var btn = document.createElement('button');
+          btn.textContent = '重新加载';
+          btn.style.cssText = 'padding:6px 16px;cursor:pointer';
+          btn.onclick = function () { window.location.reload(); };
+          box.appendChild(h); box.appendChild(pre); box.appendChild(tips); box.appendChild(btn);
+          root.appendChild(box);
+        }
+        window.addEventListener('error', function (e) {
+          var t = e.target;
+          if (t && t !== window && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) {
+            panel('前端资源加载失败', '资源：' + (t.src || t.href || '未知') +
+              '\n请检查静态文件是否完整、MIME 类型是否为 application/javascript。');
+          } else if (e.message) {
+            panel('页面脚本异常', e.message + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          panel('页面初始化失败', String((e.reason && e.reason.message) || e.reason || '未知 Promise 异常'));
+        });
+        setTimeout(function () {
+          var r = document.getElementById('root');
+          if (r && r.children.length === 0) {
+            panel('界面启动超时（8 秒）', '前端脚本尚未挂载任何内容，通常是资源加载被浏览器拒绝。');
+          }
+        }, 8000);
+        setTimeout(function () {
+          var r = document.getElementById('root');
+          if (r && r.children.length === 0) {
+            panel('界面启动超时（25 秒）', '应用长时间未启动，请检查后端服务是否已就绪。');
+          }
+        }, 25000);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

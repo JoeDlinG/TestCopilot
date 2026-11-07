@@ -21,6 +21,7 @@ from app.core.exceptions import DeviceNotFoundError, DeviceConnectionError
 from app.core.timeutils import utc_now
 from app.core.interfaces import (
     INTERFACE_SPECS,
+    STANDARD_PROTOCOLS,
     apply_plugin_transport,
     clear_other_columns,
     foreign_config_keys,
@@ -34,10 +35,6 @@ from app.schemas.schemas import (
 from app.services.device_service import device_service
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
-
-# Protocols handled by the generic communication layer rather than by a plugin.
-# Keep in sync with device_service._STANDARD_PROTOCOLS.
-_STANDARD_PROTOCOLS = {"scpi", "gpib", "can", "serial", "ethernet", "usb"}
 
 
 class DeviceInterfaceIn(BaseModel):
@@ -148,7 +145,7 @@ async def update_device_interface(
     # ``ethernet`` protocol would bypass the plugin (and its MG100 framing)
     # entirely. Only standard protocols follow the interface spec's protocol.
     plugin_protocol = device.protocol
-    is_custom_protocol = plugin_protocol not in _STANDARD_PROTOCOLS
+    is_custom_protocol = plugin_protocol not in STANDARD_PROTOCOLS
 
     # Mirror the interface choice into the plugin's private transport key.
     # Without this the plugin keeps reading the stale ``transport: serial``

@@ -688,6 +688,35 @@ def _ensure_dir() -> None:
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# (mtime_ns, size) -> parsed header metadata, keyed by absolute path.
+_PROJECT_META_CACHE: Dict[str, Any] = {}
+
+
+def _project_meta(path: Path, stat) -> Dict[str, Any]:
+    """Parse a bundle's header once; re-parse only when the file changes.
+
+    ``list_projects`` runs on every 项目文件 page open. A full ``json.loads``
+    of a ~1 MB exported workspace on each request is pure waste (and let a
+    single bulky file dominate the page). Cache by mtime+size so importing a
+    project or opening the page repeatedly stays cheap, while edits still show
+    up immediately.
+    """
+    key = (stat.st_mtime_ns, stat.st_size)
+    cache_key = str(path)
+    cached = _PROJECT_META_CACHE.get(cache_key)
+    if cached and cached[0] == key:
+        return cached[1]
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    meta = {
+        "counts": raw.get("counts") or {},
+        "project_name": raw.get("project_name"),
+        "app_version": raw.get("app_version"),
+        "exported_at": raw.get("exported_at"),
+    }
+    _PROJECT_META_CACHE[cache_key] = (key, meta)
+    return meta
+
+
 def list_projects() -> List[Dict[str, Any]]:
     """List saved project files with a per-section summary."""
     _ensure_dir()
@@ -706,11 +735,11 @@ def list_projects() -> List[Dict[str, Any]]:
             "error": None,
         }
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            entry["counts"] = raw.get("counts") or {}
-            entry["project_name"] = raw.get("project_name") or entry["name"]
-            entry["app_version"] = raw.get("app_version")
-            entry["exported_at"] = raw.get("exported_at")
+            meta = _project_meta(path, stat)
+            entry["counts"] = meta["counts"]
+            entry["project_name"] = meta["project_name"] or entry["name"]
+            entry["app_version"] = meta["app_version"]
+            entry["exported_at"] = meta["exported_at"]
         except Exception as exc:  # noqa: BLE001 - listing must survive a bad file
             entry["error"] = f"文件解析失败：{exc}"
         items.append(entry)

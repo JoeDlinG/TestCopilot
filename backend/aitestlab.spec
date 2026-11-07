@@ -5,6 +5,7 @@ Bundles the FastAPI backend + built frontend (static/) + plugins into a single
 directory (onedir) that the NSIS installer packages into setup.exe.
 """
 import os
+import sys
 
 from PyInstaller.utils.hooks import (
     collect_submodules,
@@ -50,9 +51,13 @@ datas = [
     (os.path.join(backend_dir, "static"), "static"),
     # Markdown manuals for the in-app 帮助 centre (served by /api/help).
     (os.path.join(os.path.dirname(backend_dir), "docs"), "docs"),
-    # udev rule + installer for MG100 USB access (shown in the connect error).
-    (os.path.join(backend_dir, "install"), "install"),
 ]
+
+# install/ contains Linux-only udev rules and bash installers. The main
+# distribution is a Windows NSIS build where they are unusable (and the
+# connect-error hints must not point at them), so ship them on POSIX only.
+if sys.platform != "win32":
+    datas.append((os.path.join(backend_dir, "install"), "install"))
 
 a = Analysis(
     [os.path.join(backend_dir, "run.py")],

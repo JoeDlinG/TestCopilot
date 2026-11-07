@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-11-08: Issue #29–#32 集中修复（v2.3.6）
+
+### 背景
+
+GitHub 上一次性收到 4 个复核 issue（#29 / #30 / #31 / #32），集中在「主线与本地修复分叉」「Windows 平台兼容性」「版本口径」「工程化一致性」四类问题。本版本以 `e0c76d1` 为基线全部收口。
+
+### 修复内容
+
+- **#31 版本口径**：`APP_VERSION` 与 NSIS `!define APP_VERSION` 同步 bump 到 `2.3.6`，补齐本章节与看板日期，并新增 `Test/test_version_consistency.py` 做四处一致性门禁（配置 / 安装包 / HISTORY 首章 / 运行时 `/version`）。
+- **#32 一致性**：`_STANDARD_PROTOCOLS` 收敛为 `app/core/interfaces.py` 的单一真相源（API 层此前漏了 `pcie` / `pxi`，会让接口切换保留旧协议）；`i18n-guard.mjs` 的 `@babel/parser` 从隐式传递依赖改为显式 `devDependency`；`list_projects()` 元数据加 mtime+size 缓存，避免每次打开页面解析 1 MB 文件；1 MB 演示工程移到 `Test/fixtures/`，`backend/projects/Project_*.json` 改为忽略；`aitestlab.spec` 仅在 POSIX 构建时分发 Linux udev 脚本。
+- **#30 Windows MG100**：raw libusb bulk 明确限定 POSIX，Windows 直接给出「请用 COM3 串口」的可操作提示；`NoBackendError` 单独捕获；`detach_kernel_driver` 不再在 Windows 调用；USB 接口绑定在 Windows 保留 `serial_port → config.port`（不再丢弃 COM3）；错误提示与 `diagnose` 按平台生成，不再指向 `sudo bash ...sh`。
+- **#29 首启/白屏防护**：远端缺失的 11-01 防护在主线重新落地 —— 静态资源显式 MIME、`[boot] frontend bundle` 日志与 `/api/system/diag`、首页 `no-store` + 内联 boot guard、React `ErrorBoundary`、`run.py` 轮询 `/api/health`（绕开系统代理）后才开浏览器、端口占用协商与已有实例复用、Tour 视口自检与带版本后缀的存储键；新增 `Test/test_boot_guards.py` 防止再次分叉丢失。
+- **执行管理器 / 设备 / 界面**（`e0c76d1`）：失效用例运行前拦截并可就地重选、设备删除超时与幽灵状态修复、PCAN udev 自动准备、中文界面治理。
+
+### 验证
+
+`bash Test/run_all.sh`（全部新增套件纳入）、`cd frontend && npm run build`、无头浏览器页面验证、API 端到端验证。
+
+---
+
 ## 2026-10-25: 修复安装版界面白屏 —— antd 分包循环依赖（v2.3.1）
 
 ### 现象

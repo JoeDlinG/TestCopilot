@@ -1062,7 +1062,10 @@ class PeakCANPlugin(BaseProtocolPlugin):
             info["candidate_error"] = str(e)
         info["last_attempts"] = list(self._attempts)
         info["preparation"] = list(self._prepare_notes)
-        info["install_script"] = "backend/install/install_peakcan_rules.sh"
+        info["install_script"] = (
+            None if self._is_windows()
+            else "backend/install/install_peakcan_rules.sh"
+        )
         info["hint"] = self._platform_hint()
         return info
 

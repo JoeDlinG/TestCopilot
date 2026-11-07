@@ -20,6 +20,10 @@ frontend/dist/
 # Built frontend served by the backend (generated from frontend/dist)
 backend/static/
 
+# Exported workspaces are user data, not source. The bundled sample lives in
+# Test/fixtures/ instead, so it no longer shows up in the 项目文件 list.
+backend/projects/Project_*.json
+
 # IDE
 .vscode/
 .idea/

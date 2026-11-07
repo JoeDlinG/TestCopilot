@@ -15,6 +15,7 @@ Each field descriptor declares where the value lives:
     ``devices.config`` as JSON and handed to the communication interface on
     connect.
 """
+import os
 from typing import Any, Dict, List
 
 # Columns of ``devices`` an interface field may map onto.
@@ -27,6 +28,15 @@ ADDRESS_COLUMNS = (
 )
 
 _BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
+
+# Protocols handled by the generic communication layer rather than by a plugin.
+# Single source of truth: the API and the device service both import this set.
+# Two hand-maintained copies drifted apart (pcie/pxi were missing from the API
+# copy), which made ``PUT /interface`` misclassify those devices as plugin
+# protocols and keep the stale protocol after an interface switch.
+STANDARD_PROTOCOLS = frozenset({
+    "scpi", "gpib", "can", "serial", "ethernet", "usb", "pcie", "pxi",
+})
 
 
 def _field(
@@ -274,6 +284,15 @@ PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
             # Drop the stale serial path too — otherwise a leftover
             # /dev/ttyACM0 keeps being retried after switching to USB.
             "drop": ("port", "baudrate", "host", "tcp_port"),
+            # Windows has no libusb backend in the packaged build: the CDC
+            # device enumerates as COMx, so the USB interface must keep the
+            # user-supplied serial_port and use the serial transport. Doing
+            # otherwise silently discarded COM3 (a real regression).
+            "windows": {
+                "transport": "serial",
+                "from_column": {"port": "serial_port"},
+                "drop": ("host", "tcp_port", "usb_vid", "usb_pid"),
+            },
         },
         "ethernet": {
             "transport": "ethernet",
@@ -300,6 +319,8 @@ def apply_plugin_transport(
     binding = PLUGIN_TRANSPORT_BINDINGS.get(protocol, {}).get(interface_type)
     if not binding:
         return dict(stored)
+    if os.name == "nt" and binding.get("windows"):
+        binding = binding["windows"]
 
     out = dict(stored)
     for key in binding.get("drop", ()):

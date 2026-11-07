@@ -27,11 +27,12 @@ from app.api.websocket import (
     broadcast_device_update,
 )
 from app.core.timeutils import utc_now
+from app.core.interfaces import STANDARD_PROTOCOLS
 
 # Protocols handled natively by the communication layer (not by plugins).
-_STANDARD_PROTOCOLS = {
-    "scpi", "gpib", "can", "serial", "ethernet", "usb", "pcie", "pxi",
-}
+# Keep the alias for existing callers, but the set itself now has exactly one
+# definition — see app.core.interfaces.STANDARD_PROTOCOLS.
+_STANDARD_PROTOCOLS = STANDARD_PROTOCOLS
 
 logger = logging.getLogger(__name__)
 

@@ -401,6 +401,11 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
     @classmethod
     def _usb_device_present(cls, config: Dict[str, Any]) -> bool:
         """Cheap detection — no claim, no permission needed on most hosts."""
+        if os.name == "nt":
+            # No libusb backend ships in the Windows build. Returning False
+            # keeps the serial→usb auto-fallback disabled there (COMx is the
+            # correct path) instead of swallowing NoBackendError.
+            return False
         try:
             import usb.core
 
@@ -412,10 +417,18 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
     async def _connect_usb(self, config: Dict[str, Any]) -> None:
         """Claim the CDC Data interface and talk over its bulk endpoints.
 
-        Used when the kernel did not create a tty node for the STM32 VCP
-        (``cdc_acm`` unbound). Requires the user to have write access to the
-        USB device — see ``backend/install/99-mg100-usb.rules``.
+        POSIX-only fallback for when the kernel did not create a tty node for
+        the STM32 VCP (``cdc_acm`` unbound). On Windows the CDC device shows up
+        as ``COMx`` and must use the serial transport: the packaged build does
+        not ship libusb, and ``usbser.sys`` cannot be detached.
         """
+        if os.name == "nt":
+            raise ConnectionError(
+                "Windows 不支持 MG100 的原生 USB（libusb bulk）传输。"
+                "请在「配置接口」里选择 USB 并填写虚拟串口号（如 COM3），或改用以太网；"
+                "CDC-ACM 设备在 Windows 上会枚举成 COM 口，走串口方式即可。"
+            )
+
         try:
             import usb.core
             import usb.util
@@ -425,10 +438,17 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
             ) from e
 
         vid, pid = self._usb_ids(config)
+        no_backend = getattr(usb.core, "NoBackendError", None)
         try:
             dev = usb.core.find(idVendor=vid, idProduct=pid)
         except usb.core.USBError as e:
             raise ConnectionError(f"枚举 MG100 USB 设备失败：{e}") from e
+        except Exception as e:
+            # pyusb raises NoBackendError (not a USBError) when libusb-1.0 is
+            # missing. Without this the packaged build leaked a raw exception.
+            if no_backend is not None and isinstance(e, no_backend):
+                raise ConnectionError(self._usb_backend_hint()) from e
+            raise
         if dev is None:
             raise ConnectionError(
                 f"未找到 Mini Gateway 100 USB 设备（{vid:04x}:{pid:04x}）。"
@@ -458,8 +478,14 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
             raise ConnectionError("MG100 USB 设备上没有找到 CDC Data 批量端点")
 
         try:
-            if dev.is_kernel_driver_active(data_iface.bInterfaceNumber):
-                dev.detach_kernel_driver(data_iface.bInterfaceNumber)
+            # Kernel-driver detachment is a Linux libusb concept. Some backends
+            # (notably Windows libusb) simply do not implement it.
+            if os.name != "nt" and hasattr(dev, "is_kernel_driver_active"):
+                try:
+                    if dev.is_kernel_driver_active(data_iface.bInterfaceNumber):
+                        dev.detach_kernel_driver(data_iface.bInterfaceNumber)
+                except (NotImplementedError, AttributeError):
+                    pass
             usb.util.claim_interface(dev, data_iface.bInterfaceNumber)
         except usb.core.USBError as e:
             if "Access denied" in str(e) or getattr(e, "errno", None) == 13:
@@ -493,10 +519,30 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
 
     @staticmethod
     def _usb_permission_hint(vid: int, pid: int) -> str:
+        if os.name == "nt":
+            return (
+                f"Windows 无法以原生 USB 方式访问 MG100（{vid:04x}:{pid:04x}）。"
+                "请在设备管理器确认虚拟串口号（如 COM3），并在设备接口里选择 USB 后填写该串口；"
+                "原生 USB 需要 WinUSB/Zadig 驱动，当前版本不提供该路径。"
+            )
         return (
             f"没有权限访问 MG100 USB 设备（{vid:04x}:{pid:04x}）。"
             "请安装随软件附带的 udev 规则后重新插拔 USB："
             "sudo bash backend/install/install_usb_rules.sh"
+        )
+
+    @staticmethod
+    def _usb_backend_hint() -> str:
+        """Hint for a missing libusb-1.0 shared library (pyusb installed)."""
+        if os.name == "nt":
+            return (
+                "Windows 缺少 libusb-1.0.dll，原生 USB 传输不可用。"
+                "请使用虚拟串口（COM3）或以太网方式连接 MG100。"
+            )
+        return (
+            "pyusb 已安装但找不到 libusb 后端（缺 libusb-1.0 动态库）。"
+            "请安装 libusb-1.0-0 并执行 sudo bash backend/install/install_usb_rules.sh，"
+            "或改用串口方式填写 /dev/ttyACM0。"
         )
 
     async def _connect_ethernet(self, config: Dict[str, Any]) -> None:
