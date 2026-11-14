@@ -13,6 +13,10 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
+import time
+import types
+from pathlib import Path
 from unittest import mock
 from typing import List
 
@@ -78,22 +82,63 @@ def build_and_project_checks() -> None:
 
     check("project listing has a metadata cache",
           "_PROJECT_META_CACHE" in text("backend/app/services/project_service.py"))
-    real_loads = ps.json.loads
-    calls = []
 
-    def counting(*args, **kwargs):
-        calls.append(1)
-        return real_loads(*args, **kwargs)
+    # The old guard was an empty assertion: the real projects dir only had a
+    # .gitkeep, so "parses 0 -> 0" was trivially true. Build a genuine bundle
+    # in a temp dir so the cache is actually exercised (issue #32 review #1).
+    with tempfile.TemporaryDirectory() as td:
+        project_dir = Path(td)
+        bundle = {
+            "schema": ps.SCHEMA,
+            "project_name": "CacheGuard",
+            "app_version": "test",
+            # Deliberately NO "counts": exercise the fallback as well.
+            "data": {"devices": [{"id": "d1"}], "test_cases": [],
+                     "models": [{"id": "m1"}, {"id": "m2"}]},
+        }
+        bundle_path = project_dir / "Project_CacheGuard.json"
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+        changed = json.dumps({**bundle, "project_name": "CacheGuardUpdated"})
 
-    with mock.patch.object(ps.json, "loads", counting):
-        first = ps.list_projects()
-        n1 = len(calls)
-        second = ps.list_projects()
-        n2 = len(calls)
-    check("second list_projects() does not re-parse bundles", n2 == n1,
-          f"parses {n1} -> {n2}")
-    check("list_projects() returned entries", isinstance(first, list)
-          and first == second)
+        real_loads = ps.json.loads
+        calls = []
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return real_loads(*args, **kwargs)
+
+        with mock.patch.object(ps, "PROJECTS_DIR", project_dir), \
+                mock.patch.object(ps.json, "loads", counting):
+            ps._PROJECT_META_CACHE.clear()
+            first = ps.list_projects()
+            n1 = len(calls)
+            second = ps.list_projects()
+            n2 = len(calls)
+            check("cache guard parses a real bundle", n1 == 1, f"parses {n1}")
+            check("second list_projects() does not re-parse bundles",
+                  n2 == n1, f"parses {n1} -> {n2}")
+            check("list_projects() returned a non-empty entry",
+                  len(first) == 1 and first == second, str(len(first)))
+            check("counts recomputed when the header is missing",
+                  first[0]["counts"] == {"devices": 1, "test_cases": 0,
+                                         "models": 2}, str(first[0]["counts"]))
+
+            bundle_path.write_text(changed, encoding="utf-8")
+            later = time.time() + 5
+            os.utime(str(bundle_path), (later, later))
+            third = ps.list_projects()
+            check("changed bundle is re-parsed", len(calls) > n2,
+                  f"parses {n2} -> {len(calls)}")
+            check("updated header metadata is visible",
+                  third[0]["project_name"] == "CacheGuardUpdated",
+                  str(third[0]["project_name"]))
+
+            bundle_path.unlink()
+            ps.list_projects()
+            check("deleted bundle is evicted from the cache",
+                  str(bundle_path) not in ps._PROJECT_META_CACHE,
+                  str(list(ps._PROJECT_META_CACHE)))
+        ps._PROJECT_META_CACHE.clear()
 
     check("1MB demo bundle no longer sits in the project list",
           not os.path.isfile(os.path.join(BACKEND, "projects", "Project_TestDemo.json")))
@@ -143,9 +188,60 @@ def windows_checks() -> None:
         check("Windows USB probe disabled",
               P._usb_device_present({}) is False)
 
+    # Upgrade compatibility: a v2.3.4/2.3.5 row saved with transport=usb on
+    # Windows must connect via the CDC COM port without a manual re-edit.
+    with mock.patch.object(mod.os, "name", "nt"):
+        legacy = P()
+        with mock.patch.object(legacy, "_connect_serial",
+                               new=mock.AsyncMock(return_value=None)):
+            legacy_ok = asyncio.run(legacy.connect(
+                {"transport": "usb", "serial_port": "COM7"}))
+        check("legacy Windows transport=usb downgrades to serial",
+              legacy_ok is True and legacy._transport == "serial"
+              and legacy._config.get("port") == "COM7"
+              and legacy._config.get("transport") == "serial",
+              f"{legacy._transport} / {legacy._config}")
+
+    # Behavioural assertion (not a string scan): pyusb's NoBackendError must be
+    # translated into an actionable ConnectionError with the libusb hint.
+    usb_pkg = types.ModuleType("usb")
+    usb_core = types.ModuleType("usb.core")
+    usb_util = types.ModuleType("usb.util")
+
+    class _NoBackendError(ValueError):
+        pass
+
+    class _USBError(IOError):
+        pass
+
+    def _find(**kwargs):
+        raise _NoBackendError("No backend available")
+
+    usb_core.NoBackendError = _NoBackendError
+    usb_core.USBError = _USBError
+    usb_core.find = _find
+    usb_pkg.core, usb_pkg.util = usb_core, usb_util
+    with mock.patch.dict(sys.modules, {"usb": usb_pkg, "usb.core": usb_core,
+                                       "usb.util": usb_util}), \
+            mock.patch.object(mod.os, "name", "posix"):
+        try:
+            asyncio.run(P()._connect_usb({}))
+            nb_raised, nb_msg = False, "connect unexpectedly succeeded"
+        except ConnectionError as e:
+            nb_raised, nb_msg = True, str(e)
+        except Exception as e:  # noqa: BLE001 - report the real failure type
+            nb_raised, nb_msg = False, f"{type(e).__name__}: {e}"
+    check("NoBackendError becomes an actionable ConnectionError",
+          nb_raised and "libusb" in nb_msg, nb_msg[:160])
+
     plugin_src = text("backend/plugins/mini_gateway100_plugin.py")
-    check("NoBackendError is handled", "NoBackendError" in plugin_src
+    check("NoBackendError branch exists", "NoBackendError" in plugin_src
           and "_usb_backend_hint" in plugin_src)
+    check("Windows legacy usb downgrade is implemented",
+          'os.name == "nt" and transport == "usb"' in plugin_src)
+    check("Windows build drops the unused libusb hidden import",
+          'if sys.platform != "win32":' in text("backend/aitestlab.spec")
+          and 'hiddenimports += ["usb.backend.libusb1"]' in text("backend/aitestlab.spec"))
     check("kernel-driver API guarded by platform",
           'if os.name != "nt"' in plugin_src
           and "is_kernel_driver_active" in plugin_src)

@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db
@@ -393,17 +392,26 @@ def _register_media_types() -> None:
 
 _register_media_types()
 
+_entry_js = "entry.js"
 if _HAS_STATIC:
     try:
-        _asset_count = len(os.listdir(_ASSETS_DIR))
+        _names = os.listdir(_ASSETS_DIR)
+        _asset_count = len(_names)
+        # The real hashed entry bundle, not index.html. The startup log used to
+        # print text/html under the name "entry_media_type", which sent white
+        # -screen investigations down the wrong path (issue #29 review #3).
+        _entry_js = next(
+            (n for n in _names if n.startswith("index-") and n.endswith(".js")),
+            "entry.js",
+        )
     except OSError:
         _asset_count = 0
     logger.info(
         "[boot] frontend bundle: dir=%s index=%s (%d bytes) assets=%d "
-        "entry_media_type=%s",
+        "index_media_type=%s entry_js=%s entry_media_type=%s",
         settings.STATIC_DIR, _STATIC_INDEX,
         os.path.getsize(_STATIC_INDEX), _asset_count,
-        _media_type(_STATIC_INDEX),
+        _media_type(_STATIC_INDEX), _entry_js, _media_type(_entry_js),
     )
 else:
     logger.warning("[boot] frontend bundle: not found at %s (dev mode?)",
@@ -416,7 +424,21 @@ else:
 _INDEX_HEADERS = {"Cache-Control": "no-store, must-revalidate"}
 
 if _HAS_STATIC and os.path.isdir(_ASSETS_DIR):
-    app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
+    _ASSETS_ROOT = os.path.realpath(_ASSETS_DIR)
+
+    # Serve hashed bundles through our own route so EVERY response carries an
+    # explicit ``media_type``. StaticFiles consults the process-global
+    # ``mimetypes`` database, which a Windows registry can map .js -> text/plain
+    # and make the browser refuse the ES module (issue #29 review #2).
+    @app.api_route("/assets/{asset_path:path}", methods=["GET", "HEAD"])
+    async def serve_asset(asset_path: str):
+        candidate = os.path.realpath(os.path.join(_ASSETS_ROOT, asset_path))
+        if not candidate.startswith(_ASSETS_ROOT + os.sep) \
+                or not os.path.isfile(candidate):
+            # A missing bundle means the client holds a stale index.html; never
+            # answer with HTML (it would be parsed as a module and blank out).
+            return JSONResponse({"detail": "Asset not found"}, status_code=404)
+        return FileResponse(candidate, media_type=_media_type(candidate))
 
 
 @app.middleware("http")
@@ -454,7 +476,10 @@ async def system_diag():
     }
 
 
-@app.get("/")
+# HEAD must be explicit: `curl -I` is the standard ops liveness probe and
+# returned 405 while these routes used @app.get (issue #29 review #1). Starlette's
+# FileResponse already suppresses the body for HEAD requests.
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     if _HAS_STATIC:
         return FileResponse(
@@ -489,7 +514,10 @@ async def health_check():
 
 if _HAS_STATIC:
 
-    @app.get("/{full_path:path}")
+    # Any future endpoint WITHOUT the /api prefix (e.g. /version, /healthz)
+    # MUST be registered above this catch-all, otherwise it is served index.html
+    # and the client parses HTML as JSON. Keep that constraint here.
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def spa_fallback(full_path: str):
         """Serve static assets; fall back to index.html for SPA routes."""
         if full_path == "api" or full_path.startswith("api/"):

@@ -134,11 +134,19 @@ def main() -> int:
           '"install"' in open(os.path.join(BACKEND, "aitestlab.spec"),
                               encoding="utf-8").read())
 
-    # 8. Failure text tells the operator exactly what to run.
+    # 8. Failure text must match the platform. This used to assert the Linux
+    # installer unconditionally, so the suite always failed on Windows even
+    # though the Windows PCAN-Basic hint is the correct behaviour (#28).
     with mock.patch.object(P, "_usb_hint", return_value=""):
-        hint = P._platform_hint()
-    check("connect error points at the installer",
-          "install_peakcan_rules.sh" in hint)
+        with mock.patch.object(P, "_is_windows", return_value=False):
+            linux_hint = P._platform_hint()
+        with mock.patch.object(P, "_is_windows", return_value=True):
+            win_hint = P._platform_hint()
+    check("Linux connect error points at the installer",
+          "install_peakcan_rules.sh" in linux_hint, linux_hint[:100])
+    check("Windows connect error points at PCAN-Basic, not udev",
+          "PCAN-Basic" in win_hint and "install_peakcan_rules.sh" not in win_hint
+          and "sudo" not in win_hint, win_hint[:100])
 
     if _failures:
         print(f"\nFAILED: {len(_failures)} check(s): {', '.join(_failures)}")

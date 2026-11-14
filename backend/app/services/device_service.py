@@ -106,11 +106,15 @@ class DeviceService:
             stored = self._parse_json_field(device.config) or {}
             if not isinstance(stored, dict) or not stored:
                 continue
-            proto = await plugin_service.match_device_to_plugin(db, stored)
+            proto = await plugin_service.match_device_to_plugin(
+                db, stored, current_protocol=device.protocol
+            )
             if proto and proto != device.protocol:
+                # Audit trail: a startup data migration must always be
+                # attributable, and the config keys explain why we matched.
                 logger.info(
-                    "restoring device %s protocol: %s -> %s",
-                    device.id, device.protocol, proto,
+                    "restoring device %s protocol: %s -> %s (config keys=%s)",
+                    device.id, device.protocol, proto, sorted(stored),
                 )
                 device.protocol = proto
                 device.updated_at = utc_now()
@@ -224,6 +228,13 @@ class DeviceService:
             merged.update(existing)
         if config:
             merged.update(config)
+        # The Windows binding keeps the user's COMx in the ``serial_port``
+        # column. A legacy ``transport=usb`` row saved by v2.3.4/2.3.5 had its
+        # ``config.port`` dropped, so mirror the column back when the config
+        # has no port — otherwise the automatic usb -> serial downgrade has
+        # nothing to connect to (issue #30 upgrade compatibility).
+        if not merged.get("port") and getattr(device, "serial_port", None):
+            merged["port"] = device.serial_port
         return merged if merged else None
 
     async def create_device(self, db: AsyncSession, data: DeviceCreate) -> Device:

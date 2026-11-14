@@ -31,6 +31,8 @@ SUITE=(
   test_issue33_peakcan_protocol
   test_flow_command_source
   test_startup_resilience
+  test_issue34_generic_can
+  test_static_runtime
 )
 
 # Hardware-only suites are skipped (not failed) when no MG100 is attached —

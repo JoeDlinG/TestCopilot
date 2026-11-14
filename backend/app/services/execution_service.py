@@ -145,6 +145,21 @@ class ExecutionEngine:
         return found
 
     @classmethod
+    def _visible_is_command(cls, text: str) -> bool:
+        """Whether the editable ``config.command`` is a literal device command.
+
+        The scanners above recognise MG100 frames, JSON commands and python-can
+        expressions, but SCPI / plain-text instruments use bare commands such
+        as ``*IDN?`` or ``MEAS:VOLT?``. Dropping those (issue #33 review) left a
+        step with no command at all. Chinese text is a human summary, not a
+        command — those nodes keep their hidden structured command instead.
+        """
+        value = (text or "").strip()
+        if not value or len(value) > 160 or "\n" in value:
+            return False
+        return not any("\u4e00" <= ch <= "\u9fff" for ch in value)
+
+    @classmethod
     def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
         """Extract the real device command(s) carried by a flow node.
 
@@ -177,6 +192,10 @@ class ExecutionEngine:
         # 1. The editable field is the single source of truth when it holds a
         #    real command. Hidden copies are deliberately NOT merged in.
         found = cls._scan_commands(visible)
+        if not found and cls._visible_is_command(visible):
+            # Plain-text / SCPI commands have no recognisable shape; the field
+            # itself is the command and must not be silently dropped.
+            found = [visible.strip()]
 
         # 2. AI-generated / imported flows keep the real command in a hidden
         #    structured field and use natural language for the visible text.
@@ -231,7 +250,7 @@ class ExecutionEngine:
         if not isinstance(config, dict):
             return node
         visible = str(config.get("command") or "")
-        if not visible.strip() or not cls._scan_commands(visible):
+        if not cls._visible_is_command(visible):
             return node
 
         params = config.get("parameters")

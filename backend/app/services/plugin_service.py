@@ -16,7 +16,11 @@ from sqlalchemy import select
 
 from app.models.models import Plugin, PluginStatus
 from app.core.config import settings
-from app.core.interfaces import all_interface_field_keys
+from app.core.interfaces import (
+    all_interface_field_keys,
+    GENERIC_DRIVER_CONFIG_KEYS,
+    PLUGIN_POLLUTION_TARGETS,
+)
 from app.core.timeutils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -366,23 +370,53 @@ class PluginService:
         props = set((schema.get("properties") or {}).keys())
         return props - all_interface_field_keys()
 
-    async def match_device_to_plugin(
-        self, db: AsyncSession, stored_config: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Return the protocol_name of the enabled plugin whose private keys are
-        present in ``stored_config``, or ``None``.
+    @classmethod
+    def plugin_exclusive_keys(cls, plugin_cls: type) -> set:
+        """Private keys that NO generic communication driver uses.
 
-        This is how we recognise a *polluted* device (issue #33): its
-        ``protocol`` was overwritten to a standard bus name by "edit device
-        interface", but its config still carries the plugin's signature keys.
+        ``plugin_private_keys`` only subtracts keys declared by interface specs.
+        Several of the remainder (``interface`` / ``channel`` / ``loopback``)
+        are also read by the generic ``CANInterface``, so a single hit there is
+        not evidence that a device belongs to a plugin (issue #34).
+        """
+        return cls.plugin_private_keys(plugin_cls) - GENERIC_DRIVER_CONFIG_KEYS
+
+    async def match_device_to_plugin(
+        self, db: AsyncSession, stored_config: Optional[Dict[str, Any]],
+        current_protocol: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return the enabled plugin that ``stored_config`` really belongs to.
+
+        This recognises a *polluted* device (issue #33): its ``protocol`` was
+        overwritten by "edit device interface" but its config still carries the
+        plugin's signature keys. Issue #34 showed that a one-key match on a
+        shared key misclassifies ordinary generic CAN devices, so a match now
+        needs ALL of:
+
+        1. at least one plugin-*exclusive* key (never used by a generic driver);
+        2. at least two signature keys in total;
+        3. none of the generic CAN column markers (``can_channel`` / ``can_id``);
+        4. when ``current_protocol`` is supplied, it must be a bus name the
+           interface editor could plausibly have substituted for this plugin.
+
+        A conservative ``None`` is always safe: it leaves the device alone.
         """
         stored_keys = set((stored_config or {}).keys())
         if not stored_keys:
             return None
-        for proto, cls in await self.list_enabled_plugins_detail(db):
-            private = self.plugin_private_keys(cls)
-            if private and stored_keys & private:
-                return proto
+        if stored_keys & {"can_channel", "can_id"}:
+            return None
+        for proto, plugin_cls in await self.list_enabled_plugins_detail(db):
+            private = self.plugin_private_keys(plugin_cls)
+            if not private:
+                continue
+            hits = stored_keys & private
+            if len(hits) < 2 or not (stored_keys & self.plugin_exclusive_keys(plugin_cls)):
+                continue
+            targets = PLUGIN_POLLUTION_TARGETS.get(proto)
+            if current_protocol is not None and targets and current_protocol not in targets:
+                continue
+            return proto
         return None
 
     def _resolved_plugin_dir(self) -> Path:

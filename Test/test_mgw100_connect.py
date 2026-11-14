@@ -318,9 +318,15 @@ def main() -> int:
     try:
         test_static_defaults()
         test_serial_errors(loop)
-        test_usb_transport(loop)
-        test_udev_rule()
-        test_interface_mapping()
+        # The raw libusb bulk transport and the POSIX USB interface binding are
+        # Linux-only by design (Windows uses the COMx serial path). Pin the
+        # platform for those cases so the suite is not a guaranteed FAIL on a
+        # Windows release machine (#28). COM-port behaviour is covered above by
+        # test_serial_errors with its own os.name="nt" patch.
+        with mock.patch.object(os, "name", "posix"):
+            test_usb_transport(loop)
+            test_udev_rule()
+            test_interface_mapping()
     finally:
         loop.close()
         asyncio.set_event_loop(None)

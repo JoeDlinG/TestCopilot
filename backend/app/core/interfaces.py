@@ -313,6 +313,28 @@ PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 }
 
+# Config keys the *generic* communication drivers actually read (see
+# ``CANInterface.connect``: ``interface`` / ``bitrate`` / ``can_id`` etc.).
+# A plugin schema key that also appears here is NOT a plugin signature: a plain
+# generic CAN / serial device can legitimately carry it. Subtracting these from
+# a plugin's private keys is what stops issue #34's false positive (a normal
+# ``can`` device being rewritten to ``peakcan`` on startup).
+GENERIC_DRIVER_CONFIG_KEYS = {
+    "interface", "channel", "bitrate", "can_id", "can_channel", "loopback",
+    "fd", "timeout", "port", "baudrate", "host", "tcp_port", "board_id",
+    "transport", "usb_vid", "usb_pid", "ip_address", "serial_port",
+    "visa_address", "bytesize", "parity", "stopbits", "address",
+}
+
+# Generic bus names that "edit device interface" could have written over a
+# plugin protocol during the pollution window (v0.11.0 ~ v2.3.3). Restricting
+# the startup repair to these pairs keeps unrelated devices untouched.
+PLUGIN_POLLUTION_TARGETS = {
+    "peakcan": {"can"},
+    "mini_gateway100": {"serial", "ethernet", "usb"},
+    "rigol_oscilloscope": {"scpi", "gpib", "usb", "ethernet"},
+}
+
 
 def apply_plugin_transport(
     protocol: str,

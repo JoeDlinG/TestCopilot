@@ -160,9 +160,12 @@ def main() -> int:
         check("update detected", r.get("available") is True and r.get("latest") == FAKE_VERSION,
               str({k: r.get(k) for k in ("available", "latest", "reason")}))
         asset = r.get("asset") or {}
+        # The updater legitimately picks the NSIS installer on Windows; the old
+        # hard-coded "zip" assertion made this suite fail there (#28).
+        expected_kind = "nsis" if os.name == "nt" else "zip"
         check("asset picked for this platform",
-              asset.get("kind") == "zip" and asset.get("sha256") == digest,
-              str(asset.get("name")))
+              asset.get("kind") == expected_kind and asset.get("sha256") == digest,
+              f"expected={expected_kind} got={asset.get('kind')} name={asset.get('name')}")
 
         # ---- 4. download + checksum ----
         requests.post(f"{BASE}/update/download", timeout=30)

@@ -32,21 +32,33 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 
 def load_catalogue():
-    esbuild = os.path.join(FRONT, "node_modules", ".bin", "esbuild")
-    if not os.path.isfile(esbuild):
+    """Compile the real message catalogue via esbuild's JS API.
+
+    Executing ``node_modules/.bin/esbuild`` directly fails on Windows with
+    ``WinError 193`` (the npm shim is not a Win32 executable). Driving the same
+    API through ``node -e`` is portable and still compiles the real merged
+    catalogue rather than approximating it with a regex (#28).
+    """
+    import shutil
+
+    entry = os.path.join(FRONT, "src", "i18n", "messages.ts")
+    if (not os.path.isfile(entry)
+            or not os.path.isdir(os.path.join(FRONT, "node_modules", "esbuild"))
+            or shutil.which("node") is None):
         return None
     with tempfile.TemporaryDirectory() as td:
         out = os.path.join(td, "messages.cjs")
-        subprocess.run(
-            [esbuild, os.path.join(FRONT, "src", "i18n", "messages.ts"),
-             "--bundle", "--platform=node", "--format=cjs",
-             f"--outfile={out}", "--log-level=error"],
-            check=True, capture_output=True,
-        )
-        js = ("const m=require(" + json.dumps(out) + ").messages;"
-              "process.stdout.write(JSON.stringify(m))")
-        res = subprocess.run(["node", "-e", js], check=True,
-                             capture_output=True, text=True)
+        script = (
+            "const esbuild = require('esbuild');"
+            "esbuild.buildSync({entryPoints:[%s],bundle:true,platform:'node',"
+            "format:'cjs',outfile:%s,logLevel:'error'});"
+            "process.stdout.write(JSON.stringify(require(%s).messages));"
+        ) % (json.dumps(entry), json.dumps(out), json.dumps(out))
+        try:
+            res = subprocess.run(["node", "-e", script], cwd=FRONT, check=True,
+                                 capture_output=True, text=True)
+        except OSError:
+            return None
         return json.loads(res.stdout)
 
 

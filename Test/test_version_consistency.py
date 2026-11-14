@@ -47,13 +47,18 @@ def main() -> int:
           "Setup-v${APP_VERSION}.exe" in text("backend/aitestlab.nsi"))
 
     # Runtime authority for #25 remote update: /api/health must report the same
-    # version. Skip when the dev server is simply not running.
+    # version. ``_negotiate_port()`` may move the dev server to 8001+, and a
+    # system proxy makes plain urlopen miss localhost entirely — both used to
+    # turn this assertion into a permanent silent SKIP (issue #31 review #1).
+    port = os.environ.get("AITESTLAB_PORT", "8000").strip() or "8000"
+    url = f"http://127.0.0.1:{port}/api/health"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8000/api/health", timeout=5) as r:
+        with opener.open(url, timeout=5) as r:
             live = json.loads(r.read().decode("utf-8")).get("version")
         check("live /api/health version matches", live == cfg, f"{live} / {cfg}")
     except Exception as e:
-        print(f"  SKIP  backend not running ({type(e).__name__})")
+        print(f"  SKIP  backend not running on {url} ({type(e).__name__}: {e})")
 
     if _failures:
         print(f"\nFAILED: {len(_failures)} check(s): {', '.join(_failures)}")

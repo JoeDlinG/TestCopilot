@@ -39,7 +39,11 @@ hiddenimports += ["pyvisa_py"]
 # CAN / serial / USB
 hiddenimports += collect_submodules("can")
 hiddenimports += ["serial.serialwin32", "serial.tools.list_ports_windows"]
-hiddenimports += ["usb.backend.libusb1"]
+# The libusb backend is only reachable on POSIX: Windows MG100 devices use the
+# COMx serial path (\"connect()\" downgrades a legacy transport=usb). Bundling
+# pyusb's libusb1 backend on Windows only adds dead modules to the installer.
+if sys.platform != "win32":
+    hiddenimports += ["usb.backend.libusb1"]
 # App + restart helper
 hiddenimports += ["restart_helper", "update_helper", "app", "app.main"]
 

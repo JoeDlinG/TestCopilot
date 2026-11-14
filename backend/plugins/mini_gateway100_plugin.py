@@ -265,11 +265,28 @@ class MiniGateway100Plugin(BaseProtocolPlugin):
             ``tcp_port`` (default ``6025``)
           * common: ``board_id`` (default 11), ``timeout`` (default 2.0 s)
         """
-        config = config or {}
+        config = dict(config or {})
         transport = str(config.get("transport") or "serial").strip().lower()
         if transport not in TRANSPORTS:
             raise ValueError(
                 f"不支持的连接方式 '{transport}'，可选：{' / '.join(TRANSPORTS)}"
+            )
+
+        # Upgrade compatibility (issue #30): v2.3.4/2.3.5 persisted
+        # ``transport: "usb"`` for MG100 devices whose USB interface was edited
+        # on Windows. Raw libusb bulk is POSIX-only, so those saved rows failed
+        # to connect until the user manually re-selected the interface. Downgrade
+        # them to the CDC serial path instead, restoring the COM port from the
+        # config / serial_port column (device_service._get_connect_config).
+        if os.name == "nt" and transport == "usb":
+            port = str(config.get("port") or config.get("serial_port") or "").strip() \
+                or _default_port()
+            config["transport"] = "serial"
+            config["port"] = port
+            transport = "serial"
+            logger.warning(
+                "MG100 legacy transport=usb is unsupported on Windows; "
+                "downgraded to serial (%s)", port
             )
 
         self._config = config

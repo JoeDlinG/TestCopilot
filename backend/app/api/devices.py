@@ -176,7 +176,9 @@ async def update_device_interface(
     enabled_protocols = await plugin_service.get_enabled_protocol_names(db)
     is_plugin_protocol = plugin_protocol in enabled_protocols
     if not is_plugin_protocol and plugin_protocol in STANDARD_PROTOCOLS:
-        polluted = await plugin_service.match_device_to_plugin(db, stored_before)
+        polluted = await plugin_service.match_device_to_plugin(
+            db, stored_before, current_protocol=plugin_protocol
+        )
         if polluted:
             logger.info(
                 "device %s looks like a polluted plugin device: restoring "

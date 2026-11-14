@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-14: Issue #28–#34 集中收口（v2.3.7）
+
+### 背景
+
+在 `70e9046`（v2.3.6 之后的 #33 修复）上复核 #28–#34：#33 主体已修复但启动协议自愈误伤通用 CAN 设备（新登记 #34）；#29 / #30 / #32 各有明确的遗留项；#31 的四处版本口径一致但新提交未 bump；#28 的发布验证计划交付物缺失、Windows 实跑有 5 个套件因平台假设失败。本版本一次性收口并统一 bump 到 `2.3.7`。
+
+### 修复内容
+
+- **#34（P1 反向误伤）**：`plugin_private_keys()` 减去的只是接口 spec 字段，`interface` / `channel` / `loopback` 仍是通用 `CANInterface` 的合法配置键，单键命中即改写 `protocol`。新增 `GENERIC_DRIVER_CONFIG_KEYS` 与 `PLUGIN_POLLUTION_TARGETS` 单一真相源；`match_device_to_plugin()` 现在要求「至少一个插件专属键 + 至少两个签名键 + 不含 `can_channel` / `can_id` 通用标记 + 当前协议属于该插件的污染目标」；`restore_plugin_protocols()` 与 `update_device_interface()` 均传入 `current_protocol` 并写审计日志。新增 `Test/test_issue34_generic_can.py`，用真实模块与真实修复函数验证 5 组通用 CAN 配置不被改写、污染设备仍被还原。
+- **#33 收尾**：`_extract_commands()` 增加 `_visible_is_command()`，裸 SCPI 指令（如 `*IDN?`）不再被丢弃；`normalize_node_commands()` 同步认可裸指令并清理隐藏旧副本。
+- **#29 遗留 5 项**：`root()` / `spa_fallback()` 改 `@app.api_route(..., methods=["GET","HEAD"])`，`HEAD /` 不再 405；`/assets` 由 `StaticFiles` mount 改为自建路由逐响应显式 `media_type`（不再依赖全局 `mimetypes`）；启动日志拆成 `index_media_type` / `entry_media_type` 并打印真实入口 JS；`frontend/index.html` 的 boot guard 在 `document.body` 为 null 时延迟到 `DOMContentLoaded` 挂载面板；新增 `Test/test_static_runtime.py`，用 TestClient 对 HEAD、JS MIME、JSON 404、`/api/health`、`/api/system/diag` 做运行时断言。另在 SPA catch-all 上方固化「非 `/api` 端点须先注册」的约束。
+- **#30 遗留项**：`mini_gateway100_plugin.connect()` 在 Windows 上把存量 `transport=usb` 自动降级为 `serial` 并恢复 COM 端口；`device_service._get_connect_config()` 在 `config.port` 缺失时回填 `serial_port` 列；`aitestlab.spec` 的 `usb.backend.libusb1` hidden import 改为 POSIX 条件化。门禁补 `NoBackendError` 的行为断言（不再是源码字符串扫描）与存量降级用例。
+- **#32 遗留项**：`list_projects()` 对缺 `counts` 头的工程按 `data` 各段现算计数，并在每次列举时淘汰已删除文件的缓存条目；`Test/test_regression_guards.py` 的缓存门禁改在临时目录造真实工程文件，断言「解析 1 次 → 命中不重解析 → 改动后重解析 → 删除后淘汰」，不再有 `parses 0 -> 0` 空验证。
+- **#31 版本口径**：`APP_VERSION` / NSIS `!define APP_VERSION` / HISTORY 首章 / KANBAN 抬头统一为 `2.3.7`；`test_version_consistency.py` 的 live check 改为读取 `AITESTLAB_PORT` 并用 `ProxyHandler({})` 绕开系统代理，避免端口顺延或有代理时静默 SKIP。
+- **#28 发布验证**：补齐交付物 `docs/TEST_VALIDATION_PLAN.md`（17 模块矩阵、E2E 场景、Release Gate、缺陷模板、自动化映射）；5 个 Windows 失败套件改为平台无关 / 条件断言：`test_peakcan_prepare` 按平台校验提示、`test_i18n_zh_pages` 用 `node` 调 esbuild API 而非直接执行二进制、`test_mgw100_connect` 的 USB 原生用例固定 POSIX 语义、`test_result_parsing` / `test_parser_unique_and_trend` 用绝对 DB 路径、`test_update_service` 按平台选择 Release asset。新增运行时门禁 `test_static_runtime` 与 `test_issue34_generic_can` 一并登记进 `Test/run_all.sh`。
+
+### 验证
+
+`bash Test/run_all.sh`（全量，含 4 个新增/改造门禁）、`cd frontend && npm run build`、`tsc --noEmit` 口径、TestClient 静态路由运行时断言；版本四处一致性 + 运行时 `/api/health` 实测。Windows 安装版真机 E2E 与真实 PCAN-Basic 硬件回归仍需 Windows 环境执行，已在验证计划中列为条件项。
+
+---
+
 ## 2026-11-08: Issue #29–#32 集中修复（v2.3.6）
 
 ### 背景

@@ -707,8 +707,17 @@ def _project_meta(path: Path, stat) -> Dict[str, Any]:
     if cached and cached[0] == key:
         return cached[1]
     raw = json.loads(path.read_text(encoding="utf-8"))
+    counts = raw.get("counts")
+    if not counts:
+        # Old / hand-edited bundles have no counts header, which made the
+        # project tree show seven empty sections. Recompute once from the data
+        # sections and cache the result like any other header metadata
+        # (issue #32 review #2).
+        data = raw.get("data") or {}
+        counts = {k: len(v) for k, v in data.items()
+                  if isinstance(v, (list, dict))}
     meta = {
-        "counts": raw.get("counts") or {},
+        "counts": counts,
         "project_name": raw.get("project_name"),
         "app_version": raw.get("app_version"),
         "exported_at": raw.get("exported_at"),
@@ -743,6 +752,12 @@ def list_projects() -> List[Dict[str, Any]]:
         except Exception as exc:  # noqa: BLE001 - listing must survive a bad file
             entry["error"] = f"文件解析失败：{exc}"
         items.append(entry)
+    # Do not keep metadata for files that were deleted: the cache is module
+    # level and a long-running desktop app would otherwise leak one entry per
+    # removed project forever (issue #32 review #3).
+    live_paths = {str(p) for p in PROJECTS_DIR.glob("*.json")}
+    for stale in set(_PROJECT_META_CACHE) - live_paths:
+        _PROJECT_META_CACHE.pop(stale, None)
     return items
 
 

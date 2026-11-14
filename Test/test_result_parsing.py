@@ -23,7 +23,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _testutil import ensure_connected, find_device, flat_fields  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api"
-DB = "backend/aitestlab.db"
+# Absolute path: the suite must work from any CWD (CI / Windows packaged
+# verification), not only when launched from the repo root (#28).
+DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                  "backend", "aitestlab.db")
 
 failures = []
 

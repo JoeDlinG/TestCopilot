@@ -20,7 +20,18 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 | **自然语言查询** | 文字/语音自然语言查询测试数据（NL2SQL），查询历史管理 |
 | **测试报告** | 自定义字段模板，支持 PDF/HTML/Markdown 输出，AI 生成测试结论 |
 
-## 近期修复（v2.3.6 之后）
+## 版本与近期修复（v2.3.7）
+
+`v2.3.7` 对应 Issue #28–#34 的集中收口，详细变更见 [HISTORY.md](HISTORY.md)。
+
+- **发布验证与 Windows 门禁（Issue #28）**：新增 [docs/TEST_VALIDATION_PLAN.md](docs/TEST_VALIDATION_PLAN.md)（17 模块矩阵 / E2E 场景 / Release Gate / 缺陷模板）；5 个仅因平台假设失败的套件改为平台无关断言；静态路由与工程缓存补上运行时门禁。
+- **插件协议自愈误伤通用 CAN 设备（Issue #34）**：收紧归属判定为「插件专属键 + 多键命中 + 排除通用 CAN 标记 + 限定污染目标协议」，启动修复写审计日志；正常 `can` 设备不再被静默改写为 `peakcan`。
+- **静态路由与首启（Issue #29）**：`HEAD /` 与 SPA 路由返回 200；`/assets` 改为自建路由逐响应显式 MIME；启动日志区分 `index_media_type` / `entry_media_type`；boot guard 在 `<head>` 早期失败时也能挂出诊断面板。
+- **Windows 存量配置（Issue #30）**：旧版保存的 `transport=usb` 在 Windows 自动降级为 `serial` 并恢复 COM 端口，无需手动重选接口。
+- **版本口径与工程缓存（Issue #31 / #32）**：四处版本号统一到 `2.3.7`，live check 支持 `AITESTLAB_PORT` 且绕开系统代理；缺 `counts` 的工程现算计数、缓存按现存文件淘汰，缓存门禁改为真实文件断言。
+- **裸指令（Issue #33 收尾）**：`*IDN?` 等无特殊前缀的 SCPI 指令不再被命令提取器丢弃。
+
+### 上一轮修复
 
 - **插件协议被覆盖导致 PeakCAN 设备失联（Issue #33）**：编辑设备接口时 `protocol` 可能被通用 `can` 覆盖，残留的插件私有配置让通用 `CANInterface` 接管设备；`send_command()` 早期对**任何**异常都断开连接，一次命令错误会被放大成设备掉线。现在用「已启用插件白名单 + 插件私有配置键」判定设备归属（`get_enabled_protocol_names()` / `plugin_private_keys()` / `match_device_to_plugin()`），启动时自动修复已被污染的记录（`restore_plugin_protocols()`），`peakcan.can` 绑定只回填 `can_channel` 而不臆造 `transport`，且仅传输层错误（`_is_transport_error()`）才触发断连。已在真实 PEAK 硬件（`0c72:0012` / `can0`）上验证连接与命令下发不断线。
 - **只改流程图指令，生成的代码仍带旧指令**：AI 生成的节点会在 `config.command`、隐藏的 `config.parameters.command`、`config.commands`，甚至 `data.label` / `config.expected` 里留下多份指令副本；仅修改可见指令时，旧的 `0X20` 仍会被一并合并进代码。现在执行引擎与代码生成器共用 `ExecutionEngine._extract_commands()` 的**优先级**取值（可见 `config.command` 优先，隐藏结构化字段仅作回退，不再做并集合并），编辑器在用户改写指令时清除隐藏副本，后端在流程图新建/更新时通过 `normalize_flow_commands()` 归一化。删除节点一直生效，是因为删除时整份副本被一并移除。
@@ -195,7 +206,9 @@ AITestLab/
 │   ├── run_all.sh                     # 全量回归入口（需后端 :8000）
 │   ├── test_issue33_peakcan_protocol.py  # 插件协议白名单与启动修复门禁
 │   ├── test_flow_command_source.py   # 流程图指令单一真相源门禁
-│   └── test_startup_resilience.py    # 启动自愈与服务契约门禁
+│   ├── test_startup_resilience.py    # 启动自愈与服务契约门禁
+│   ├── test_issue34_generic_can.py   # 通用 CAN 设备不被改写的反向门禁
+│   └── test_static_runtime.py        # 静态路由运行时门禁（HEAD / MIME / 404）
 │
 └── README.md                          # 本文件
 ```
@@ -330,7 +343,9 @@ curl -X POST http://localhost:8000/api/plugins/install \
 bash Test/run_all.sh
 ```
 
-本轮新增门禁：`test_issue33_peakcan_protocol.py`（插件协议白名单、污染记录还原、断连异常收窄）、`test_flow_command_source.py`（流程图指令优先级、隐藏副本清理、旧客户端保存归一化）、`test_startup_resilience.py`（`ExecutionEngine` 方法契约、AST 类体闭合检查、故障注入下的启动存活）。三者均已登记在 `Test/run_all.sh`；后续新增 `test_*.py` 时请同步登记，否则不会被真正执行。依赖真实 MG100 硬件的套件在无设备时自动 SKIP，不会误报为产品回归。前端另用 `cd frontend && npm run build` 校验。
+新增门禁：`test_issue33_peakcan_protocol.py`（插件协议白名单、污染记录还原、断连异常收窄）、`test_flow_command_source.py`（流程图指令优先级、隐藏副本清理、旧客户端保存归一化）、`test_startup_resilience.py`（`ExecutionEngine` 方法契约、AST 类体闭合检查、故障注入下的启动存活）、`test_issue34_generic_can.py`（真实调用启动修复，断言通用 CAN 设备不被改写）、`test_static_runtime.py`（TestClient 断言 `HEAD /`、JS MIME、JSON 404、`/api/health`）。全部登记在 `Test/run_all.sh`；后续新增 `test_*.py` 时请同步登记，否则不会被真正执行。
+
+`test_regression_guards.py` 中的工程缓存断言使用临时目录里的真实工程文件（命中 / 失效 / 淘汰），不再是「空目录恒真」的源码标记扫描。依赖真实 MG100 / PCAN 硬件的套件在无设备或 Windows 平台按条件 SKIP，不会误报为产品回归。前端另用 `cd frontend && npm run build`（内含 `tsc` 与 `i18n-guard`）校验。Windows 安装版真机 E2E 与 PCAN-Basic 硬件回归见 [docs/TEST_VALIDATION_PLAN.md](docs/TEST_VALIDATION_PLAN.md)。
 
 ## 文档索引
 
@@ -342,6 +357,7 @@ bash Test/run_all.sh
 | [DB_DESIGN.md](docs/DB_DESIGN.md) | 数据库设计：11 张表、字段定义、索引策略、迁移方案 |
 | [TECH_DECISIONS.md](docs/TECH_DECISIONS.md) | 技术决策：9 项选型分析、5 条 ADR、性能目标、安全设计 |
 | [USER_MANUAL.md](docs/USER_MANUAL.md) | 使用手册：详细操作指南 |
+| [TEST_VALIDATION_PLAN.md](docs/TEST_VALIDATION_PLAN.md) | 发布验证计划：17 模块测试矩阵、E2E 场景、Release Gate、缺陷模板与自动化映射 |
 | [CUSTOM_DASHBOARD_IDEAS.md](docs/CUSTOM_DASHBOARD_IDEAS.md) | 自定义仪表盘：设计草案与头脑风暴（待办功能） |
 | [PEAKCAN_PLUGIN.md](docs/PEAKCAN_PLUGIN.md) | PeakCAN USB 插件：驱动安装、配置参数、CAN/CAN FD 通信指令 |
 | [RIGOL_OSCILLOSCOPE_PLUGIN.md](docs/RIGOL_OSCILLOSCOPE_PLUGIN.md) | RIGOL 示波器插件：SCPI 远程控制（LAN/USB-TMC/VISA）、波形读取、故障排查 |
