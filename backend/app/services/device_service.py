@@ -44,6 +44,24 @@ _active_connections: Dict[str, CommunicationInterface] = {}
 _command_in_flight: Dict[str, bool] = {}
 
 
+def _is_transport_error(exc: BaseException) -> bool:
+    """True when an exception means the *transport* broke, not the command.
+
+    A command-semantic error (bad CAN string, out-of-range byte when the generic
+    CAN interface swallowed a plugin command, …) must NOT yank the device
+    offline (issue #33 A1): the link is fine, only this one command is wrong.
+    python-can's ``CanError`` (bus-off etc.) arrives wrapped as ``RuntimeError``
+    by the plugins, so it is recognised by message here to keep this module
+    import-safe when python-can is absent.
+    """
+    if isinstance(exc, (ConnectionError, OSError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    msg = str(exc).lower()
+    return isinstance(exc, RuntimeError) and any(
+        token in msg for token in ("send error", "canerror", "bus-off")
+    )
+
+
 class DeviceService:
     """Service for managing test device connections."""
 
@@ -66,6 +84,41 @@ class DeviceService:
             logger.info("Reset stale device connections on startup")
         except Exception as e:
             logger.warning(f"Failed to reset stale connections: {e}")
+
+    async def restore_plugin_protocols(self, db: AsyncSession) -> int:
+        """Repair devices whose ``protocol`` was overwritten by "edit device
+        interface" (issue #33).
+
+        Before the v2.3.4 guard, saving the interface config unconditionally
+        rewrote a plugin device's ``protocol`` (e.g. ``peakcan``) to the generic
+        bus name of the chosen spec (``can``), silently bypassing the plugin on
+        the next connect. The code guard cannot rescue rows already persisted;
+        this startup repair recognises them by the plugin's private config keys
+        and restores the plugin protocol.
+
+        Returns the number of repaired devices.
+        """
+        restored = 0
+        rows = (await db.execute(select(Device))).scalars().all()
+        for device in rows:
+            if device.protocol not in STANDARD_PROTOCOLS:
+                continue
+            stored = self._parse_json_field(device.config) or {}
+            if not isinstance(stored, dict) or not stored:
+                continue
+            proto = await plugin_service.match_device_to_plugin(db, stored)
+            if proto and proto != device.protocol:
+                logger.info(
+                    "restoring device %s protocol: %s -> %s",
+                    device.id, device.protocol, proto,
+                )
+                device.protocol = proto
+                device.updated_at = utc_now()
+                restored += 1
+        if restored:
+            await db.commit()
+            logger.info("restored %d device(s) to their plugin protocol", restored)
+        return restored
 
     def _parse_json_field(self, value: Any) -> Any:
         """Parse a JSON string field from DB, or return as-is if already parsed."""
@@ -302,6 +355,24 @@ class DeviceService:
             raise ValueError(f"Device {device_id} not found")
 
         try:
+            # Symmetric with delete_device(): a re-connect must tear down the
+            # old bus first. Re-Initialising the same PCAN channel (issue #33
+            # A2) leaks the old notifier/listener and can yank the channel out
+            # from under the new instance, which then drops on the next send.
+            old = _active_connections.pop(device.id, None)
+            if old is not None:
+                try:
+                    await asyncio.wait_for(old.disconnect(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Timed out disconnecting %s before reconnect", device_id)
+                except Exception as e:
+                    logger.warning("Error disconnecting %s before reconnect: %s", device_id, e)
+                _command_in_flight.pop(device.id, None)
+                try:
+                    stop_device_monitor(device.id)
+                except Exception as e:
+                    logger.warning("Error stopping monitor for %s: %s", device.id, e)
+
             # Build merged config
             merged_config = self._get_connect_config(device, config)
 
@@ -427,64 +498,95 @@ class DeviceService:
 
         _command_in_flight[device_id] = True
         try:
-            # Execute command
-            response = await interface.send(command)
+            # Execute the command on the wire. Only a transport-level failure
+            # here means the connection is actually broken; a command-semantic
+            # error (bad CAN string, out-of-range byte, …) keeps the link up.
+            try:
+                response = await interface.send(command)
+            except Exception as e:
+                com_logger.log_error(device_id, str(e), command=command)
+                sent_log.status = LogStatus.ERROR.value
+                sent_log.error_message = str(e)
+                await db.commit()
+                if _is_transport_error(e):
+                    # Real break: tear the connection down.
+                    _active_connections.pop(device_id, None)
+                    device.status = DeviceStatus.DISCONNECTED.value
+                    device.disconnected_at = utc_now()
+                    await db.commit()
+                    logger.warning(
+                        f"Connection to {device_id} broken, auto-disconnected: {e}"
+                    )
+                    raise ConnectionError(
+                        f"Communication error with device {device.name}: {e}"
+                    ) from e
+                # Command failed but the transport is still up: surface the
+                # failure without disconnecting the device.
+                raise ConnectionError(
+                    f"Command failed for device {device.name}: {e}"
+                ) from e
+
             duration_ms = int((utc_now() - start_time).total_seconds() * 1000)
 
-            # Log received response to file
-            com_logger.log_received(device_id, response)
-            if execution_id:
-                _el = get_execution_log(execution_id)
-                if _el:
-                    _el.communication(device_id, "RECV", str(response))
+            # Bookkeeping below (file/execution logs, WS broadcast, DB commit)
+            # must never be mistaken for a broken connection: a failure here is
+            # logged and the send result is still returned.
+            try:
+                com_logger.log_received(device_id, response)
+                if execution_id:
+                    _el = get_execution_log(execution_id)
+                    if _el:
+                        _el.communication(device_id, "RECV", str(response))
 
-            # Push the received response to the communication terminal in real time
-            recv_ts = utc_now().isoformat()
-            await broadcast_device_update(device_id, {
-                "type": "command_response",
-                "command": command,
-                "response": response,
-                "duration_ms": duration_ms,
-                "timestamp": recv_ts,
-            })
+                # Push the received response to the communication terminal in real time
+                recv_ts = utc_now().isoformat()
+                await broadcast_device_update(device_id, {
+                    "type": "command_response",
+                    "command": command,
+                    "response": response,
+                    "duration_ms": duration_ms,
+                    "timestamp": recv_ts,
+                })
 
-            # Update sent log with timing
-            sent_log.duration_ms = duration_ms
+                # Update sent log with timing
+                sent_log.duration_ms = duration_ms
 
-            # Normalize response to a persistable string (CAN responses are dicts)
-            resp_raw = response if isinstance(response, str) else (
-                json.dumps(response, ensure_ascii=False) if isinstance(response, (dict, list)) else str(response)
-            )
-            resp_hex = None
-            resp_size = 0
-            if isinstance(response, dict):
-                resp_hex = response.get("data") if isinstance(response.get("data"), str) else None
-                d = response.get("dlc")
-                resp_size = d if isinstance(d, int) else (
-                    len(resp_hex.replace(" ", "")) // 2 if resp_hex else 0
+                # Normalize response to a persistable string (CAN responses are dicts)
+                resp_raw = response if isinstance(response, str) else (
+                    json.dumps(response, ensure_ascii=False) if isinstance(response, (dict, list)) else str(response)
                 )
-            elif isinstance(response, str):
-                resp_hex = response.encode().hex()
-                resp_size = len(response.encode())
+                resp_hex = None
+                resp_size = 0
+                if isinstance(response, dict):
+                    resp_hex = response.get("data") if isinstance(response.get("data"), str) else None
+                    d = response.get("dlc")
+                    resp_size = d if isinstance(d, int) else (
+                        len(resp_hex.replace(" ", "")) // 2 if resp_hex else 0
+                    )
+                elif isinstance(response, str):
+                    resp_hex = response.encode().hex()
+                    resp_size = len(response.encode())
 
-            # Log received response
-            recv_log = CommunicationLog(
-                device_id=device_id,
-                execution_id=execution_id,
-                step_result_id=step_result_id,
-                direction=LogDirection.RECEIVED.value,
-                protocol=device.protocol,
-                raw_data=resp_raw,
-                raw_data_hex=resp_hex,
-                raw_data_size=resp_size,
-                status=LogStatus.SUCCESS.value,
-                duration_ms=duration_ms,
-                response_log_id=sent_log.id,
-            )
-            db.add(recv_log)
+                # Log received response
+                recv_log = CommunicationLog(
+                    device_id=device_id,
+                    execution_id=execution_id,
+                    step_result_id=step_result_id,
+                    direction=LogDirection.RECEIVED.value,
+                    protocol=device.protocol,
+                    raw_data=resp_raw,
+                    raw_data_hex=resp_hex,
+                    raw_data_size=resp_size,
+                    status=LogStatus.SUCCESS.value,
+                    duration_ms=duration_ms,
+                    response_log_id=sent_log.id,
+                )
+                db.add(recv_log)
 
-            device.last_seen = utc_now()
-            await db.commit()
+                device.last_seen = utc_now()
+                await db.commit()
+            except Exception as e:
+                logger.warning("post-send bookkeeping failed for %s: %s", device_id, e)
 
             return {
                 "device_id": device_id,
@@ -492,23 +594,6 @@ class DeviceService:
                 "response": response,
                 "duration_ms": duration_ms,
             }
-        except Exception as e:
-            # Log error to file
-            com_logger.log_error(device_id, str(e), command=command)
-
-            # Log error
-            sent_log.status = LogStatus.ERROR.value
-            sent_log.error_message = str(e)
-            await db.commit()
-
-            # Auto-cleanup broken connection
-            _active_connections.pop(device_id, None)
-            device.status = DeviceStatus.DISCONNECTED.value
-            device.disconnected_at = utc_now()
-            await db.commit()
-            logger.warning(f"Connection to {device_id} broken, auto-disconnected: {e}")
-
-            raise ConnectionError(f"Communication error with device {device.name}: {e}") from e
         finally:
             _command_in_flight.pop(device_id, None)
 

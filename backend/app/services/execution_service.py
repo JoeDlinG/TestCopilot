@@ -130,30 +130,9 @@ class ExecutionEngine:
         ]
 
     @classmethod
-    def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
-        """Extract the real device command(s) carried by a flow node.
-
-        The generator writes structured commands into ``config.parameters``
-        (``command`` or ``commands``), while ``config.command`` is usually a
-        natural-language sentence that merely embeds them - so it is parsed as
-        a fallback.
-        """
-        config = node.get("config") or {}
-        params = config.get("parameters") or {}
+    def _scan_commands(cls, text: str) -> List[str]:
+        """Parse every device command embedded in one piece of text."""
         found: List[str] = []
-
-        raw_list = params.get("commands")
-        if isinstance(raw_list, list):
-            found.extend(str(c).strip() for c in raw_list if c)
-        single = params.get("command")
-        if single:
-            found.append(str(single).strip())
-
-        text = " ".join([
-            str(config.get("command") or ""),
-            str((node.get("data") or {}).get("label") or ""),
-            str(config.get("expected") or ""),
-        ])
         found.extend(cls._CMD_RE.findall(text))
         found.extend(cls._json_commands(text))
         found.extend(
@@ -163,6 +142,64 @@ class ExecutionEngine:
         if not found:
             # tolerate commands written without the trailing ";"
             found.extend(cls._CMD_RE_LOOSE.findall(text))
+        return found
+
+    @classmethod
+    def _extract_commands(cls, node: Dict[str, Any]) -> List[str]:
+        """Extract the real device command(s) carried by a flow node.
+
+        A node can hold several *copies* of its command: the user-editable
+        ``config.command`` text, the AI generator's structured
+        ``config.parameters.command(s)`` / ``config.commands``, and free-text
+        ``data.label`` / ``config.expected``.  These are alternative
+        representations of the same step, NOT additive commands.
+
+        Merging every source (the old behaviour) made an edited node issue both
+        the new command and a stale hidden copy — e.g. after changing an MG100
+        RX id from ``0X20`` to ``0X10`` in the flowchart, the generated script
+        still sent ``@11_CONFIG=...,0X20;`` from ``config.parameters.command``.
+        Only deleting the whole node removed the stale copy, which is why
+        "delete a step" appeared to work while "edit the instruction" did not.
+
+        Priority — first source that yields commands wins:
+          1. ``config.command`` — the field the user actually sees and edits;
+          2. structured command fields — AI-generated flows whose visible text
+             is only a human-readable summary;
+          3. label / expected — legacy hand-written flows.
+        """
+        config = node.get("config") or {}
+        data = node.get("data") or {}
+        params = config.get("parameters") or {}
+        label = str(data.get("label") or "")
+        expected = str(config.get("expected") or "")
+        visible = str(config.get("command") or "")
+
+        # 1. The editable field is the single source of truth when it holds a
+        #    real command. Hidden copies are deliberately NOT merged in.
+        found = cls._scan_commands(visible)
+
+        # 2. AI-generated / imported flows keep the real command in a hidden
+        #    structured field and use natural language for the visible text.
+        if not found:
+            declared = config.get("commands")
+            if isinstance(declared, list):
+                found.extend(str(c).strip() for c in declared if c)
+            raw_list = params.get("commands")
+            if isinstance(raw_list, list):
+                found.extend(str(c).strip() for c in raw_list if c)
+            single = params.get("command")
+            if single:
+                found.append(str(single).strip())
+
+        # 3. Legacy hand-written flows with an *empty* command field sometimes
+        #    embed the command in the node title or the expected-result text.
+        #    Only in that case: when ``config.command`` holds anything (even a
+        #    Chinese sentence or a SCPI command without the ``@11_..;`` shape),
+        #    it is the user's explicit input and description text must NOT be
+        #    mined for extra commands — otherwise an "期望返回 @11_HELLO;" note
+        #    would silently issue a second command.
+        if not found and not visible.strip():
+            found = cls._scan_commands(" ".join([label, expected]))
 
         ordered: List[str] = []
         seen = set()
@@ -172,11 +209,45 @@ class ExecutionEngine:
                 ordered.append(cmd)
 
         # A single command described as "循环读取 N 次" is executed N times.
-        m = cls._REPEAT_RE.search(text)
+        m = cls._REPEAT_RE.search(" ".join([visible, label, expected]))
         if m and len(ordered) == 1:
             ordered = ordered * min(int(m.group(1)), cls.MAX_REPEAT)
 
         return ordered
+
+    @classmethod
+    def normalize_node_commands(cls, node: Dict[str, Any]) -> Dict[str, Any]:
+        """Collapse a node's duplicate command copies to a single source.
+
+        Called when a flowchart is saved. If the user-editable ``config.command``
+        holds a real command, the hidden structured copies are stale and are
+        removed, so exporting / re-importing the project cannot resurrect an
+        old instruction. Nodes whose visible text is only a Chinese summary keep
+        their hidden structured command untouched.
+        """
+        if not isinstance(node, dict):
+            return node
+        config = node.get("config")
+        if not isinstance(config, dict):
+            return node
+        visible = str(config.get("command") or "")
+        if not visible.strip() or not cls._scan_commands(visible):
+            return node
+
+        params = config.get("parameters")
+        has_stale = (isinstance(params, dict)
+                     and (params.get("command") or params.get("commands"))) \
+            or bool(config.get("commands"))
+        if not has_stale:
+            return node
+
+        new_config = dict(config)
+        new_config.pop("commands", None)
+        if isinstance(params, dict):
+            new_params = {k: v for k, v in params.items()
+                          if k not in ("command", "commands")}
+            new_config["parameters"] = new_params
+        return {**node, "config": new_config}
 
     @staticmethod
     def _infer_protocol(command: str) -> Optional[str]:
@@ -1438,3 +1509,15 @@ async def count_stale_bindings(db: AsyncSession) -> Dict[str, Any]:
 
 
 execution_engine = ExecutionEngine()
+
+
+def normalize_flow_commands(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalise every node in a flowchart before it is persisted.
+
+    Module-level (not a method): it must never be inserted into the middle of
+    the ``ExecutionEngine`` class body, or the class would close early and all
+    following methods become unreachable nested functions.
+    """
+    if not isinstance(nodes, list):
+        return nodes
+    return [ExecutionEngine.normalize_node_commands(n) for n in nodes]

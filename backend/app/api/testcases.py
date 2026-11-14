@@ -33,6 +33,7 @@ from app.services.trend_service import collect_parsed_series
 from app.services.execution_service import (
     backfill_device_keys,
     count_stale_bindings,
+    normalize_flow_commands,
     rebind_stale_devices,
     switch_case_device,
 )
@@ -346,6 +347,7 @@ async def create_test_flow(
     test_case_id: str, data: TestFlowCreate, db: AsyncSession = Depends(get_db),
 ):
     _validate_parser_names(data.nodes)
+    data.nodes = normalize_flow_commands(data.nodes)
 
     # Verify test case exists
     tc_result = await db.execute(select(TestCase).where(TestCase.id == test_case_id))
@@ -393,6 +395,8 @@ async def update_test_flow(
     test_case_id: str, data: TestFlowUpdate, db: AsyncSession = Depends(get_db),
 ):
     _validate_parser_names(data.nodes)
+    if data.nodes is not None:
+        data.nodes = normalize_flow_commands(data.nodes)
 
     result = await db.execute(select(TestFlow).where(TestFlow.testcase_id == test_case_id))
     flow = result.scalar_one_or_none()

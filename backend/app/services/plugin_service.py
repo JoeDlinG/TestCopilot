@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.models.models import Plugin, PluginStatus
 from app.core.config import settings
+from app.core.interfaces import all_interface_field_keys
 from app.core.timeutils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,73 @@ class PluginService:
                     f"{protocol_name}: {e}"
                 )
                 continue
+        return None
+
+    async def list_enabled_plugins_detail(
+        self, db: AsyncSession
+    ) -> List[tuple]:
+        """Return ``(protocol_name, class)`` for every ENABLED plugin.
+
+        Shared by the protocol-whitelist check and the pollution repair: both
+        need the *actual* plugin class, not just the DB row, so loading failures
+        degrade to "skip" instead of throwing.
+        """
+        plugins = await self.list_plugins(db)
+        detail: List[tuple] = []
+        for plugin in plugins:
+            if plugin.status != PluginStatus.ENABLED.value:
+                continue
+            try:
+                cls = await self.load_plugin_class(plugin)
+                proto = getattr(cls, "protocol_name", None) or plugin.protocol_type
+                if proto:
+                    detail.append((proto, cls))
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load enabled plugin {plugin.name}: {e}"
+                )
+                continue
+        return detail
+
+    async def get_enabled_protocol_names(self, db: AsyncSession) -> set:
+        """The protocol_name of every ENABLED plugin (the plugin whitelist)."""
+        return {proto for proto, _ in await self.list_enabled_plugins_detail(db)}
+
+    @staticmethod
+    def plugin_private_keys(cls: type) -> set:
+        """Config keys a plugin owns that no interface spec declares.
+
+        These are the plugin's *signature* keys — e.g. PeakCAN's ``channel`` /
+        ``interface`` / ``loopback`` / ``skip_error_frames``. Because "edit
+        device interface" never clears keys that do not belong to any spec,
+        their continued presence in a device's config proves the device belongs
+        to this plugin even after ``protocol`` was overwritten.
+        """
+        try:
+            schema = cls().get_config_schema() or {}
+        except Exception as e:
+            logger.warning(f"plugin_private_keys: cannot build schema for {cls}: {e}")
+            return set()
+        props = set((schema.get("properties") or {}).keys())
+        return props - all_interface_field_keys()
+
+    async def match_device_to_plugin(
+        self, db: AsyncSession, stored_config: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Return the protocol_name of the enabled plugin whose private keys are
+        present in ``stored_config``, or ``None``.
+
+        This is how we recognise a *polluted* device (issue #33): its
+        ``protocol`` was overwritten to a standard bus name by "edit device
+        interface", but its config still carries the plugin's signature keys.
+        """
+        stored_keys = set((stored_config or {}).keys())
+        if not stored_keys:
+            return None
+        for proto, cls in await self.list_enabled_plugins_detail(db):
+            private = self.plugin_private_keys(cls)
+            if private and stored_keys & private:
+                return proto
         return None
 
     def _resolved_plugin_dir(self) -> Path:

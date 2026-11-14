@@ -31,6 +31,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Non-fatal problems encountered during startup. Exposed via /api/health so a
+# degraded boot is visible to the UI instead of silently losing functionality.
+_BOOT_WARNINGS: list = []
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,70 +48,157 @@ async def lifespan(app: FastAPI):
     def _mark(step: str) -> None:
         logger.info(f"[boot] {step}: {(_time.monotonic() - _boot) * 1000:.0f} ms")
 
-    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    os.makedirs(settings.LOG_DIR, exist_ok=True)
-    os.makedirs(settings.EXPORT_DIR, exist_ok=True)
-    os.makedirs(settings.REPORT_DIR, exist_ok=True)
-    os.makedirs(settings.PLUGIN_DIR, exist_ok=True)
+    _BOOT_WARNINGS.clear()
 
-    # Persist program execution logs to logs/program/ (10 MB rotation) so any
-    # run can be analysed afterwards. Communication logs go to logs/communication
-    # and per-run folders under logs/executions/<execution_id>/.
-    from app.services.program_logger import install_program_logging
-    install_program_logging()
-    logger.info("Program logging installed (logs/program, 10MB rotation)")
+    async def _startup() -> None:
+        logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+        for _d in (settings.LOG_DIR, settings.EXPORT_DIR,
+                   settings.REPORT_DIR, settings.PLUGIN_DIR):
+            os.makedirs(_d, exist_ok=True)
 
-    # Crash capture is armed before anything else can throw (issue #26 / F5).
+        # Persist program execution logs to logs/program/ (10 MB rotation) so
+        # any run can be analysed afterwards. Best-effort: a broken log sink
+        # must never prevent the app from starting.
+        try:
+            from app.services.program_logger import install_program_logging
+            install_program_logging()
+            logger.info("Program logging installed (logs/program, 10MB rotation)")
+        except Exception:
+            logger.error("program logging not installed (startup continues):\n%s",
+                         traceback.format_exc())
+
+        # Crash capture is armed before anything else can throw (issue #26 / F5).
+        try:
+            from app.core.crash_trap import install_hooks
+
+            install_hooks()
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.warning(f"crash hooks not installed: {exc}")
+
+        try:
+            await init_db()
+            _mark("database initialized")
+        except Exception:
+            detail = traceback.format_exc()
+            logger.error(f"[boot] database init FAILED (startup continues):\n{detail}")
+            _BOOT_WARNINGS.append({"step": "database init", "error": detail.strip().splitlines()[-1]})
+
+        # -------------------------------------------------------------- #
+        # Best-effort recovery after an abnormal shutdown.
+        #
+        # Every repair runs in its OWN session and its OWN try/except. A
+        # single failure (malformed row, locked DB, missing method after a
+        # bad deploy) must never abort startup: users must always get the UI
+        # back so they can load their project and recover.
+        # -------------------------------------------------------------- #
+        from app.core.database import async_session
+
+        async def _boot_repair(label: str, fn) -> None:
+            try:
+                async with async_session() as db:
+                    await fn(db)
+                logger.info(f"[boot] {label} ok")
+            except Exception:
+                detail = traceback.format_exc()
+                logger.error(f"[boot] {label} FAILED (startup continues):\n{detail}")
+                _BOOT_WARNINGS.append(
+                    {"step": label, "error": detail.strip().splitlines()[-1]})
+
+        async def _device_connections(db):
+            from app.services.device_service import device_service
+            await device_service.reset_stale_connections(db)
+
+        async def _plugin_protocols(db):
+            from app.services.device_service import device_service
+            await device_service.restore_plugin_protocols(db)
+
+        async def _stale_executions(db):
+            from app.services.execution_service import execution_engine
+            await execution_engine.reset_stale_executions(db)
+
+        async def _stale_plan_runs(db):
+            from app.services.plan_runner import plan_runner
+            await plan_runner.reset_stale_runs(db)
+
+        await _boot_repair("reset stale device connections", _device_connections)
+        await _boot_repair("restore plugin protocols", _plugin_protocols)
+        await _boot_repair("reset stale executions", _stale_executions)
+        await _boot_repair("reset stale plan runs", _stale_plan_runs)
+        _mark("stale state reset")
+
+        # Contract self-check: a module can be syntactically valid and
+        # importable yet have lost most of its methods (e.g. a class that
+        # closed early). Catch that loudly at boot instead of failing on the
+        # first user action.
+        try:
+            from app.services.device_service import device_service
+            from app.services.execution_service import execution_engine
+            from app.services.plan_runner import plan_runner
+
+            contracts = {
+                "device_service": (device_service, (
+                    "connect_device", "disconnect_device", "send_command",
+                    "reset_stale_connections", "restore_plugin_protocols")),
+                "execution_engine": (execution_engine, (
+                    "start_execution", "stop_execution", "get_execution",
+                    "list_executions", "reset_stale_executions")),
+                "plan_runner": (plan_runner, ("reset_stale_runs",)),
+            }
+            for name, (obj, methods) in contracts.items():
+                missing = [m for m in methods if not callable(getattr(obj, m, None))]
+                if missing:
+                    msg = f"{name} is missing methods: {', '.join(missing)}"
+                    logger.error(f"[boot] service contract BROKEN: {msg}")
+                    _BOOT_WARNINGS.append({"step": "service contract", "error": msg})
+        except Exception:
+            detail = traceback.format_exc()
+            logger.error(f"[boot] service contract check failed:\n{detail}")
+            _BOOT_WARNINGS.append(
+                {"step": "service contract", "error": detail.strip().splitlines()[-1]})
+        _mark("service contracts checked")
+
+        # Feedback centre (issue #26): file crashes spooled by a previous run,
+        # note an abnormal exit, and flush reports not forwarded earlier.
+        try:
+            async with async_session() as db:
+                try:
+                    from app.core.crash_trap import drain_spool, report_abnormal_exit
+
+                    filed = await drain_spool(db)
+                    abnormal = await report_abnormal_exit(db)
+                    if filed or abnormal:
+                        logger.info(
+                            f"feedback centre: {filed} spooled crash(es), "
+                            f"abnormal_exit={abnormal}"
+                        )
+                except Exception as exc:
+                    logger.warning(f"feedback startup check failed: {exc}")
+                try:
+                    from app.services.feedback_service import retry_pending
+
+                    sent = await retry_pending(db)
+                    if sent:
+                        logger.info(f"feedback centre: forwarded {sent} queued report(s)")
+                except Exception as exc:
+                    logger.warning(f"feedback flush failed: {exc}")
+        except Exception:
+            detail = traceback.format_exc()
+            logger.error(f"[boot] feedback centre failed (startup continues):\n{detail}")
+            _BOOT_WARNINGS.append(
+                {"step": "feedback centre", "error": detail.strip().splitlines()[-1]})
+        _mark("feedback centre ready")
+
+    # Final safety net: no startup step — including an unforeseen one — may
+    # prevent the ASGI app from yielding. A broken boot must still serve the
+    # UI so the user can open their project; the failure is logged in full and
+    # reported through /api/health.
     try:
-        from app.core.crash_trap import install_hooks
-
-        install_hooks()
-    except Exception as exc:  # pragma: no cover - diagnostics only
-        logger.warning(f"crash hooks not installed: {exc}")
-
-    await init_db()
-    _mark("database initialized")
-
-    # Reset stale connections (in-memory state lost on restart)
-    from app.core.database import async_session
-    async with async_session() as db:
-        from app.services.device_service import device_service
-        await device_service.reset_stale_connections(db)
-        logger.info("Stale device connections reset")
-
-        # Executions still marked 'running' died with the previous process —
-        # without this they would block the start button forever.
-        from app.services.execution_service import execution_engine
-        await execution_engine.reset_stale_executions(db)
-
-        # Same for batch runs left 'running' by a previous process.
-        from app.services.plan_runner import plan_runner
-        await plan_runner.reset_stale_runs(db)
-    _mark("stale state reset")
-
-    # Feedback centre (issue #26): file crashes spooled by a previous run, note
-    # an abnormal exit, and flush reports that could not be forwarded earlier.
-    async with async_session() as db:
-        try:
-            from app.core.crash_trap import drain_spool, report_abnormal_exit
-
-            filed = await drain_spool(db)
-            abnormal = await report_abnormal_exit(db)
-            if filed or abnormal:
-                logger.info(
-                    f"feedback centre: {filed} spooled crash(es), abnormal_exit={abnormal}"
-                )
-        except Exception as exc:
-            logger.warning(f"feedback startup check failed: {exc}")
-        try:
-            from app.services.feedback_service import retry_pending
-
-            sent = await retry_pending(db)
-            if sent:
-                logger.info(f"feedback centre: forwarded {sent} queued report(s)")
-        except Exception as exc:
-            logger.warning(f"feedback flush failed: {exc}")
-    _mark("feedback centre ready")
+        await _startup()
+    except Exception:
+        detail = traceback.format_exc()
+        logger.error(f"[boot] UNEXPECTED startup failure (startup continues):\n{detail}")
+        _BOOT_WARNINGS.append(
+            {"step": "startup", "error": detail.strip().splitlines()[-1]})
 
     yield
 
@@ -386,7 +477,14 @@ async def root():
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": settings.APP_VERSION}
+    # ``status`` stays "ok" so a degraded boot is still usable; the warnings
+    # tell the UI/operator which repair steps need attention.
+    return {
+        "status": "ok",
+        "version": settings.APP_VERSION,
+        "degraded": bool(_BOOT_WARNINGS),
+        "boot_warnings": list(_BOOT_WARNINGS),
+    }
 
 
 if _HAS_STATIC:

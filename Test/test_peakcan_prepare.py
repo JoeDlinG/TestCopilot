@@ -41,12 +41,12 @@ def proc(rc: int = 0, err: str = ""):
     return mock.Mock(returncode=rc, stderr=err, stdout="")
 
 
-def base_patches(channels, state="up", run_result=None):
-    """Common environment: Linux, given can* interfaces and operstate."""
+def base_patches(channels, up=False, run_result=None):
+    """Common environment: Linux, given can* interfaces and IFF_UP flag."""
     return (
         mock.patch.object(P, "_is_windows", return_value=False),
         mock.patch.object(P, "_socketcan_channels", return_value=channels),
-        mock.patch.object(P, "_operstate", return_value=state),
+        mock.patch.object(P, "_iface_up", return_value=up),
         mock.patch.object(mod.subprocess, "run", return_value=run_result or proc()),
         mock.patch.object(mod.time, "sleep", return_value=None),
     )
@@ -54,7 +54,7 @@ def base_patches(channels, state="up", run_result=None):
 
 def main() -> int:
     # 1. Existing but DOWN can0 must be configured and brought UP.
-    a, b, c, d, e = base_patches(["can0"], state="down")
+    a, b, c, d, e = base_patches(["can0"], up=False)
     with a, b, c, d as run, e:
         notes = P._ensure_socketcan_ready(500000)
     args = run.call_args[0][0] if run.call_args else []
@@ -62,15 +62,24 @@ def main() -> int:
           and "bitrate" in args and "500000" in args, str(args))
     check("setup result reported", any("up @" in n for n in notes), str(notes))
 
+    # 1b. An already-UP can0 must be left untouched. This is the regression
+    #     guard: re-applying `ip link set up type can bitrate` resets the
+    #     controller and dropped the bus on every re-connect.
+    a, b, c, d, e = base_patches(["can0"], up=True)
+    with a, b, c, d as run, e:
+        notes = P._ensure_socketcan_ready(500000)
+    check("already-UP can0 is not reconfigured", run.call_count == 0,
+          f"ip link set ran {run.call_count} time(s): {run.call_args_list}")
+
     # 2. Configured bitrate is honoured instead of a hard-coded default.
-    a, b, c, d, e = base_patches(["can0"], state="down")
+    a, b, c, d, e = base_patches(["can0"], up=False)
     with a, b, c, d as run, e:
         P._ensure_socketcan_ready(250000)
     args = run.call_args[0][0]
     check("configured bitrate used", "250000" in args, str(args))
 
     # 3. No can* interface -> load the kernel module, then re-scan.
-    a, b, c, d, e = base_patches([], state="up")
+    a, b, c, d, e = base_patches([], up=True)
     with a, b, c, d as run, e:
         b_mod = mock.patch.object(P, "_socketcan_channels",
                                   side_effect=[[], ["can0"]])
@@ -83,7 +92,7 @@ def main() -> int:
           any("loaded" in n or "up @" in n or n == "" for n in notes), str(notes))
 
     # 4. Insufficient privileges must be reported, never raised.
-    a, b, c, d, e = base_patches([], state="down",
+    a, b, c, d, e = base_patches([], up=False,
                                  run_result=proc(1, "Operation not permitted"))
     with a, b, c, d, e:
         b_mod = mock.patch.object(P, "_socketcan_channels", return_value=["can0"])

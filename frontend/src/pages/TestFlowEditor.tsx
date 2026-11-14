@@ -45,6 +45,28 @@ interface FlowNode extends Node {
   config?: Record<string, any>
 }
 
+// A node may store its real device command in a hidden field
+// (``config.parameters.command``, written by the AI generator) while the
+// editable ``config.command`` only holds a Chinese summary. The edit form must
+// show the command that is actually sent, otherwise the user edits a sentence
+// that has no effect and a stale hidden command keeps reappearing in generated
+// code. Mirrors ExecutionEngine._extract_commands' notion of a command.
+const COMMAND_SHAPE = /@\d+_[A-Z]+|["']action["']\s*:|\b[0-9A-Fa-f]{1,8}#[0-9A-Fa-f]*\b|(?:bus|can)\.(?:send|recv|Message)/
+
+const effectiveCommand = (config: any): string => {
+  const visible = String(config?.command || '')
+  if (COMMAND_SHAPE.test(visible)) return visible
+  const params = config?.parameters || {}
+  const hidden = params.command
+    ? String(params.command)
+    : Array.isArray(params.commands)
+      ? params.commands.join(' | ')
+      : Array.isArray(config?.commands)
+        ? config.commands.join(' | ')
+        : ''
+  return hidden || visible
+}
+
 // ---------------------------------------------------------------------------
 // Custom node components
 // ---------------------------------------------------------------------------
@@ -623,7 +645,7 @@ export default function TestFlowEditor() {
     const config = (node as any).config || {}
     editForm.setFieldsValue({
       label: node.data?.label || '',
-      command: config.command || '',
+      command: effectiveCommand(config),
       expected: config.expected || '',
       condition: config.condition || 'True',
       true_label: config.true_label || '',
@@ -655,35 +677,56 @@ export default function TestFlowEditor() {
       if (n.id !== editNode.id) return n
       const nextInputs = vals.inputs || []
       const nextOutputs = vals.outputs || []
+      // A node can carry several *copies* of its command: the editable
+      // `command` text plus hidden `parameters.command` / `commands` written
+      // by the AI generator. Editing only the visible one used to leave the
+      // stale hidden copy behind, so regenerating code emitted both the new
+      // and the old instruction. When the user changes `command`, drop the
+      // hidden copies so the node has exactly one source of truth.
+      const prevCommand = effectiveCommand((n as any).config).trim()
+      const nextCommand = (vals.command || '').trim()
+      const commandChanged = prevCommand !== nextCommand
+      const prevParams = { ...(((n as any).config?.parameters) || {}) }
+      if (commandChanged) {
+        delete prevParams.command
+        delete prevParams.commands
+      }
+      const nextConfig: Record<string, any> = {
+        ...(n as any).config,
+        // Only write the command when it actually changed; otherwise keep the
+        // generator's original visible text + hidden structured command intact.
+        command: commandChanged ? nextCommand : (n as any).config?.command || '',
+        expected: vals.expected || '',
+        condition: vals.condition || 'True',
+        true_label: vals.true_label || '',
+        false_label: vals.false_label || '',
+        loop_type: vals.loop_type || 'for',
+        variable: vals.loop_variable || 'i',
+        entry_condition: vals.entry_condition || '',
+        entry_fail_action: vals.entry_fail_action || 'skip',
+        break_condition: vals.break_condition || '',
+        max_iterations: vals.max_iterations || '',
+        duration: vals.duration ?? 1000,
+        device_id: vals.device_id || '',
+        variables: vals.variables || [],
+        inputs: nextInputs,
+        outputs: nextOutputs,
+        parameters: prevParams,
+      }
+      if (commandChanged) {
+        delete nextConfig.commands
+      }
       const updated = {
         ...n,
         data: {
           ...n.data,
-          label: vals.label || n.data?.label,
+          label: vals.label ?? '',
           // 同步到 data，画布节点上直接显示输入/输出徽标 / 延时毫秒数
           duration: vals.duration,
           inputs: nextInputs,
           outputs: nextOutputs,
         },
-        config: {
-          ...(n as any).config,
-          command: vals.command || '',
-          expected: vals.expected || '',
-          condition: vals.condition || 'True',
-          true_label: vals.true_label || '',
-          false_label: vals.false_label || '',
-          loop_type: vals.loop_type || 'for',
-          variable: vals.loop_variable || 'i',
-          entry_condition: vals.entry_condition || '',
-          entry_fail_action: vals.entry_fail_action || 'skip',
-          break_condition: vals.break_condition || '',
-          max_iterations: vals.max_iterations || '',
-          duration: vals.duration ?? 1000,
-          device_id: vals.device_id || '',
-          variables: vals.variables || [],
-          inputs: nextInputs,
-          outputs: nextOutputs,
-        },
+        config: nextConfig,
       }
       // 节点类型就地切换：不兼容字段保留在 config 中（切回可恢复）
       const nextType = vals.node_type || n.type

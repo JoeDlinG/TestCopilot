@@ -16,15 +16,12 @@ from app.services import flow_context
 def node_commands(node: Dict) -> List[str]:
     """Return the real device commands carried by a node.
 
-    Reuses the execution engine's extractor so that generated code and the
-    actual run issue exactly the same commands. Natural-language steps like
-    "握手与版本：@11_HELLO; @11_SYSID;" yield ['@11_HELLO;', '@11_SYSID;']
-    instead of the raw sentence (which is not a valid device command).
+    Delegates entirely to the execution engine's extractor so generated code
+    and the actual run issue exactly the same commands. In particular it must
+    NOT short-circuit on ``config.commands``: that hidden field can be a stale
+    copy left over from an earlier edit, and preferring it would re-introduce
+    the old command into the generated script.
     """
-    config = node.get("config") or {}
-    declared = config.get("commands")
-    if isinstance(declared, list) and declared:
-        return [str(c).strip() for c in declared if str(c).strip()]
     try:
         from app.services.execution_service import ExecutionEngine
         return ExecutionEngine._extract_commands(node)

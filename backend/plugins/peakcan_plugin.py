@@ -268,7 +268,11 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 notes.append("no SocketCAN interface appeared after modprobe")
 
         for ch in channels:
-            if cls._operstate(ch) == "up":
+            if cls._iface_up(ch):
+                # Already administratively UP — never touch it. Re-applying
+                # `ip link set … up type can bitrate …` would reconfigure the
+                # controller (down→up) and drop an active bus, which is exactly
+                # what broke "re-run a test case" (PCAN disconnect).
                 continue
             try:
                 proc = subprocess.run(
@@ -416,6 +420,23 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 return f.read().strip().lower()
         except OSError:
             return ""
+
+    @staticmethod
+    def _iface_up(name: str) -> bool:
+        """Whether the link is administratively UP, from the IFF_UP flag bit.
+
+        This is NOT ``operstate == "up"``: a CAN link has no carrier, so the
+        kernel reports ``operstate=unknown`` even while it is UP and passing
+        frames. Treating ``unknown`` as "down" made ``_ensure_socketcan_ready``
+        re-run ``ip link set … up type can bitrate …`` on every connect, which
+        reconfigures the controller (down→up) and drops an active bus — the
+        "PCAN disconnects when re-running a test case" regression.
+        """
+        try:
+            with open(f"/sys/class/net/{name}/flags") as f:
+                return bool(int(f.read().strip(), 16) & 0x1)
+        except (OSError, ValueError):
+            return False
 
     @staticmethod
     def _bus_state(channel: str) -> Optional[Dict[str, Any]]:

@@ -10,6 +10,7 @@ POST   /api/devices/connect   - Connect to device
 POST   /api/devices/{id}/disconnect - Disconnect device
 POST   /api/devices/{id}/command    - Send command to device
 """
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,7 @@ from app.core.interfaces import (
     STANDARD_PROTOCOLS,
     apply_plugin_transport,
     clear_other_columns,
+    column_from_config,
     foreign_config_keys,
     get_interface_spec,
     split_params,
@@ -33,6 +35,9 @@ from app.schemas.schemas import (
     DeviceConnectRequest, DeviceCommandRequest, DeviceCommandResponse,
 )
 from app.services.device_service import device_service
+from app.services.plugin_service import plugin_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
 
@@ -67,11 +72,20 @@ async def get_device_interface(device_id: str, db: AsyncSession = Depends(get_db
 
     stored = device_service._parse_json_field(device.config) or {}
     params: Dict[str, Any] = {}
+    # Plugin devices keep some address values inside config (PeakCAN's channel
+    # lives in ``config["channel"]``, not ``devices.can_channel``). Backfill the
+    # column from config so the mandatory field is not shown empty (#33).
+    fallback: Dict[str, str] = {}
+    if spec and device.protocol not in STANDARD_PROTOCOLS:
+        fallback = column_from_config(device.protocol, spec["type"])
     if spec:
         for f in spec["fields"]:
             key = f["key"]
             if f["store"] == "column":
-                params[key] = getattr(device, key, None)
+                value = getattr(device, key, None)
+                if value in (None, "") and key in fallback:
+                    value = stored.get(fallback[key])
+                params[key] = value
             else:
                 params[key] = stored.get(key, f.get("default"))
     return {
@@ -112,6 +126,14 @@ async def update_device_interface(
 
     params = dict(data.params or {})
 
+    # Snapshot the pre-edit config before anything mutates ``device.config``.
+    # It is the only reliable evidence of a *polluted* plugin device (issue #33):
+    # "edit device interface" never clears keys that belong to no interface
+    # spec, so a plugin's private keys survive the protocol overwrite.
+    stored_before = device_service._parse_json_field(device.config) or {}
+    if not isinstance(stored_before, dict):
+        stored_before = {}
+
     # Reject blank mandatory values early with a precise message.
     missing = [
         f["label"] for f in spec["fields"]
@@ -144,8 +166,24 @@ async def update_device_interface(
     # interface changes. Overwriting ``mini_gateway100`` with the generic
     # ``ethernet`` protocol would bypass the plugin (and its MG100 framing)
     # entirely. Only standard protocols follow the interface spec's protocol.
+    #
+    # The decision uses the *plugin whitelist*, not "not in STANDARD_PROTOCOLS".
+    # The old check misclassified a device already polluted to ``can`` (issue
+    # #33) as a standard device, so it could never return to ``peakcan``. We
+    # recognise such a device by the plugin's private config keys and restore
+    # its protocol here, in addition to the startup repair.
     plugin_protocol = device.protocol
-    is_custom_protocol = plugin_protocol not in STANDARD_PROTOCOLS
+    enabled_protocols = await plugin_service.get_enabled_protocol_names(db)
+    is_plugin_protocol = plugin_protocol in enabled_protocols
+    if not is_plugin_protocol and plugin_protocol in STANDARD_PROTOCOLS:
+        polluted = await plugin_service.match_device_to_plugin(db, stored_before)
+        if polluted:
+            logger.info(
+                "device %s looks like a polluted plugin device: restoring "
+                "protocol %s -> %s", device.id, plugin_protocol, polluted,
+            )
+            plugin_protocol = polluted
+            is_plugin_protocol = True
 
     # Mirror the interface choice into the plugin's private transport key.
     # Without this the plugin keeps reading the stale ``transport: serial``
@@ -161,7 +199,7 @@ async def update_device_interface(
 
     device.config = device_service._to_json_field(stored)
     device.connection_type = data.connection_type
-    if is_custom_protocol:
+    if is_plugin_protocol:
         # A plugin protocol owns its framing; even an explicit `protocol` in
         # the payload must not replace it with a generic bus name.
         device.protocol = plugin_protocol

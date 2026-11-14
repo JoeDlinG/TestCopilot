@@ -300,6 +300,17 @@ PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "drop": ("port", "baudrate"),
         },
     },
+    # PeakCAN has no ``transport`` key (it selects its driver via
+    # ``config.interface`` + ``config.channel``). The binding only mirrors the
+    # CAN channel column into ``config.channel`` so the value the user typed in
+    # "edit device interface" is actually the one the plugin connects with.
+    # Without it, GET would show an empty mandatory field and PUT would leave
+    # ``config.channel`` pointing at the stale channel (interface config drift).
+    "peakcan": {
+        "can": {
+            "from_column": {"channel": "can_channel"},
+        },
+    },
 }
 
 
@@ -325,7 +336,11 @@ def apply_plugin_transport(
     out = dict(stored)
     for key in binding.get("drop", ()):
         out.pop(key, None)
-    out["transport"] = binding["transport"]
+    # A binding without a ``transport`` key (e.g. PeakCAN, which selects its
+    # driver via ``config.interface``) only syncs columns and must not invent a
+    # ``transport`` key the plugin never reads.
+    if binding.get("transport"):
+        out["transport"] = binding["transport"]
     for config_key, column_key in binding.get("from_column", {}).items():
         value = columns.get(column_key)
         if value in (None, ""):
@@ -333,3 +348,31 @@ def apply_plugin_transport(
         if value not in (None, ""):
             out[config_key] = value
     return out
+
+
+def column_from_config(protocol: str, interface_type: str) -> Dict[str, str]:
+    """Inverse of a plugin binding's ``from_column``: column key -> config key.
+
+    Used by ``GET /{device_id}/interface`` to backfill an address column that a
+    plugin keeps inside ``config`` instead of a real column (PeakCAN stores the
+    channel in ``config["channel"]``, not ``devices.can_channel``), so the
+    mandatory field is not shown empty.
+    """
+    binding = PLUGIN_TRANSPORT_BINDINGS.get(protocol, {}).get(interface_type)
+    if not binding:
+        return {}
+    return {col: cfg for cfg, col in binding.get("from_column", {}).items()}
+
+
+def all_interface_field_keys() -> set:
+    """Every field key declared across *all* interface specs.
+
+    Used to tell a plugin's private config keys apart from generic interface
+    fields: a plugin key that no interface spec owns is a strong signature that
+    the device really belongs to that plugin even after ``protocol`` has been
+    overwritten (issue #33's "edit device interface" pollution).
+    """
+    keys: set = set()
+    for spec in INTERFACE_SPECS:
+        keys.update(f["key"] for f in spec["fields"])
+    return keys

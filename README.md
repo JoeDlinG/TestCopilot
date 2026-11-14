@@ -20,6 +20,12 @@ AITestLab 是一款面向硬件测试工程师的 **AI 驱动测试自动化平�
 | **自然语言查询** | 文字/语音自然语言查询测试数据（NL2SQL），查询历史管理 |
 | **测试报告** | 自定义字段模板，支持 PDF/HTML/Markdown 输出，AI 生成测试结论 |
 
+## 近期修复（v2.3.6 之后）
+
+- **插件协议被覆盖导致 PeakCAN 设备失联（Issue #33）**：编辑设备接口时 `protocol` 可能被通用 `can` 覆盖，残留的插件私有配置让通用 `CANInterface` 接管设备；`send_command()` 早期对**任何**异常都断开连接，一次命令错误会被放大成设备掉线。现在用「已启用插件白名单 + 插件私有配置键」判定设备归属（`get_enabled_protocol_names()` / `plugin_private_keys()` / `match_device_to_plugin()`），启动时自动修复已被污染的记录（`restore_plugin_protocols()`），`peakcan.can` 绑定只回填 `can_channel` 而不臆造 `transport`，且仅传输层错误（`_is_transport_error()`）才触发断连。已在真实 PEAK 硬件（`0c72:0012` / `can0`）上验证连接与命令下发不断线。
+- **只改流程图指令，生成的代码仍带旧指令**：AI 生成的节点会在 `config.command`、隐藏的 `config.parameters.command`、`config.commands`，甚至 `data.label` / `config.expected` 里留下多份指令副本；仅修改可见指令时，旧的 `0X20` 仍会被一并合并进代码。现在执行引擎与代码生成器共用 `ExecutionEngine._extract_commands()` 的**优先级**取值（可见 `config.command` 优先，隐藏结构化字段仅作回退，不再做并集合并），编辑器在用户改写指令时清除隐藏副本，后端在流程图新建/更新时通过 `normalize_flow_commands()` 归一化。删除节点一直生效，是因为删除时整份副本被一并移除。
+- **异常关闭后重启不可用**：启动时任一修复步骤抛错会中断整个 `lifespan`，导致接口全部不可用。现在启动修复全部为 best-effort（独立会话 + 单项异常隔离），启动时执行服务契约自检，`/api/health` 通过 `degraded` / `boot_warnings` 暴露降级信息，并保留最外层兜底 —— 即使某项修复失败，应用仍可启动并正常导入工程。
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -169,7 +175,8 @@ AITestLab/
 │   ├── plugins/                       # 用户插件目录
 │   │   ├── __init__.py
 │   │   ├── example_plugin.py          # Modbus RTU 示例插件
-│   │   └── mini_gateway100_plugin.py  # Mini Gateway 100 协议插件
+│   │   ├── mini_gateway100_plugin.py  # Mini Gateway 100 协议插件
+│   │   └── peakcan_plugin.py          # PeakCAN USB 协议插件
 │   ├── requirements.txt
 │   └── run.py
 │
@@ -183,6 +190,12 @@ AITestLab/
 │   ├── RIGOL_OSCILLOSCOPE_PLUGIN.md  # RIGOL 示波器插件说明
 │   ├── scpi/                         # SCPI-1999 官方规范 PDF + 速查
 │   └── rigol/                        # RIGOL 示波器官方编程手册 PDF
+│
+├── Test/                              # 硬件无关回归测试
+│   ├── run_all.sh                     # 全量回归入口（需后端 :8000）
+│   ├── test_issue33_peakcan_protocol.py  # 插件协议白名单与启动修复门禁
+│   ├── test_flow_command_source.py   # 流程图指令单一真相源门禁
+│   └── test_startup_resilience.py    # 启动自愈与服务契约门禁
 │
 └── README.md                          # 本文件
 ```
@@ -198,6 +211,7 @@ AITestLab/
 | 通信日志 | `/api/logs` | 日志查询（分页/筛选）、CSV 导出 |
 | 测试报告 | `/api/reports` | 报告生成、模板 CRUD、报告下载 |
 | 插件 | `/api/plugins` | 插件列表、安装（含已发现插件扫描）、启用/禁用、按模板一键创建设备 |
+| 系统 | `/api/health`、`/api/system/diag` | 版本号、启动降级状态（`degraded` / `boot_warnings`）、前端资源与启动诊断 |
 
 **WebSocket 端点**:
 - `ws://localhost:8000/ws/executions/{id}` — 测试执行实时监控
@@ -225,7 +239,9 @@ AITestLab/
 
 ## 插件开发
 
-AITestLab 支持通过 Python 插件扩展自定义通信协议。插件继承 `BaseProtocolPlugin` 基类，并实现 `connect` / `disconnect` / `send` 等接口；设备服务在连接 `protocol` 为非标准协议（如 `mini_gateway100`）时，会自动加载并启用对应的插件实例作为通信后端。
+AITestLab 支持通过 Python 插件扩展自定义通信协议。插件继承 `BaseProtocolPlugin` 基类，并实现 `connect` / `disconnect` / `send` 等接口；设备服务在 `protocol` 命中**已启用插件白名单**（如 `mini_gateway100`、`peakcan`）时，会自动加载并启用对应的插件实例作为通信后端。
+
+设备归属不再用「不在标准协议列表里」这种模糊判断：编辑设备接口不会把插件协议覆盖成通用 `can`，历史数据若已被污染，后端启动时会依据插件私有配置键自动还原。插件的传输参数由 `app/core/interfaces.py` 的绑定声明驱动，绑定未声明的字段（例如 `transport`）不会被自动写入设备配置。
 
 开发一个自定义协议插件只需 3 步：
 
@@ -293,6 +309,7 @@ curl -X POST http://localhost:8000/api/plugins/install \
 | `VISA_TIMEOUT` | `5000` | VISA 超时 (ms) |
 | `CAN_BITRATE` | `500000` | CAN 默认波特率 |
 | `SERIAL_BAUDRATE` | `115200` | 串口默认波特率 |
+| `AITESTLAB_PORT` | `8000` | 后端监听端口；端口被占用时自动协商，并复用已在运行的实例 |
 
 ### 通信协议驱动
 
@@ -304,6 +321,16 @@ curl -X POST http://localhost:8000/api/plugins/install \
 | CAN/CAN FD | python-can | PCAN、Vector、SocketCAN、Kvaser |
 | 串口 | pyserial | RS232、RS485 |
 | 以太网 | asyncio | TCP、UDP |
+
+## 回归测试
+
+硬件无关的回归套件集中在 `Test/`，统一入口（需先启动后端 `http://localhost:8000`）：
+
+```bash
+bash Test/run_all.sh
+```
+
+本轮新增门禁：`test_issue33_peakcan_protocol.py`（插件协议白名单、污染记录还原、断连异常收窄）、`test_flow_command_source.py`（流程图指令优先级、隐藏副本清理、旧客户端保存归一化）、`test_startup_resilience.py`（`ExecutionEngine` 方法契约、AST 类体闭合检查、故障注入下的启动存活）。三者均已登记在 `Test/run_all.sh`；后续新增 `test_*.py` 时请同步登记，否则不会被真正执行。依赖真实 MG100 硬件的套件在无设备时自动 SKIP，不会误报为产品回归。前端另用 `cd frontend && npm run build` 校验。
 
 ## 文档索引
 

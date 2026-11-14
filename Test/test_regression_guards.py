@@ -62,7 +62,7 @@ def protocol_registry_checks() -> None:
           "_STANDARD_PROTOCOLS = {" not in api)
     check("API imports the shared constant",
           "STANDARD_PROTOCOLS" in api
-          and "plugin_protocol not in STANDARD_PROTOCOLS" in api)
+          and "plugin_protocol in STANDARD_PROTOCOLS" in api)
 
 
 def build_and_project_checks() -> None:
@@ -159,10 +159,27 @@ def windows_checks() -> None:
           and "None if self._is_windows()" in text("backend/plugins/peakcan_plugin.py"))
 
 
+def pcan_reset_guard() -> None:
+    """Regression: connect must never reconfigure an already-UP CAN interface.
+
+    A CAN link's operstate is always ``unknown`` (no carrier), so the old
+    ``operstate == "up"`` check re-ran ``ip link set … up type can bitrate …``
+    on every connect, resetting the controller and dropping the bus. It must
+    use the IFF_UP flag instead.
+    """
+    src = text("backend/plugins/peakcan_plugin.py")
+    check("IFF_UP helper exists", 'def _iface_up(' in src
+          and "/flags" in src and "0x1" in src)
+    check("_ensure_socketcan_ready uses IFF_UP, not operstate==",
+          "cls._iface_up(ch)" in src
+          and '_operstate(ch) == "up"' not in src)
+
+
 def main() -> int:
     protocol_registry_checks()
     build_and_project_checks()
     windows_checks()
+    pcan_reset_guard()
     if _failures:
         print(f"\nFAILED: {len(_failures)} check(s): {', '.join(_failures)}")
         return 1
