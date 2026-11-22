@@ -4,6 +4,146 @@
 
 ---
 
+## 2026-11-22: 串口端口下拉 + PCAN-Basic 随包驱动（v2.3.8 修复）
+
+### 现场与根因
+
+用户反馈两条：① 通过插件添加的硬件串口没有配置端口，连接失败时不提示「需要配置端口号」，且端口是输入框而不是下拉；② PeakCAN 连接失败（机器已装驱动），安装包应附上相关驱动。
+
+- **串口链路**：新增设备表单 `frontend/src/pages/Devices.tsx` 与接口配置弹窗
+  `InterfaceConfigModal.tsx` 的 `serial_port` 都是 `<Input>`；创建/更新/连接 API 均不校验空值，
+  `device_service._get_address()` 返回 `""`，`SerialInterface.connect()` 的 `if self.port:`
+  跳过 Windows `^COM\d{1,3}$` 校验，最终 pyserial 抛 `could not open port ''`，被包装成笼统
+  「连接失败」。插件设备模板刻意不给 `port` 默认值（避免把 `/dev/ttyACM0` 写死到每台机器），
+  所以「插件添加的设备」必然带着空端口，只能等连接时才发现。
+- **PeakCAN 链路**：本机 PnP 有 `PCAN-USB FD`（VID_0C72/PID_0012，状态 OK），
+  `C:\Windows\System32\drivers\pcan_usb.sys` 存在，但 `PCANBasic.dll` 在 System32 / SysWOW64 /
+  Program Files 全盘都不存在。PEAK 的**设备驱动（内核）**与 **PCAN-Basic API（用户态 DLL）**
+  是两个独立安装包；python-can 4.3.1 的 `can/interfaces/pcan/basic.py` 通过
+  `ctypes.util.find_library("PCANBasic")` 解析 DLL，Windows 上该调用只扫 PATH，于是抛
+  `PCANBasic library not found`。旧截图里的 `WinError 10047` 是更早版本误走 SocketCAN，
+  当前 `auto` 候选在 Windows 只剩 `pcan/PCAN_USBBUS1`，已不经过那条路径。
+  原 `aitestlab.spec` / `aitestlab.nsi` 不带任何第三方驱动资源。
+
+### 修复
+
+1. 新增 `GET /api/devices/serial-ports`：pyserial `comports()` 枚举真实端口（设备名/描述/VID/PID），
+   作为下拉唯一数据源。
+2. 新增设备表单与「配置接口」弹窗的串口字段都改为可搜索、可刷新的 `<Select>`；弹窗保留
+   「当前配置」项，设备临时拔掉也不会丢已保存端口。
+3. 连接前拦截：`handleConnect` 发现串口设备无端口 → 直接提示并打开「配置接口」弹窗；
+   后端 `device_service._serial_port_missing()` 与 `SerialInterface.connect()` 兜底，
+   `/api/devices/connect` 的 400 detail 明确写「请到配置接口从下拉框选择实际端口」。
+4. PCAN-Basic API DLL 随包：`backend/drivers/` 放官方 x64 `PCANBasic.dll` 与来源/许可说明，
+   `aitestlab.spec` 收进 `_internal/drivers/`；`main.py` 启动时把该目录加入 PATH +
+   `os.add_dll_directory()`，`peakcan_plugin._ensure_pcan_api()` 在 connect 前二次确认。
+   全程 per-user 安装、无需管理员权限、不写 System32。
+5. 错误文案区分「内核驱动已装 / API 缺失」；新增 `GET /api/system/drivers` 与插件
+   `diagnose()` 输出驱动状态（设备驱动、API 解析结果、随包 DLL 路径）。
+6. 顺手修掉 `KANBAN.md` 版本戳仍为 v2.3.7 导致的 `test_version_consistency` FAIL。
+
+### 验证（Windows 11 / Py3.13.14 / Node 22.22.2-6，接真实 PCAN-USB FD 硬件）
+
+- **修复前**：`PeakCANPlugin.connect()` 抛 `ConnectionError` /
+  `PCANBasic library not found`；`/api/system/drivers` =
+  `device_driver_present=true, api_library=null, ready=false`。
+- **修复后**：源码树与打包版 onedir 启动即解析到 `PCANBasic.dll`；
+  `can.interface.Bus(interface='pcan', channel='PCAN_USBBUS1')` 打开成功，
+  `PeakCANPlugin.connect()` 返回 `True`（iface=`pcan` / channel=`PCAN_USBBUS1`）；
+  `/api/system/drivers` = `ready=true`、`hint=PCAN-Basic API 已就绪`。
+  用安装包 `_internal/drivers/` 里**那一份** DLL 单独跑 python-can，同样 `BUS_OPEN_OK`。
+- **串口**：`/api/devices/serial-ports` 返回 `COM3 — USB 串行设备 (COM3)`；新增设备弹窗与
+  「配置接口」弹窗都是 `<Select>`（无 `<Input>`），下拉项含 COM3、刷新按钮与提示可见；
+  未配置端口连接返回 400，detail 含「串口号未配置 … 下拉框 … 配置接口」；
+  保存后 `serial_port=COM3`、`_serial_port_missing()` 为 False，PeakCAN 设备不被误判。
+- **回归**：tsc 0 / i18n-guard（A=221、B=0）/ vite build 27 chunks /
+  chunk 依赖图 0 个 2-环 / `Test/` 23 套件全 PASS；打包版 HTTP 探针 15/15；
+  Chromium 真机渲染两轮 PASS（0 pageerror、0 失败请求、JS MIME 全 `application/javascript`）。
+- **安装包**：`AITestLab-Setup-v2.3.8.exe` 34 MB；NSIS `/V4` 详细日志确认
+  `_internal/drivers/` 与 `$INSTDIR\drivers/` 均收录 `PCANBasic.dll`（731 240 B）、
+  `PEAK_EULA.txt`、`PEAK_ReadMe.txt`、`README.md`；UTF-8 BOM + `Unicode true` 保留。
+- **未做静默安装**：本机已有 `D:\AITestLab` 正式安装（HKCU 卸载项 + 桌面/开始菜单快捷方式），
+  静默安装会覆盖其注册表记录；改用只读编译日志 + 直接运行 onedir 验证，无系统副作用。
+
+---
+
+## 2026-11-22: 复核未提交改动并随包驱动进安装包（v2.3.9）
+
+- **复核结论**：对工作区 32 个未提交改动逐项与远端 `9fa1482` 及 GitHub Issue 全表比对，
+  均为远端缺失的新实现（Tour 落位自检、LOCALAPPDATA 日志、[static] 取证日志、127.0.0.1 开浏览器、
+  NSIS 清 static、串口下拉/预检、PCAN-Basic 随包），无一重复。设计产物
+  （`docs/brand/` 6.9MB、`_gen_*.py` 一次性脚本、5 个预览 HTML）与两个审计文档按仓库卫生原则
+  （Issue #32 曾清理过 1MB 演示工程）暂不入库。
+- **版本** 2.3.8 → **2.3.9**（config.py + aitestlab.nsi，BOM 保留）。
+- **打包**：`backend/drivers/`（官方 x64 `PCANBasic.dll` 5.1.0.1194，sha256 `2f273d02…`，
+  PE `0x8664`）经 spec `datas` 进入 `_internal/drivers/`，NSIS 另在 `$INSTDIR\drivers/`
+  暴露一份供现场工程师查阅；启动时 `_register_bundled_drivers()` 注册 PATH + `add_dll_directory`。
+- **验证**：静默安装后 `/api/system/drivers` 返回 `bundled_dll=true`、
+  `/api/devices/serial-ports` 正常枚举、`HEAD /` 200、Chromium 真机渲染首屏 + Tour 卡片在视口内。
+- **提交**：17 个修改文件 + `backend/drivers/` + `frontend/check_cycles.mjs` 已提交并推送
+  `feature/flow-enhancements`（SSH 通道）。
+
+---
+
+## 2026-11-15: 对齐远端 v2.3.7 并补齐 Windows 兼容防护（v2.3.8）
+
+### 背景
+
+本地工作区此前停留在 `67a63fc`（v2.3.1），上面叠着两轮未提交的白屏/首启修复
+（v2.3.2 / v2.3.3 的 879 行）。远端主线已推进到 `9fa1482`（v2.3.7，#28–#34 集中收口），
+并把大部分防护**重新实现**（`api_route(GET,HEAD)`、`_MEDIA_TYPES` 显式 MIME、
+`/api/system/diag`、boot guard、ErrorBoundary、通用异常处理器、Tour 存储键 v2、
+健康探活后才开浏览器、端口协商复用已有实例）。直接 merge 必冲突且版本倒退。
+
+处理方式：本地修复先 `git stash` 存档 → `reset --hard origin/feature/flow-enhancements`
+→ 对照 stash 逐项核对 → 把远端**确实没有**的 4 项 Windows 防护重新落上。
+
+### 复核结论（远端已有 / 仍缺）
+
+| 防护 | 远端 v2.3.7 | 本次动作 |
+|---|---|---|
+| 静态路由 `GET+HEAD`、显式 `media_type` | ✅ 已有 | — |
+| boot guard（`data-boot-guard` 实现） | ✅ 已有 | — |
+| ErrorBoundary + 通用异常处理器 | ✅ 已有 | — |
+| Tour 存储键 `onboarding.v2` | ✅ 已有 | — |
+| 轮询 `/api/health` 后开浏览器、端口协商 | ✅ 已有 | — |
+| **Tour 卡片落位自检（25H2「对话框不出现」）** | ❌ 缺 | 补回 `AppLayout.tsx` |
+| **升级时清旧 `_internal\static`** | ❌ 缺 | 补回 `aitestlab.nsi` |
+| **日志写 `%LOCALAPPDATA%\AITestLab\logs`** | ❌ 缺 | 补回 `program_logger.py` |
+| **`[static]` 请求日志中间件（白屏取证）** | ❌ 缺 | 补回 `main.py` |
+| `localhost` → `127.0.0.1` + 三级开浏览器兜底 | ❌ 缺 | 补回 `run.py` |
+
+### 修复明细
+
+1. **`frontend/src/components/layout/AppLayout.tsx`** — Tour 落位自检：打开 1.8s 后测
+   `.ant-tour-inner` 矩形，宽<60/高<40/越出视口 → 关闭并在 500ms 后重开一次
+   （`tourRetried` 保证只重试一次）。这是 Win11 25H2 上「遮罩在、对话框不在」的直接解药。
+2. **`backend/aitestlab.nsi`** — 安装前 `RMDir /r "$INSTDIR\_internal\static"`：
+   bundle 是内容哈希命名，升级时旧的 `assets/` 残留会让新 `index.html` 引用不存在的文件 → 白屏。
+3. **`backend/app/services/program_logger.py`** — frozen 时 `LOGS_DIR` 指向
+   `%LOCALAPPDATA%\AITestLab\logs`（安装目录可能不可写、且会被重装清掉）。
+4. **`backend/app/main.py`** — 补 `[static]` 请求日志中间件：`/assets/*` 4xx 记 WARNING、
+   `/` 记 INFO（含 UA）。白屏取证第一问「浏览器到底有没有访问到服务」就靠这一行。
+5. **`backend/run.py`** — `_open_browser_now` 改为优先 `127.0.0.1`（`localhost` 可能解析到
+   ::1 或被交给系统代理），失败时依次回落 `os.startfile` → `cmd /c start`，并打印实际打开的 URL。
+6. 版本 2.3.7 → **2.3.8**。
+
+另：工作区 `docs/NUL`（0 字节，Windows 保留名，PyInstaller/`git add -A` 均被卡）已加入
+`.git/info/exclude` 本地排除；打包仍走 `git archive` 干净副本。
+
+### 产物
+
+`backend/dist/AITestLab-Setup-v2.3.8.exe`
+（sha256 `1dc47343990f661595f39a91202e0873e8ffcabc9a5aca800d30b616a94e8f7d`，33.9 MB）。
+
+验证：真机 Chromium 全量通过 —— 首屏 `#root` 41720 字符零 pageerror；Tour 卡片 482×114
+落在视口内；13 条真实路由全渲染；流程编辑器 ReactFlow pane/viewport/controls 齐全 +
+沉浸模式；`HEAD /` 200（405 回归已修）；`[static] 200 /` 日志行出现；日志落在
+`%LOCALAPPDATA%\AITestLab\logs`；重复启动正确复用 8000 上已有实例并 exit 0。
+静默安装→卸载后程序目录/开始菜单/桌面快捷方式清理干净。
+
+---
+
 ## 2026-11-14: Issue #28–#34 集中收口（v2.3.7）
 
 ### 背景

@@ -155,4 +155,12 @@ export const EXTRA7: Record<string, [string, string]> = {
   '状态：': ['label.statusColon', 'Status: '],
   '执行失败': ['msg.execFailed', 'Execution failed'],
   '有': ['label.has', 'Has'],
+
+  // ---- serial port picker / driver guidance (2026-11-22) ----
+  '该设备尚未配置串口号，请先在「配置接口」中从下拉框选择实际端口，保存后再连接。': ['msg.serialPortMissing', 'No serial port configured. Pick a real port in Interface Config, save, then connect again.'],
+  '刷新串口列表': ['btn.refreshPorts', 'Refresh serial ports'],
+  '未检测到串口，请插上设备或安装驱动后点「刷新串口列表」': ['msg.noSerialPorts', 'No serial ports found. Plug in the device or install its driver, then click Refresh serial ports.'],
+  '串口号请从下拉框选择，不要手动输入': ['msg.serialPortPickerHint', 'Pick the serial port from the drop-down instead of typing it.'],
+  '当前配置（设备可能未连接）': ['msg.portCurrent', 'Saved value (device may be unplugged)'],
+  '选择实际串口号（如 COM3）': ['ph.serialPortPicker', 'Select a real port (e.g. COM3)'],
 }

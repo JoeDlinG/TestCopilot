@@ -209,6 +209,13 @@ class SerialInterface(CommunicationInterface):
         # - POSIX: serial devices are files under /dev (e.g. /dev/ttyACM0)
         # - Windows: serial ports are named COM1..COM256 and are NOT files,
         #   so os.path.exists() would wrongly reject valid ports like "COM3".
+        # An unset port must be rejected here too: pyserial's own error for
+        # port='' is an opaque OS message that tells the operator nothing.
+        if not str(self.port or "").strip():
+            raise FileNotFoundError(
+                "串口号未配置：请在「设备管理 → 配置接口」的串口号下拉框中"
+                "选择实际端口（如 COM3），保存后再连接。"
+            )
         if self.port:
             if os.name == "nt":
                 if not re.match(r"^COM\d{1,3}$", self.port, re.IGNORECASE):

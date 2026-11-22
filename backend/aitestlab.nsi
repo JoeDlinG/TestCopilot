@@ -8,7 +8,7 @@
 Unicode true
 
 !define APP_NAME "AITestLab"
-!define APP_VERSION "2.3.7"
+!define APP_VERSION "2.3.9"
 !define APP_PUBLISHER "AITestLab"
 !define APP_EXE "AITestLab.exe"
 
@@ -42,7 +42,20 @@ Section "Install"
   nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
   Sleep 1200
 
+  ; Drop the previously installed frontend before writing the new one. Bundles
+  ; are content-hashed, so a stale assets/ folder next to a fresh index.html is
+  ; how an upgrade ends up serving a page that references files it cannot find
+  ; (blank screen). Copying over it is not enough — remove it first.
+  RMDir /r "$INSTDIR\_internal\static"
+
   File /r "dist\AITestLab\*.*"
+
+  ; PEAK PCAN-Basic API (bundled driver support): the DLL is also loaded from
+  ; _internal\drivers by the app, but expose the official DLL, EULA and
+  ; README at the install root so field engineers can find / copy them.
+  SetOutPath "$INSTDIR\drivers"
+  File /r "drivers\*.*"
+  SetOutPath "$INSTDIR"
 
   ; Start Menu + Desktop shortcuts
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"

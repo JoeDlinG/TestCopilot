@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   Modal, Form, Input, InputNumber, Select, Switch, Space, Alert,
-  Typography, Tag, Skeleton, message,
+  Typography, Tag, Skeleton, message, Button,
 } from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
 import { deviceAPI } from '../../services/api'
 import { extractData, handleApiError } from '../../services/apiHelper'
 import { useI18n } from '../../i18n'
@@ -45,6 +46,8 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
   const [params, setParams] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [serialPorts, setSerialPorts] = useState<any[]>([])
+  const [portsLoading, setPortsLoading] = useState(false)
   const [form] = Form.useForm()
   const { t } = useI18n()
 
@@ -57,7 +60,21 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
   useEffect(() => {
     if (!open) return
     loadSpecs()
+    loadSerialPorts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+
+  const loadSerialPorts = async () => {
+    setPortsLoading(true)
+    try {
+      const res = await deviceAPI.listSerialPorts()
+      setSerialPorts(extractData(res, []))
+    } catch {
+      setSerialPorts([])
+    } finally {
+      setPortsLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!open || !device) return
@@ -130,6 +147,34 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
 
   const renderField = (f: FieldSpec) => {
     const common = { placeholder: f.placeholder, style: { width: '100%' } }
+    // Serial ports must be picked from what the OS actually exposes. A free
+    // text box invited COM3 typos and, for plugin-created devices, an empty
+    // value that only failed at connect time with an opaque OS error.
+    if (f.key === 'serial_port') {
+      const current = String(params[f.key] || '').trim()
+      const options: { label: string; value: string }[] = serialPorts.map((p: any) => ({
+        label: p.description ? `${p.device} — ${p.description}` : String(p.device),
+        value: String(p.device),
+      }))
+      // Keep a previously saved port selectable while the device is unplugged.
+      if (current && !options.some((o) => o.value === current)) {
+        options.unshift({
+          label: `${current} — ${t('msg.portCurrent')}`,
+          value: current,
+        })
+      }
+      return (
+        <Select
+          showSearch
+          allowClear
+          loading={portsLoading}
+          optionFilterProp="label"
+          placeholder={t('ph.serialPortPicker')}
+          notFoundContent={t('msg.noSerialPorts')}
+          options={options}
+        />
+      )
+    }
     if (f.options && f.options.length > 0) {
       return (
         <Select
@@ -205,7 +250,22 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
                     ? [{ required: true, message: labelFor(`iface.f.${f.key}`, f.label) }]
                     : undefined
                 }
-                extra={f.help}
+                extra={
+                  f.key === 'serial_port' ? (
+                    <Space size={4}>
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<ReloadOutlined />}
+                        loading={portsLoading}
+                        onClick={loadSerialPorts}
+                      >
+                        {t('btn.refreshPorts')}
+                      </Button>
+                      <Text type="secondary">{t('msg.serialPortPickerHint')}</Text>
+                    </Space>
+                  ) : f.help
+                }
               >
                 {renderField(f)}
               </Form.Item>

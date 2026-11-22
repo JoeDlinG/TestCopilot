@@ -68,3 +68,21 @@ Thumbs.db
 coverage/
 .coverage
 htmlcov/
+
+# UI redesign working artifacts (process outputs of closed issues #20-#23;
+# large binary brand assets & one-off generator scripts stay out of the repo)
+docs/brand/
+docs/_gen_*.py
+docs/_icons_extract.json
+docs/_tc_icon_cands.json
+docs/ui-*.html
+docs/flow-editor-ui-options.html
+docs/tc-icon-picker.html
+docs/UI_PAGE_LEVEL_AUDIT.md
+docs/UI_REDESIGN_PLAN.md
+
+# Packaging scratch space (git-archive docs copies, silent-install verification)
+.build_tmp/
+.build_tmp2/
+backend/.trash_*
+.commit_msg.txt

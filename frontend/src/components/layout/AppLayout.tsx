@@ -65,6 +65,7 @@ export default function AppLayout() {
   const [restarting, setRestarting] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [tourOpen, setTourOpen] = useState(false)
+  const [tourRetried, setTourRetried] = useState(false)
   const [updateOpen, setUpdateOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const { t, locale, setLocale } = useI18n()
@@ -150,6 +151,35 @@ export default function AppLayout() {
     const id = window.setTimeout(() => setTourOpen(true), 900)
     return () => window.clearTimeout(id)
   }, [immersive])
+
+  // Safety net for the Windows 11 25H2 symptom "导航对话框没有出现": AntD's
+  // Tour measures its target rect and positions the card from it. If the
+  // layout has not settled when it opens (slow machine, cold font/GPU cache)
+  // the card can end up outside the viewport — the spotlight mask still
+  // renders, the card never does, and the guide looks like it vanished.
+  // Detect that state once, reopen on a settled layout, and give up rather
+  // than loop.
+  useEffect(() => {
+    if (!tourOpen || tourRetried) return
+    const id = window.setTimeout(() => {
+      const card = document.querySelector('.ant-tour-inner')
+      if (!card) return
+      const r = card.getBoundingClientRect()
+      const usable =
+        r.width > 60 &&
+        r.height > 40 &&
+        r.top < window.innerHeight &&
+        r.left < window.innerWidth &&
+        r.bottom > 0 &&
+        r.right > 0
+      if (!usable) {
+        setTourRetried(true)
+        setTourOpen(false)
+        window.setTimeout(() => setTourOpen(true), 500)
+      }
+    }, 1800)
+    return () => window.clearTimeout(id)
+  }, [tourOpen, tourRetried])
 
   const closeTour = () => {
     setTourOpen(false)

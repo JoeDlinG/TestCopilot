@@ -71,6 +71,8 @@ export const deviceAPI = {
   update: (id: string, data: any) => api.put(`/devices/${id}`, data),
   delete: (id: string) => api.delete(`/devices/${id}`),
   discover: () => api.get('/devices/discover'),
+  /** Physical COM / tty ports for the serial-port drop-down. */
+  listSerialPorts: () => api.get('/devices/serial-ports'),
   connect: (deviceId: string, config?: any) =>
     api.post('/devices/connect', { device_id: deviceId, config }),
   disconnect: (id: string) => api.post(`/devices/${id}/disconnect`),

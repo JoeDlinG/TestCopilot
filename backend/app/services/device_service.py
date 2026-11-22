@@ -237,6 +237,21 @@ class DeviceService:
             merged["port"] = device.serial_port
         return merged if merged else None
 
+    @staticmethod
+    def _serial_port_missing(device: Device, merged: Optional[Dict[str, Any]]) -> bool:
+        """True when a serial device has no usable port anywhere.
+
+        Devices created from a plugin template carry no ``serial_port`` column
+        and no ``config.port`` (the schema deliberately has no default), so a
+        bare connect used to reach ``serial.Serial(port='')`` and surface an
+        opaque OS error. Fail before opening the bus instead.
+        """
+        if device.protocol != "serial" and device.connection_type != "serial":
+            return False
+        if str(getattr(device, "serial_port", None) or "").strip():
+            return False
+        return not str((merged or {}).get("port") or "").strip()
+
     async def create_device(self, db: AsyncSession, data: DeviceCreate) -> Device:
         # Stable identifier: taken from the request when supplied (that is how a
         # replacement device inherits the bindings of the one it replaces),
@@ -386,6 +401,12 @@ class DeviceService:
 
             # Build merged config
             merged_config = self._get_connect_config(device, config)
+
+            if self._serial_port_missing(device, merged_config):
+                raise RuntimeError(
+                    "串口号未配置：请在「设备管理 → 配置接口」的串口号下拉框中"
+                    "选择实际端口（如 COM3），保存后再连接。"
+                )
 
             # Create communication interface. Custom protocols are handled by
             # an installed + enabled plugin (matched on protocol_name).

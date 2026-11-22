@@ -35,6 +35,44 @@ logger = logging.getLogger(__name__)
 _BOOT_WARNINGS: list = []
 
 
+def _bundled_driver_dirs() -> list:
+    """Directories that may hold vendor API DLLs shipped with the installer."""
+    dirs: list = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        dirs.append(os.path.join(str(meipass), "drivers"))
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    dirs.append(os.path.join(exe_dir, "drivers"))
+    dirs.append(os.path.join(exe_dir, "_internal", "drivers"))
+    # Source tree: backend/app/main.py -> backend/drivers
+    dirs.append(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drivers"))
+    return dirs
+
+
+def _register_bundled_drivers() -> None:
+    """Expose bundled vendor DLLs to ctypes-based drivers before first use.
+
+    python-can resolves ``PCANBasic.dll`` through ``ctypes.util.find_library``,
+    which on Windows scans only PATH. A per-user install cannot write to
+    System32, so we register our own drivers/ directory instead — no admin
+    rights and no separate PCAN-Basic installation required.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    for directory in _bundled_driver_dirs():
+        if not os.path.isfile(os.path.join(directory, "PCANBasic.dll")):
+            continue
+        if directory not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
+        try:
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(directory)
+        except Exception as e:
+            logger.debug("add_dll_directory(%s) failed: %s", directory, e)
+        logger.info("[boot] bundled hardware drivers registered: %s", directory)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
@@ -51,6 +89,7 @@ async def lifespan(app: FastAPI):
 
     async def _startup() -> None:
         logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+        _register_bundled_drivers()
         for _d in (settings.LOG_DIR, settings.EXPORT_DIR,
                    settings.REPORT_DIR, settings.PLUGIN_DIR):
             os.makedirs(_d, exist_ok=True)
@@ -392,6 +431,38 @@ def _register_media_types() -> None:
 
 _register_media_types()
 
+
+@app.middleware("http")
+async def _static_failure_log(request, call_next):
+    """Log failed requests for the SPA shell and its bundles.
+
+    A blank page leaves no trace in the program log unless the server says so:
+    a 4xx on ``/assets/index-*.js`` means the browser had nothing to execute,
+    which is exactly the "installed on another machine, screen stays white"
+    symptom. Logging the miss (with the client's user agent) turns that report
+    into a one-line diagnosis. Conversely, triaging a blank-page report starts
+    with one question — did the browser reach the server at all? — answered by
+    the ``[static] ... /`` line: no line means the request never arrived (wrong
+    port, proxy in the way, browser never opened), a very different fault from
+    "served the page but the bundle broke".
+    """
+    path = request.scope.get("path") or ""
+    response = await call_next(request)
+    if path.startswith("/assets/") and response.status_code >= 400:
+        logger.warning(
+            "[static] %s %s ua=%s",
+            response.status_code, path,
+            request.headers.get("user-agent", "")[:120],
+        )
+    elif path in ("/", "/index.html"):
+        logger.info(
+            "[static] %s %s ua=%s",
+            response.status_code, path,
+            request.headers.get("user-agent", "")[:80],
+        )
+    return response
+
+
 _entry_js = "entry.js"
 if _HAS_STATIC:
     try:
@@ -474,6 +545,73 @@ async def system_diag():
             "health_probe": True,
         },
     }
+
+
+def _driver_status() -> dict:
+    """Report optional hardware drivers without touching the database.
+
+    On Windows the PEAK kernel driver (``pcan_usb.sys``) and the PCAN-Basic
+    user-mode API (``PCANBasic.dll``) are installed separately. python-can
+    needs the latter, so "the device shows up in Device Manager" is not proof
+    that a PeakCAN connection can work.
+    """
+    info: dict = {
+        "platform": sys.platform,
+        "serial_ports": [],
+        "pcan": {
+            "device_driver_present": None,
+            "api_library": None,
+            "bundled_dll": None,
+            "ready": False,
+        },
+    }
+    try:
+        from serial.tools import list_ports
+        info["serial_ports"] = [
+            {"device": p.device, "description": getattr(p, "description", "") or ""}
+            for p in list_ports.comports()
+        ]
+    except Exception as e:
+        info["serial_ports_error"] = str(e)
+
+    if sys.platform.startswith("win"):
+        windir = os.environ.get("WINDIR", r"C:\Windows")
+        info["pcan"]["device_driver_present"] = os.path.isfile(
+            os.path.join(windir, "System32", "drivers", "pcan_usb.sys")
+        )
+        try:
+            from ctypes.util import find_library
+            info["pcan"]["api_library"] = find_library("PCANBasic")
+        except Exception as e:
+            info["pcan"]["api_error"] = str(e)
+
+        for directory in _bundled_driver_dirs():
+            candidate = os.path.join(directory, "PCANBasic.dll")
+            if os.path.isfile(candidate):
+                info["pcan"]["bundled_dll"] = os.path.abspath(candidate)
+                break
+        info["pcan"]["ready"] = bool(
+            info["pcan"]["api_library"] or info["pcan"]["bundled_dll"]
+        )
+        if not info["pcan"]["api_library"] and info["pcan"]["device_driver_present"]:
+            info["pcan"]["hint"] = (
+                "PEAK 设备驱动已安装，但缺少 PCAN-Basic API（PCANBasic.dll）；"
+                "请安装官方 PCAN-Basic 或使用安装包 drivers/ 目录里的 DLL。"
+            )
+        elif not info["pcan"]["device_driver_present"]:
+            info["pcan"]["hint"] = (
+                "未检测到 PEAK 设备驱动（pcan_usb.sys）；请安装官方 "
+                "Device Driver Setup：https://www.peak-system.com/quick/PCANDriver"
+            )
+        else:
+            info["pcan"]["hint"] = "PCAN-Basic API 已就绪。"
+    return info
+
+
+@app.get("/api/system/drivers")
+async def system_drivers():
+    """Driver / port status for the device page and field debugging."""
+    return _driver_status()
 
 
 # HEAD must be explicit: `curl -I` is the standard ops liveness probe and

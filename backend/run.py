@@ -90,12 +90,46 @@ def _negotiate_port(preferred: int) -> int:
 
 
 def _open_browser_now(port: int) -> None:
+    """Open the UI, trying every strategy available.
+
+    ``localhost`` first is a trap: it can resolve to ::1 (an IPv6 answer the
+    server never gave) and a browser may hand the URL to a system proxy, which
+    cannot reach a loopback-only server. ``127.0.0.1`` avoids both. When
+    ``webbrowser.open`` fails silently — elevated process, cold shell
+    association, browser still starting — fall back to the raw OS association
+    and finally ``cmd /c start``.
+    """
+    import os as _os
+    import subprocess
     import webbrowser
 
-    try:
-        webbrowser.open(f"http://localhost:{port}")
-    except Exception:
-        pass
+    for host in ("127.0.0.1", "localhost"):
+        url = f"http://{host}:{port}/"
+        try:
+            if webbrowser.open(url):
+                print(f"[boot] opened {url}")
+                return
+        except Exception:
+            pass
+    if _os.name == "nt":
+        for url in (f"http://127.0.0.1:{port}/",):
+            try:
+                _os.startfile(url)  # type: ignore[attr-defined]
+                print(f"[boot] opened {url} via shell association")
+                return
+            except Exception:
+                pass
+            try:
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "", url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print(f"[boot] opened {url} via cmd start")
+                return
+            except Exception:
+                pass
+    print(f"[boot] could not start a browser; please open http://127.0.0.1:{port}/")
 
 
 def main() -> None:

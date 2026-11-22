@@ -56,6 +56,36 @@ async def list_interface_specs():
     return {"code": 0, "message": "success", "data": INTERFACE_SPECS}
 
 
+@router.get("/serial-ports")
+async def list_serial_ports():
+    """Enumerate real serial ports for the UI drop-down.
+
+    Kept as its own (lightweight) endpoint instead of reusing ``/discover``:
+    the drop-down must refresh in a few milliseconds while the operator is in
+    the middle of configuring a device, and ``/discover`` also scans VISA, raw
+    USB and (on Linux) sysfs.
+    """
+    ports: list[Dict[str, Any]] = []
+    warning = ""
+    try:
+        from serial.tools import list_ports
+        for p in list_ports.comports():
+            ports.append({
+                "device": p.device,
+                "description": getattr(p, "description", "") or "",
+                "hwid": getattr(p, "hwid", "") or "",
+                "vid": f"{p.vid:04X}" if getattr(p, "vid", None) else None,
+                "pid": f"{p.pid:04X}" if getattr(p, "pid", None) else None,
+                "serial_number": getattr(p, "serial_number", None),
+            })
+    except ImportError:
+        warning = "pyserial 未安装，无法枚举串口"
+    except Exception as e:
+        logger.warning("Enumerating serial ports failed: %s", e)
+        warning = f"枚举串口失败：{e}"
+    return {"code": 0, "message": "success", "data": ports, "warning": warning}
+
+
 @router.get("/{device_id}/interface")
 async def get_device_interface(device_id: str, db: AsyncSession = Depends(get_db)):
     """Current interface settings of one device, ready to populate the form."""
@@ -496,8 +526,23 @@ async def connect_device(data: DeviceConnectRequest, db: AsyncSession = Depends(
             "code": 40001, "message": "Device not found", "detail": str(e),
         })
     except Exception as e:
+        detail = str(e)
+        low = detail.lower()
+        # A device created from a plugin template has no COM port until the
+        # operator picks one. Surface an actionable hint instead of pyserial's
+        # bare "could not open port ''".
+        if (
+            "串口号未配置" in detail
+            or "缺少串口号" in detail
+            or "serial port not found" in low
+            or ("could not open port" in low and "''" in detail)
+        ):
+            detail += (
+                "\n请到「设备管理 → 配置接口」，在串口号下拉框中选择实际端口"
+                "（如 COM3）并保存，然后重新连接；列表为空时先检查设备与驱动。"
+            )
         raise HTTPException(status_code=400, detail={
-            "code": 40002, "message": "Connection failed", "detail": str(e),
+            "code": 40002, "message": "Connection failed", "detail": detail,
         })
 
 

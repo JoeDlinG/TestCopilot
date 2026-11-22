@@ -36,6 +36,8 @@ export default function Devices() {
   const [keySaving, setKeySaving] = useState(false)
   const [keyForm] = Form.useForm()
   const [form] = Form.useForm()
+  const [serialPorts, setSerialPorts] = useState<any[]>([])
+  const [portsLoading, setPortsLoading] = useState(false)
   const { t } = useI18n()
 
   const loadDevices = async () => {
@@ -52,7 +54,35 @@ export default function Devices() {
 
   useEffect(() => { loadDevices() }, [])
 
+  const loadSerialPorts = async () => {
+    setPortsLoading(true)
+    try {
+      const res = await deviceAPI.listSerialPorts()
+      setSerialPorts(extractData(res, []))
+    } catch {
+      setSerialPorts([])
+    } finally {
+      setPortsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (modalVisible) loadSerialPorts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalVisible])
+
   const handleConnect = async (device: Device) => {
+    // A device added from a plugin template has no COM port until it is
+    // configured. Open the interface dialog instead of firing a doomed connect
+    // whose pyserial OS error tells the operator nothing about what to fix.
+    const serialLike = (device as any).protocol === 'serial'
+      || (device as any).connection_type === 'serial'
+    if (serialLike && !String((device as any).serial_port || '').trim()) {
+      message.warning(t('msg.serialPortMissing'))
+      setIfaceDevice(device)
+      setIfaceModalVisible(true)
+      return
+    }
     try {
       // Pass device config for USB devices that need VID/PID
       const config = (device as any).config || undefined
@@ -384,8 +414,38 @@ export default function Devices() {
           <Form.Item name="visa_address" label={t('ph.visaAddress')}>
             <Input placeholder={t('ph.visaExample')} />
           </Form.Item>
-          <Form.Item name="serial_port" label={t('iface.f.serial_port')}>
-            <Input placeholder={t('ph.serialExample')} />
+          <Form.Item
+            name="serial_port"
+            label={t('iface.f.serial_port')}
+            extra={
+              <Space size={4}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={portsLoading}
+                  onClick={loadSerialPorts}
+                >
+                  {t('btn.refreshPorts')}
+                </Button>
+                <Typography.Text type="secondary">
+                  {t('msg.serialPortPickerHint')}
+                </Typography.Text>
+              </Space>
+            }
+          >
+            <Select
+              showSearch
+              allowClear
+              loading={portsLoading}
+              placeholder={t('ph.serialPortPicker')}
+              notFoundContent={t('msg.noSerialPorts')}
+              optionFilterProp="label"
+              options={serialPorts.map((p: any) => ({
+                label: p.description ? `${p.device} — ${p.description}` : String(p.device),
+                value: p.device,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="can_channel" label={t('ph.canChannel')}>
             <Input placeholder={t('ph.canExample2')} />

@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -86,6 +87,80 @@ class PeakCANPlugin(BaseProtocolPlugin):
         # Periodic (cyclic) transmissions: key -> python-can CyclicSendTask.
         self._periodic: Dict[str, Any] = {}
         self._periodic_auto_stop: Dict[str, "asyncio.Task"] = {}
+        self._pcan_api: Dict[str, Any] = {}
+
+    # ------------------------------------------------------------------ #
+    # PCAN-Basic API (user-mode DLL) discovery
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _bundled_pcan_dirs() -> List[str]:
+        """Directories where the installer may have shipped PCANBasic.dll."""
+        dirs: List[str] = []
+        meipass = getattr(sys, "_MEIPASS", None)  # PyInstaller onedir
+        if meipass:
+            dirs.append(os.path.join(str(meipass), "drivers"))
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        dirs.append(os.path.join(exe_dir, "drivers"))
+        dirs.append(os.path.join(exe_dir, "_internal", "drivers"))
+        # Source tree: backend/plugins/peakcan_plugin.py -> backend/drivers
+        dirs.append(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drivers"))
+        return dirs
+
+    @classmethod
+    def _ensure_pcan_api(cls) -> Dict[str, Any]:
+        """Make PCANBasic.dll discoverable on Windows.
+
+        python-can loads the API through ``ctypes.util.find_library``, which on
+        Windows scans only PATH. Installing the PEAK *device driver* is not
+        enough: PCAN-Basic is a separate user-mode package, and a machine with
+        ``pcan_usb.sys`` but no ``PCANBasic.dll`` reports the confusing
+        "PCANBasic library not found". Our installer ships the official x64
+        DLL under ``drivers/``; register that directory so the frozen app can
+        load it without admin rights or a system-wide install.
+        """
+        info: Dict[str, Any] = {
+            "platform": sys.platform,
+            "source": "system",
+            "path": None,
+            "bundled_available": False,
+        }
+        if not cls._is_windows():
+            return info
+        try:
+            from ctypes.util import find_library
+            found = find_library("PCANBasic")
+            if found:
+                info["path"] = found
+                return info
+        except Exception as e:
+            logger.debug("find_library(PCANBasic) failed: %s", e)
+
+        for directory in cls._bundled_pcan_dirs():
+            dll = os.path.join(directory, "PCANBasic.dll")
+            if not os.path.isfile(dll):
+                continue
+            info["bundled_available"] = True
+            # find_library() re-scans PATH on every call, so prepending works
+            # for both it and the subsequent LoadLibrary.
+            os.environ["PATH"] = directory + os.pathsep + os.environ.get("PATH", "")
+            try:
+                if hasattr(os, "add_dll_directory"):
+                    os.add_dll_directory(directory)
+            except Exception as e:
+                logger.debug("add_dll_directory(%s) failed: %s", directory, e)
+            try:
+                from ctypes.util import find_library
+                if find_library("PCANBasic"):
+                    info["source"] = "bundled"
+                    info["path"] = dll
+                    logger.info("PeakCAN: using bundled PCAN-Basic API at %s", dll)
+                else:
+                    info["error"] = "随包 DLL 已找到但 find_library 仍无法解析"
+            except Exception as e:
+                info["error"] = str(e)
+            break
+        return info
 
     # ------------------------------------------------------------------ #
     # Connection management
@@ -107,6 +182,11 @@ class PeakCANPlugin(BaseProtocolPlugin):
             raise RuntimeError(
                 "python-can is not installed. Install with: pip install python-can"
             ) from e
+
+        # python-can resolves PCANBasic.dll when Bus(interface="pcan") is
+        # constructed. Do this before building the candidate list so a machine
+        # with only the kernel driver can use the DLL shipped in our installer.
+        self._pcan_api = self._ensure_pcan_api()
 
         config = config or {}
         interface = (config.get("interface") or "auto").strip() or "auto"
@@ -197,9 +277,24 @@ class PeakCANPlugin(BaseProtocolPlugin):
         self._active_interface = interface
         self._active_channel = channel
         details = "\n".join(f"  - {a}" for a in self._attempts) or "  - （无可用候选）"
+        api_note = ""
+        if self._is_windows():
+            if self._pcan_api.get("source") == "bundled":
+                api_note = (
+                    "驱动检查：已加载安装包自带的 PCANBasic.dll"
+                    f"（{self._pcan_api.get('path')}）；若仍失败请确认通道选择与硬件状态。\n"
+                )
+            else:
+                api_note = (
+                    "驱动检查：系统未找到 PCAN-Basic API（PCANBasic.dll）。"
+                    "PEAK 设备驱动与 PCAN-Basic API 是两个独立组件，只装设备驱动"
+                    "仍会连不上；请安装官方 PCAN-Basic / Device Driver Setup"
+                    "（https://www.peak-system.com/quick/PCANDriver），"
+                    "或检查安装包 drivers/ 目录。\n"
+                )
         self._last_error = (
             f"PeakCAN 连接失败，已依次尝试 {len(candidates)} 个接口/通道组合：\n"
-            f"{details}\n{self._platform_hint()}"
+            f"{details}\n{api_note}{self._platform_hint()}"
         )
         raise ConnectionError(self._last_error)
 
@@ -568,8 +663,18 @@ class PeakCANPlugin(BaseProtocolPlugin):
                 f"{msg} → 接口未启动，执行 "
                 "`sudo ip link set can0 up type can bitrate 500000`"
             )
-        if interface == "pcan" and ("dll" in low or "找不到" in msg or "not found" in low):
-            return f"{msg} → 未找到 PCAN-Basic 驱动库，请先安装 PEAK PCAN-Basic"
+        if interface == "pcan" and (
+            "dll" in low or "找不到" in msg or "not found" in low
+            or "pcanbasic" in low
+        ):
+            return (
+                f"{msg} → 缺少 PCAN-Basic API（PCANBasic.dll）。"
+                "PEAK 的 USB 设备驱动与 PCAN-Basic API 是两个独立组件："
+                "设备管理器里能看到 PCAN-USB 只说明内核驱动已装，"
+                "不代表 API 可用。本安装包已在 drivers/ 附带官方 x64 DLL；"
+                "若仍缺失请安装官方 PCAN-Basic"
+                "（https://www.peak-system.com/quick/PCANDriver）。"
+            )
         return msg
 
     @classmethod
@@ -608,9 +713,11 @@ class PeakCANPlugin(BaseProtocolPlugin):
         """Actionable platform-specific hint appended to connection failures."""
         if cls._is_windows():
             return (
-                "Windows 提示：SocketCAN 不可用，请安装 PEAK PCAN-Basic 驱动"
-                "（https://www.peak-system.com/quick/PCANDriver），接口选 'pcan'，"
-                "通道常用 PCAN_USBBUS1；可用 {\"action\": \"diagnose\"} 查看检测结果。"
+                "Windows 提示：SocketCAN 不可用，接口选 'pcan'、通道常用 PCAN_USBBUS1。"
+                "PCAN-Basic API（PCANBasic.dll）已随本安装包附带于 drivers/ 目录，"
+                "应用启动时会自动加载；若硬件仍未被识别，再安装官方 "
+                "Device Driver Setup（https://www.peak-system.com/quick/PCANDriver）。"
+                "可用 {\"action\": \"diagnose\"} 查看驱动检测结果。"
             )
         base = (
             "Linux 提示：SocketCAN 需要一个处于 UP 状态的内核 CAN 接口 —— "
@@ -1083,6 +1190,16 @@ class PeakCANPlugin(BaseProtocolPlugin):
             info["candidate_error"] = str(e)
         info["last_attempts"] = list(self._attempts)
         info["preparation"] = list(self._prepare_notes)
+        # Distinguish "kernel driver installed" from "PCAN-Basic API missing" —
+        # the single most common Windows support case.
+        self._pcan_api = self._ensure_pcan_api()
+        info["pcan_api"] = self._pcan_api
+        info["device_driver_present"] = (
+            os.path.isfile(os.path.join(
+                os.environ.get("WINDIR", r"C:\Windows"), "System32", "drivers",
+                "pcan_usb.sys"))
+            if self._is_windows() else None
+        )
         info["install_script"] = (
             None if self._is_windows()
             else "backend/install/install_peakcan_rules.sh"

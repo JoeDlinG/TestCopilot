@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Dict, Optional
 from app.core.timeutils import from_timestamp, utc_now
 
@@ -36,7 +38,27 @@ logger = logging.getLogger(__name__)
 MAX_LOG_SIZE = 10 * 1024 * 1024  # 10 MB
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LOGS_DIR = os.path.join(_BACKEND_DIR, "logs")
+
+
+def _logs_root() -> str:
+    """Writable root for every log tree.
+
+    In a packaged build the install directory may sit under a location that is
+    not writable (or gets wiped on reinstall), so logs must follow the database
+    into ``%LOCALAPPDATA%\\AITestLab`` — users look for them there anyway.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        candidate = os.path.join(base, "AITestLab", "logs")
+        try:
+            os.makedirs(candidate, exist_ok=True)
+            return candidate
+        except OSError:
+            pass
+    return os.path.join(_BACKEND_DIR, "logs")
+
+
+LOGS_DIR = _logs_root()
 PROGRAM_DIR = os.path.join(LOGS_DIR, "program")
 COMMUNICATION_DIR = os.path.join(LOGS_DIR, "communication")
 EXECUTIONS_DIR = os.path.join(LOGS_DIR, "executions")

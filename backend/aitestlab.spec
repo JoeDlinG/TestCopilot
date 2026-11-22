@@ -57,6 +57,14 @@ datas = [
     (os.path.join(os.path.dirname(backend_dir), "docs"), "docs"),
 ]
 
+# The PEAK Windows kernel driver is NOT enough for python-can: it also needs
+# the user-mode PCANBasic.dll. Ship the official x64 DLL in drivers/ so a
+# per-user (non-admin) install works out of the box; peakcan_plugin registers
+# that directory on PATH before python-can resolves the library.
+_drivers_dir = os.path.join(backend_dir, "drivers")
+if sys.platform == "win32" and os.path.isdir(_drivers_dir):
+    datas.append((_drivers_dir, "drivers"))
+
 # install/ contains Linux-only udev rules and bash installers. The main
 # distribution is a Windows NSIS build where they are unusable (and the
 # connect-error hints must not point at them), so ship them on POSIX only.
