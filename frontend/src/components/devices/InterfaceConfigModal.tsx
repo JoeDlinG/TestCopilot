@@ -11,6 +11,27 @@ import type { Device } from '../../types'
 
 const { Text } = Typography
 
+// antd renders Select/DatePicker/etc. popups to document.body via a portal.
+// When an ancestor has a transform (antd Modal applies a zoom animation, and
+// VS Code Simple Browser scales its iframe to fit the pane), the portal is
+// positioned against a shifted containing block and the dropdown lands outside
+// the viewport — the popup "never opens". Rendering it back inside the modal
+// content keeps it in the same stacking/positioning context and fixes this.
+const popupContainer = (triggerNode: HTMLElement | undefined) =>
+  (triggerNode?.closest?.('.ant-modal-content') as HTMLElement) || document.body
+
+// Physical-address fields offered for a *custom* interface type that the
+// backend catalogue does not know. Instead of rejecting the value, the form
+// lets the operator fill a generic address (serial / IP / VISA / CAN) so any
+// bus can still be configured — matching the open-configuration requirement.
+const CUSTOM_FIELDS: FieldSpec[] = [
+  { key: 'serial_port', label: 'Serial port', type: 'string', store: 'column', required: false, placeholder: 'COM3' },
+  { key: 'ip_address', label: 'IP address', type: 'string', store: 'column', required: false, placeholder: '192.168.0.120' },
+  { key: 'port', label: 'Port', type: 'integer', store: 'column', required: false, placeholder: '5025' },
+  { key: 'visa_address', label: 'VISA resource', type: 'string', store: 'column', required: false, placeholder: 'ASRL3::INSTR' },
+  { key: 'can_channel', label: 'CAN channel', type: 'string', store: 'column', required: false, placeholder: 'can0' },
+]
+
 interface FieldSpec {
   key: string
   label: string
@@ -49,6 +70,7 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
   const [serialPorts, setSerialPorts] = useState<any[]>([])
   const [portsLoading, setPortsLoading] = useState(false)
   const [serialSearch, setSerialSearch] = useState('')
+  const [typeSearch, setTypeSearch] = useState('')
   const [form] = Form.useForm()
   const { t } = useI18n()
 
@@ -109,7 +131,13 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
     }
   }
 
-  const spec = specs.find((s) => s.type === currentType)
+  // A type outside the catalogue gets a synthetic spec exposing generic
+  // address fields, so "other devices" stay configurable instead of showing a
+  // dead "please select" hint.
+  const spec = specs.find((s) => s.type === currentType) ||
+    (currentType
+      ? ({ type: currentType, label: currentType, protocol: currentType, fields: CUSTOM_FIELDS } as InterfaceSpec)
+      : undefined)
 
   const onTypeChange = (type: string) => {
     const next = specs.find((s) => s.type === type)
@@ -179,6 +207,7 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
           notFoundContent={t('msg.noSerialPorts')}
           onSearch={setSerialSearch}
           options={options}
+          getPopupContainer={popupContainer}
         />
       )
     }
@@ -187,6 +216,7 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
         <Select
           options={f.options.map((o) => ({ label: String(o), value: o }))}
           placeholder={f.placeholder || '请选择'}
+          getPopupContainer={popupContainer}
         />
       )
     }
@@ -235,13 +265,22 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
             rules={[{ required: true, message: t('iface.type') }]}
           >
             <Select
+              showSearch
+              optionFilterProp="label"
               onChange={onTypeChange}
-              options={specs.map((s) => ({
-                label: s.simulated
-                  ? `${labelFor(`iface.t.${s.type}`, s.label)}（模拟/simulated）`
-                  : labelFor(`iface.t.${s.type}`, s.label),
-                value: s.type,
-              }))}
+              onSearch={setTypeSearch}
+              getPopupContainer={popupContainer}
+              options={[
+                ...specs.map((s) => ({
+                  label: s.simulated
+                    ? `${labelFor(`iface.t.${s.type}`, s.label)}（模拟/simulated）`
+                    : labelFor(`iface.t.${s.type}`, s.label),
+                  value: s.type,
+                })),
+                ...(typeSearch.trim() && !specs.some((s) => s.type === typeSearch.trim())
+                  ? [{ label: `${typeSearch.trim()} · ${t('iface.custom')}`, value: typeSearch.trim() }]
+                  : []),
+              ]}
             />
           </Form.Item>
 

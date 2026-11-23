@@ -18,6 +18,14 @@ import type { Device } from '../types'
 
 const { Title } = Typography
 
+// antd renders Select popups to document.body via a portal. When an ancestor
+// carries a transform (antd Modal zoom animation, or VS Code Simple Browser
+// scaling its iframe), the portal is positioned against a shifted containing
+// block and the dropdown lands outside the viewport — it looks like the menu
+// "never opens". Rendering it back inside the modal fixes the positioning.
+const popupContainer = (triggerNode: HTMLElement | undefined) =>
+  (triggerNode?.closest?.('.ant-modal-content') as HTMLElement) || document.body
+
 export default function Devices() {
   const [devices, setDevices] = useState<Device[]>([])
   const [loading, setLoading] = useState(false)
@@ -454,6 +462,7 @@ export default function Devices() {
               optionFilterProp="label"
               onSearch={setDeviceTypeSearch}
               options={deviceTypeOptions}
+              getPopupContainer={popupContainer}
             />
           </Form.Item>
           <Form.Item name="interface_type" label={t('iface.type')} rules={[{ required: true }]}>
@@ -463,6 +472,7 @@ export default function Devices() {
               optionFilterProp="label"
               onSearch={setIfaceTypeSearch}
               options={ifaceTypeOptions}
+              getPopupContainer={popupContainer}
             />
           </Form.Item>
           {showVisaField && (
@@ -501,6 +511,7 @@ export default function Devices() {
                 optionFilterProp="label"
                 onSearch={setSerialSearch}
                 options={serialPortOptions}
+                getPopupContainer={popupContainer}
               />
             </Form.Item>
           )}

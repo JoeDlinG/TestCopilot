@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-11-23: 设备管理下拉失效根治 —— getPopupContainer + 接口类型开放（v2.3.11）
+
+### 现场与根因
+
+用户反馈：设备管理"编辑/添加设备"时下拉菜单仍无效；对照 Linux 版正常，怀疑编译问题；在 VS Code Simple Browser（内嵌 iframe）中打开。
+
+排查结论（两条根因叠加）：
+
+1. **下拉"打不开" = antd 弹层 portal 定位失真**。antd 的 Select/DatePicker 等弹层默认通过 `createPortal` 挂载到 `document.body`。当祖先节点带 `transform`（antd Modal 有缩放动画；VS Code Simple Browser 用 `transform: scale()` 适配 iframe），弹层的 containing block 被改写，定位基准漂移，dropdown 落到视口外——表现就是"点开没反应"。Playwright 标准 Chromium / iframe+sandbox 均无法复现（无 transform），但 Simple Browser 实机复现。
+2. **接口类型仍写死**。上一轮只开放了"添加设备"弹窗（Devices.tsx），漏了"配置设备接口"弹窗（InterfaceConfigModal）的接口类型下拉——仍是后端 7 种预设、无 showSearch、无自由输入；且后端 `PUT /interface` 对未知 `connection_type` 直接 400（"不支持的接口类型"）。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/pages/Devices.tsx` | 添加设备弹窗 3 个 Select 加 `getPopupContainer`（挂回 `.ant-modal-content`） |
+| `frontend/src/components/devices/InterfaceConfigModal.tsx` | 接口类型/串口号/字段下拉加 `getPopupContainer`；接口类型下拉加 `showSearch` + 自由输入；自定义类型渲染通用地址字段（serial_port/ip_address/port/visa_address/can_channel） |
+| `backend/app/core/interfaces.py` | `get_interface_spec` 对未知类型返回通用字段的 synthetic spec（不再抛 KeyError），使 `PUT /interface`、`split_params`、`clear_other_columns` 全链路支持自定义接口类型 |
+
+### 验证（源码 + API + Chromium）
+
+- 后端 `PUT /interface` 提交自定义 `connection_type="xcp"` → `code=0`，`GET` 确认 ip/port 正确持久化。
+- 前端：接口类型下拉打开 7 个预设；输入 "xcp" 出现 "xcp · Custom" 选项；选择后通用地址字段（Serial port / IP / Port / VISA / CAN）正确显示；零 pageerror。
+- 门禁：tsc 0 错误、i18n-guard A221/B0、vite build 成功、27 chunks 无 2-环。
+
+### 产物
+
+`backend/dist/AITestLab-Setup-v2.3.11.exe`（34MB），sha256 `d7413ccb8f1ba37dc57898e43889b106bec5356e6433dac622881e3da0eeb6e5`。
+
+---
+
 ## 2026-11-23: 添加设备配置开放化 —— 设备类型/接口/串口全部可自由配置（v2.3.10）
 
 ### 现场与根因

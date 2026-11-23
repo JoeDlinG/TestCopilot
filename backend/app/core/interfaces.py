@@ -198,11 +198,31 @@ INTERFACE_SPECS: List[Dict[str, Any]] = [
 INTERFACE_TYPES_ORDER = [s["type"] for s in INTERFACE_SPECS]
 
 
+# Generic physical-address fields for an interface type the catalogue does not
+# know. Returning them (instead of raising KeyError) lets both the UI and the
+# update endpoint treat a custom bus like any other, so "other devices" stay
+# configurable instead of being rejected with 40015 (open configuration).
+_CUSTOM_INTERFACE_FIELDS = [
+    {"key": "serial_port", "label": "串口号", "type": "string", "store": "column", "required": False},
+    {"key": "ip_address", "label": "IP 地址", "type": "string", "store": "column", "required": False},
+    {"key": "port", "label": "端口号", "type": "integer", "store": "column", "required": False},
+    {"key": "visa_address", "label": "VISA 资源串", "type": "string", "store": "column", "required": False},
+    {"key": "can_channel", "label": "CAN 通道", "type": "string", "store": "column", "required": False},
+]
+
+
 def get_interface_spec(interface_type: str) -> Dict[str, Any]:
     for spec in INTERFACE_SPECS:
         if spec["type"] == interface_type:
             return spec
-    raise KeyError(interface_type)
+    # Unknown type: expose the generic physical-address columns instead of
+    # raising, so a custom bus stays configurable end-to-end.
+    return {
+        "type": interface_type,
+        "label": interface_type,
+        "protocol": interface_type,
+        "fields": _CUSTOM_INTERFACE_FIELDS,
+    }
 
 
 def default_params(interface_type: str) -> Dict[str, Any]:
