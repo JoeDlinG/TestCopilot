@@ -48,6 +48,7 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
   const [saving, setSaving] = useState(false)
   const [serialPorts, setSerialPorts] = useState<any[]>([])
   const [portsLoading, setPortsLoading] = useState(false)
+  const [serialSearch, setSerialSearch] = useState('')
   const [form] = Form.useForm()
   const { t } = useI18n()
 
@@ -147,9 +148,9 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
 
   const renderField = (f: FieldSpec) => {
     const common = { placeholder: f.placeholder, style: { width: '100%' } }
-    // Serial ports must be picked from what the OS actually exposes. A free
-    // text box invited COM3 typos and, for plugin-created devices, an empty
-    // value that only failed at connect time with an opaque OS error.
+    // Serial ports: offer the OS-enumerated list as convenience, but let the
+    // operator type any port name too — virtual ports, pass-through adapters
+    // and ports pyserial cannot enumerate must still be configurable.
     if (f.key === 'serial_port') {
       const current = String(params[f.key] || '').trim()
       const options: { label: string; value: string }[] = serialPorts.map((p: any) => ({
@@ -163,6 +164,11 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
           value: current,
         })
       }
+      // A manually typed value becomes a selectable option.
+      const typed = serialSearch.trim()
+      if (typed && !options.some((o) => o.value === typed)) {
+        options.unshift({ label: `${typed} · ${t('iface.custom')}`, value: typed })
+      }
       return (
         <Select
           showSearch
@@ -171,6 +177,7 @@ export default function InterfaceConfigModal({ open, device, onClose, onSaved }:
           optionFilterProp="label"
           placeholder={t('ph.serialPortPicker')}
           notFoundContent={t('msg.noSerialPorts')}
+          onSearch={setSerialSearch}
           options={options}
         />
       )

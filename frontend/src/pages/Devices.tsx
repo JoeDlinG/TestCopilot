@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Card, Table, Button, Modal, Form, Input, Select, Space, Tag,
   message, Popconfirm, Typography, Tooltip, Alert
@@ -38,7 +38,53 @@ export default function Devices() {
   const [form] = Form.useForm()
   const [serialPorts, setSerialPorts] = useState<any[]>([])
   const [portsLoading, setPortsLoading] = useState(false)
+  // Open-configuration: the drop-downs offer presets but also accept any free
+  // text the operator types, so a device/interface that is not in the built-in
+  // list can still be added without a code change.
+  const [deviceTypeSearch, setDeviceTypeSearch] = useState('')
+  const [ifaceTypeSearch, setIfaceTypeSearch] = useState('')
+  const [serialSearch, setSerialSearch] = useState('')
   const { t } = useI18n()
+
+  // Which address field(s) the form shows follows the chosen interface, so
+  // switching "interface type" switches the inputs instead of showing a wall of
+  // mostly-irrelevant boxes. Unselected / custom keeps everything visible.
+  const ifaceType = Form.useWatch('interface_type', form)
+  const isCustomIface = !!ifaceType && !(ifaceType in INTERFACE_TYPES)
+  const showSerialField = !ifaceType || isCustomIface || ifaceType === 'custom' || ifaceType === 'serial' || ifaceType === 'usb'
+  const showCanField = !ifaceType || isCustomIface || ifaceType === 'custom' || ifaceType === 'can'
+  const showEthernetFields = !ifaceType || isCustomIface || ifaceType === 'custom' || ifaceType === 'ethernet'
+  const showVisaField = !ifaceType || isCustomIface || ifaceType === 'custom' || ifaceType === 'scpi' || ifaceType === 'gpib' || ifaceType === 'pxi'
+
+  const deviceTypeOptions = useMemo(() => {
+    const presets = Object.entries(DEVICE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
+    const s = deviceTypeSearch.trim()
+    if (s && !presets.some((o) => o.value === s)) {
+      presets.push({ label: `${s} · ${t('iface.custom')}`, value: s })
+    }
+    return presets
+  }, [deviceTypeSearch, t])
+
+  const ifaceTypeOptions = useMemo(() => {
+    const presets = Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
+    const s = ifaceTypeSearch.trim()
+    if (s && !presets.some((o) => o.value === s)) {
+      presets.push({ label: `${s} · ${t('iface.custom')}`, value: s })
+    }
+    return presets
+  }, [ifaceTypeSearch, t])
+
+  const serialPortOptions = useMemo(() => {
+    const opts = serialPorts.map((p: any) => ({
+      label: p.description ? `${p.device} — ${p.description}` : String(p.device),
+      value: String(p.device),
+    }))
+    const s = serialSearch.trim()
+    if (s && !opts.some((o) => o.value === s)) {
+      opts.unshift({ label: `${s} · ${t('iface.custom')}`, value: s })
+    }
+    return opts
+  }, [serialPorts, serialSearch, t])
 
   const loadDevices = async () => {
     setLoading(true)
@@ -402,60 +448,77 @@ export default function Devices() {
             <Input placeholder={t('ph.deviceExample')} />
           </Form.Item>
           <Form.Item name="device_type" label={t('label.deviceType')} rules={[{ required: true }]}>
-            <Select placeholder={t('ph.deviceType')} options={
-              Object.entries(DEVICE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
-            } />
-          </Form.Item>
-          <Form.Item name="interface_type" label={t('iface.type')} rules={[{ required: true }]}>
-            <Select placeholder={t('msg.selectInterface')} options={
-              Object.entries(INTERFACE_TYPES).map(([k, v]) => ({ label: t(v), value: k }))
-            } />
-          </Form.Item>
-          <Form.Item name="visa_address" label={t('ph.visaAddress')}>
-            <Input placeholder={t('ph.visaExample')} />
-          </Form.Item>
-          <Form.Item
-            name="serial_port"
-            label={t('iface.f.serial_port')}
-            extra={
-              <Space size={4}>
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  loading={portsLoading}
-                  onClick={loadSerialPorts}
-                >
-                  {t('btn.refreshPorts')}
-                </Button>
-                <Typography.Text type="secondary">
-                  {t('msg.serialPortPickerHint')}
-                </Typography.Text>
-              </Space>
-            }
-          >
             <Select
               showSearch
-              allowClear
-              loading={portsLoading}
-              placeholder={t('ph.serialPortPicker')}
-              notFoundContent={t('msg.noSerialPorts')}
+              placeholder={t('ph.deviceType')}
               optionFilterProp="label"
-              options={serialPorts.map((p: any) => ({
-                label: p.description ? `${p.device} — ${p.description}` : String(p.device),
-                value: p.device,
-              }))}
+              onSearch={setDeviceTypeSearch}
+              options={deviceTypeOptions}
             />
           </Form.Item>
-          <Form.Item name="can_channel" label={t('ph.canChannel')}>
-            <Input placeholder={t('ph.canExample2')} />
+          <Form.Item name="interface_type" label={t('iface.type')} rules={[{ required: true }]}>
+            <Select
+              showSearch
+              placeholder={t('msg.selectInterface')}
+              optionFilterProp="label"
+              onSearch={setIfaceTypeSearch}
+              options={ifaceTypeOptions}
+            />
           </Form.Item>
-          <Form.Item name="ip_address" label={t('ph.ipAddress')}>
-            <Input placeholder={t('ph.ipExample2')} />
-          </Form.Item>
-          <Form.Item name="port" label={t('iface.f.port')}>
-            <Input type="number" placeholder={t('ph.portExample')} />
-          </Form.Item>
+          {showVisaField && (
+            <Form.Item name="visa_address" label={t('ph.visaAddress')} preserve={false}>
+              <Input placeholder={t('ph.visaExample')} />
+            </Form.Item>
+          )}
+          {showSerialField && (
+            <Form.Item
+              name="serial_port"
+              label={t('iface.f.serial_port')}
+              preserve={false}
+              extra={
+                <Space size={4}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    loading={portsLoading}
+                    onClick={loadSerialPorts}
+                  >
+                    {t('btn.refreshPorts')}
+                  </Button>
+                  <Typography.Text type="secondary">
+                    {t('msg.serialPortPickerHint')}
+                  </Typography.Text>
+                </Space>
+              }
+            >
+              <Select
+                showSearch
+                allowClear
+                loading={portsLoading}
+                placeholder={t('ph.serialPortPicker')}
+                notFoundContent={t('msg.noSerialPorts')}
+                optionFilterProp="label"
+                onSearch={setSerialSearch}
+                options={serialPortOptions}
+              />
+            </Form.Item>
+          )}
+          {showCanField && (
+            <Form.Item name="can_channel" label={t('ph.canChannel')} preserve={false}>
+              <Input placeholder={t('ph.canExample2')} />
+            </Form.Item>
+          )}
+          {showEthernetFields && (
+            <Form.Item name="ip_address" label={t('ph.ipAddress')} preserve={false}>
+              <Input placeholder={t('ph.ipExample2')} />
+            </Form.Item>
+          )}
+          {showEthernetFields && (
+            <Form.Item name="port" label={t('iface.f.port')} preserve={false}>
+              <Input type="number" placeholder={t('ph.portExample')} />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 
