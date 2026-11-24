@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-24: 右侧抽屉标题改「运行 / 报告」（v2.3.12）
+
+### 改动
+
+把右侧输出抽屉（OutputDock）的标题从「输出 / 交付」改为「运行 / 报告」，与抽屉内两个页签「测试执行 / 输出报告」的语义对齐（运行=测试执行、报告=输出报告）。
+
+| 文件 | 改动 |
+|---|---|
+| `frontend/src/components/layout/OutputDock.tsx` | 折叠态竖排标题「输出 / 交付」→「运行 / 报告」（含注释） |
+| `frontend/src/i18n/messages.ts` | `dock.title` 中文「输出 / 交付」→「运行 / 报告」；英文 `Output` → `Runs & Reports` |
+| `frontend/src/i18n/extraKeys13.ts` | 引导步骤 `tour.step.dockTitle` 中文源文案与英文同步改为「运行 / 报告 / Runs & Reports」 |
+
+### 验证
+
+- 门禁：tsc / i18n-guard / vite build 全过。
+
+---
+
 ## 2026-11-23: 设备管理下拉失效根治 —— getPopupContainer + 接口类型开放（v2.3.11）
 
 ### 现场与根因

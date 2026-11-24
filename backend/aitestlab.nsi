@@ -8,7 +8,7 @@
 Unicode true
 
 !define APP_NAME "AITestLab"
-!define APP_VERSION "2.3.11"
+!define APP_VERSION "2.3.12"
 !define APP_PUBLISHER "AITestLab"
 !define APP_EXE "AITestLab.exe"
 

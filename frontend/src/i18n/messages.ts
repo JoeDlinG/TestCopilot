@@ -54,7 +54,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'status.running': '运行中',
 
     // ---- output dock ----
-    'dock.title': '输出 / 交付',
+    'dock.title': '运行 / 报告',
     'dock.executions': '测试执行',
     'dock.reports': '输出报告',
 
@@ -288,7 +288,7 @@ export const messages: Record<Locale, Record<string, string>> = {
     'status.running': 'Running',
 
     // ---- output dock ----
-    'dock.title': 'Output',
+    'dock.title': 'Runs & Reports',
     'dock.executions': 'Executions',
     'dock.reports': 'Reports',
 

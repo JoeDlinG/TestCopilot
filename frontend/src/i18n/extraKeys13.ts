@@ -70,7 +70,7 @@ export const HELP_KEYS: Record<string, [string, string]> = {
     ['tour.step.search', 'Press ⌘K / Ctrl+K anywhere and type a device, case or page name to jump straight there.'],
   '帮助菜单里放着使用手册、快捷键、检查更新和问题反馈。':
     ['tour.step.help', 'The Help menu holds the manual, keyboard shortcuts, update checks and feedback.'],
-  '输出 / 交付': ['tour.step.dockTitle', 'Output & delivery'],
+  '运行 / 报告': ['tour.step.dockTitle', 'Runs & Reports'],
   '测试执行进度和报告都收在右侧抽屉：单击展开，双击全屏。':
     ['tour.step.dock', 'Run progress and reports live in the right-hand dock — click to expand, double-click for full screen.'],
 

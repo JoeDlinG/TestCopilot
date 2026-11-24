@@ -23,7 +23,7 @@ const Loading = () => (
 )
 
 /**
- * Right-hand "输出 / 交付" dock (issue #20).
+ * Right-hand "运行 / 报告" dock (issue #20).
  *
  * Three states: collapsed (34 px strip) → expanded (420 px) → fullscreen.
  * Engineers spend most of their time authoring configuration, where a permanent
@@ -85,7 +85,7 @@ export default function OutputDock() {
             userSelect: 'none',
           }}
         >
-          输出 / 交付
+          运行 / 报告
         </div>
       </div>
     )
