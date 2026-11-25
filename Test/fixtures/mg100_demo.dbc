@@ -1,0 +1,57 @@
+VERSION ""
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: MG100 ECU PCAN
+
+BO_ 256 EngineData: 8 ECU
+ SG_ EngineSpeed : 0|16@1+ (0.25,0) [0|16000] "rpm" PCAN
+ SG_ CoolantTemp : 16|8@1+ (1,-40) [-40|215] "degC" PCAN
+ SG_ ThrottlePos : 24|8@1+ (0.4,0) [0|100] "%" PCAN
+ SG_ StatusFlags : 32|8@0+ (1,0) [0|255] "" PCAN
+ SG_ TorqueNm : 40|16@0- (1,0) [-500|500] "Nm" PCAN
+
+BO_ 257 BatteryStatus: 8 ECU
+ SG_ Voltage : 0|16@1+ (0.01,0) [0|655.35] "V" MG100
+ SG_ Current : 16|16@1- (0.1,0) [-3200|3200] "A" MG100
+ SG_ SOC : 32|8@1+ (0.5,0) [0|100] "%" MG100
+ SG_ CellTemp : 40|12@0+ (0.1,-40) [-40|369.5] "degC" MG100
+
+BO_ 258 Multiplexed: 8 ECU
+ SG_ MuxSelector m0 : 0|8@1+ (1,0) [0|255] "" PCAN
+ SG_ SignalA M : 8|8@1+ (1,0) [0|255] "" PCAN
+ SG_ SignalB m1 : 8|8@1+ (1,0) [0|255] "" PCAN
+
+CM_ BO_ 256 "Engine data frame";
+CM_ SG_ 256 StatusFlags "Bitfield of engine status";
+VAL_ 257 SOC 0 "Empty" 100 "Full" ;

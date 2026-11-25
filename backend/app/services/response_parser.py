@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.services.dbc_parser import decode_signal
+
 # Public data types offered by the configuration UI
 DATA_TYPES = ("hex", "bin", "bool", "dec", "string")
 UNITS = ("bit", "byte")
@@ -156,6 +158,26 @@ class ResponseParser:
         if unit not in UNITS:
             return None, f"单位必须是 {'/'.join(UNITS)}"
 
+        # DBC-generated specs carry ``byte_order`` and decode via the shared
+        # dbc_parser rules (Intel/Motorola + signed + factor/offset) so the
+        # runtime result is bit-identical to the generated script.
+        if spec.get("byte_order"):
+            value = decode_signal(
+                data,
+                start,
+                length,
+                spec["byte_order"],
+                bool(spec.get("is_signed")),
+                spec.get("factor", 1.0),
+                spec.get("offset", 0.0),
+            )
+            if value is None:
+                return None, (
+                    f"报文长度不足以解出该信号: 需要 {start + length} bit，"
+                    f"数据仅 {len(data) * 8} bit"
+                )
+            return value, None
+
         if unit == "bit":
             bits = "".join(f"{b:08b}" for b in data)
             if start + length > len(bits):
@@ -177,20 +199,21 @@ class ResponseParser:
         """Convert a sliced value into the configured data type."""
         dt = str(data_type or "string").lower()
         if dt == "hex":
-            if isinstance(value, int):
-                return f"0x{value:X}"
+            if isinstance(value, (int, float)):
+                return f"0x{int(value):X}"
             return "0x" + value.hex().upper()
         if dt == "bin":
-            if isinstance(value, int):
-                width = max(1, value.bit_length())
-                return format(value, f"0{width}b")
+            if isinstance(value, (int, float)):
+                v = int(value)
+                width = max(1, v.bit_length())
+                return format(v, f"0{width}b")
             return "".join(f"{b:08b}" for b in value)
         if dt == "bool":
-            if isinstance(value, int):
+            if isinstance(value, (int, float)):
                 return bool(value)
             return any(b for b in value) if value else False
         if dt == "dec":
-            if isinstance(value, int):
+            if isinstance(value, (int, float)):
                 return value
             # Textual replies ("100", "23.5") should read as their numeric
             # value, not as a big-endian byte concatenation.

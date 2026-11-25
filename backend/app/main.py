@@ -21,7 +21,7 @@ from app.core.exceptions import AITestLabException
 from app.api import (
     devices, ai, testcases, executions, logs, reports, plugins,
     plugin_editor, dashboards, websocket, plans, memory, projects, help as help_api,
-    update as update_api, feedback as feedback_api,
+    update as update_api, feedback as feedback_api, dbc,
 )
 
 logging.basicConfig(
@@ -327,6 +327,7 @@ app.include_router(plans.runs_router)
 app.include_router(help_api.router)
 app.include_router(update_api.router)
 app.include_router(feedback_api.router)
+app.include_router(dbc.router)
 
 # Register WebSocket router
 app.include_router(websocket.router)

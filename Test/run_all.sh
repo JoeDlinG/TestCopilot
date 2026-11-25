@@ -33,6 +33,7 @@ SUITE=(
   test_startup_resilience
   test_issue34_generic_can
   test_static_runtime
+  test_dbc_import_and_parse
 )
 
 # Hardware-only suites are skipped (not failed) when no MG100 is attached —

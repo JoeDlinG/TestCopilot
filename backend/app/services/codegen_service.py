@@ -133,12 +133,42 @@ def is_empty_frame(raw):
     return False
 
 
-def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_field="all"):
+def _decode_signal(payload, start, length, byte_order, is_signed=False, factor=1.0, offset=0.0):
+    """Decode one DBC signal (Intel/Motorola), matching the platform parser."""
+    nbits = 8 * len(payload)
+    if not payload or length <= 0 or start < 0 or start + length > nbits:
+        return None
+    mask = (1 << length) - 1
+    if str(byte_order).lower() in ("intel", "little_endian", "little", "1"):
+        raw = (int.from_bytes(payload, "little") >> start) & mask
+    else:
+        raw = (int.from_bytes(payload, "big") >> (nbits - start - length)) & mask
+    if is_signed and length and (raw >> (length - 1)) & 1:
+        raw -= 1 << length
+    value = raw * factor + offset
+    return int(value) if float(value).is_integer() else value
+
+
+def dbc_start_to_linear(start, length, byte_order="little_endian"):
+    """Map DBC sawtooth start to the linear MSB-first index (diagnostic)."""
+    if str(byte_order).lower() in ("motorola", "big_endian", "big", "0"):
+        return start
+    byte, bit = divmod(start + length - 1, 8)
+    return byte * 8 + (7 - bit)
+
+
+def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_field="all",
+                byte_order=None, is_signed=False, factor=1.0, offset=0.0):
     """Slice a response and convert it, mirroring the platform parser."""
     if is_empty_frame(raw):
         # empty frame / timeout: nothing to judge
         return "unknown"
     data = _to_bytes(raw, hex_field)
+    if byte_order:
+        value = _decode_signal(data, start, length, byte_order, is_signed, factor, offset)
+        if value is None:
+            raise ValueError(f"payload too short for signal {start}+{length} bits")
+        return value
     if unit == "bit":
         bits = "".join(f"{b:08b}" for b in data)
         if start + length > len(bits):
@@ -169,6 +199,20 @@ def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_fie
         return str(value)
     return value.decode("utf-8", errors="replace").rstrip("\x00").strip()
 '''
+
+
+def _parse_field_dbc_args(spec: Dict[str, Any]) -> str:
+    """Render the extra ``parse_field`` kwargs for a DBC-generated parser spec.
+
+    Empty string for legacy specs (no ``byte_order``), so the generated script
+    stays byte-for-byte identical for pre-DBC test cases.
+    """
+    if not spec.get("byte_order"):
+        return ""
+    return (
+        f", byte_order={spec['byte_order']!r}, is_signed={bool(spec.get('is_signed'))!r}, "
+        f"factor={spec.get('factor', 1.0)!r}, offset={spec.get('offset', 0.0)!r}"
+    )
 
 
 def _init_literal(value: Any, vtype: str) -> str:
@@ -398,10 +442,11 @@ class CodeGenService:
                         parsed_vars[var] = var
                         body_lines.append(f"{prefix}# 结果解析: {name}")
                         hex_field = spec.get("hex_field") or "all"
+                        dbc_args = _parse_field_dbc_args(spec)
                         body_lines.append(
                             f"{prefix}{var} = parse_field(response, data_type={dtype!r}, "
                             f"start={start}, length={length}, unit={unit!r}, "
-                            f"hex_field={hex_field!r})"
+                            f"hex_field={hex_field!r}{dbc_args})"
                         )
                         body_lines.append(f"{prefix}log.info(f'解析 {name} = {{{var}}}')")
                         body_lines.append(
@@ -632,11 +677,12 @@ class CodeGenService:
                         pvar = f"parsed_{pidx}"
                         loop_parsed[pvar] = pvar
                         hex_field = spec.get("hex_field") or "all"
+                        dbc_args = _parse_field_dbc_args(spec)
                         body_lines.append(f"{body_prefix}# 结果解析: {name}")
                         body_lines.append(
                             f"{body_prefix}{pvar} = parse_field(response, data_type={dtype!r}, "
                             f"start={start}, length={length}, unit={unit!r}, "
-                            f"hex_field={hex_field!r})"
+                            f"hex_field={hex_field!r}{dbc_args})"
                         )
                         body_lines.append(
                             f"{body_prefix}results['steps'].append({{'step': {name!r}, "

@@ -664,3 +664,72 @@ class ExecutionPlanRun(Base):
         Index("idx_pruns_plan", "plan_id"),
         Index("idx_pruns_status", "status"),
     )
+
+
+class DbcFile(Base):
+    """3.16 dbc_files — an imported CAN database file (Issue #24)."""
+
+    __tablename__ = "dbc_files"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dbc"))
+    name = Column(String(200), nullable=False)
+    filename = Column(String(255), nullable=True)
+    sha256 = Column(String(64), nullable=False, index=True)  # de-dup key
+    content = Column(Text, nullable=False)                   # original DBC text
+    message_count = Column(Integer, nullable=False, default=0)
+    signal_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(UTCDateTime, nullable=False, default=utc_now)
+
+    messages = relationship(
+        "DbcMessage", back_populates="file",
+        cascade="all, delete-orphan", order_by="DbcMessage.message_id",
+    )
+
+
+class DbcMessage(Base):
+    """3.17 dbc_messages — one ``BO_`` frame definition."""
+
+    __tablename__ = "dbc_messages"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dbcmsg"))
+    file_id = Column(String(20), ForeignKey("dbc_files.id"), nullable=False, index=True)
+    message_id = Column(Integer, nullable=False)             # CAN arbitration ID
+    name = Column(String(200), nullable=False)
+    dlc = Column(Integer, nullable=False, default=8)
+    sender = Column(String(100), nullable=True)
+    comment = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("idx_dbcmsg_file_msgid", "file_id", "message_id"),
+    )
+
+    file = relationship("DbcFile", back_populates="messages")
+    signals = relationship(
+        "DbcSignal", back_populates="message",
+        cascade="all, delete-orphan", order_by="DbcSignal.start",
+    )
+
+
+class DbcSignal(Base):
+    """3.18 dbc_signals — one ``SG_`` signal definition."""
+
+    __tablename__ = "dbc_signals"
+
+    id = Column(String(20), primary_key=True, default=lambda: generate_short_id("dbcsig"))
+    message_id_fk = Column(String(20), ForeignKey("dbc_messages.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    start = Column(Integer, nullable=False)
+    length = Column(Integer, nullable=False)
+    byte_order = Column(String(20), nullable=False, default="little_endian")
+    is_signed = Column(Boolean, nullable=False, default=False)
+    factor = Column(Float, nullable=False, default=1.0)
+    offset = Column(Float, nullable=False, default=0.0)
+    min_value = Column(Float, nullable=True)
+    max_value = Column(Float, nullable=True)
+    physical_unit = Column(String(50), nullable=True)
+    receivers = Column(Text, nullable=True)                  # JSON array
+    multiplexer = Column(String(20), nullable=True)
+    comment = Column(Text, nullable=True)
+    choices = Column(Text, nullable=True)                    # JSON array of {value,text}
+
+    message = relationship("DbcMessage", back_populates="signals")

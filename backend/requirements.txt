@@ -58,3 +58,10 @@ aiofiles==23.2.1
 
 # Plugin System
 importlib-metadata==6.8.0
+
+# CAN DBC (Issue #24)
+# cantools is the reference DBC implementation used for cross-validation. The
+# platform also ships a self-contained parser (app/services/dbc_parser.py) so
+# that DBC import/decoding keeps working in offline / packaging environments
+# where pip cannot reach PyPI.
+cantools==39.4.5
