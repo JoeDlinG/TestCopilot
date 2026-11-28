@@ -101,3 +101,6 @@ Test/dbc/*.blf
 # only (25 MB, redistribution unknown). Plugin runtime needs only the
 # Markdown summaries under backend/plugins/manuals/.
 /docs/dc_power/manuals/*.pdf
+
+# Dedicated Chromium profile used by the standalone app window (run.py).
+BrowserProfile/

@@ -22,6 +22,41 @@ export function extractItems<T = any>(response: any, fallback: T[] = []): T[] {
   return fallback
 }
 
+/**
+ * Unwrap a successful API response regardless of its envelope.
+ *
+ * Most routers answer with `{ code: 0, message: "success", data: <payload> }`.
+ * The DBC router (issue #24) answers with the bare payload — a JSON array for
+ * list endpoints and a JSON object for detail/parser-spec endpoints. Passing
+ * those bare responses to `extractData`/`extractItems` made the DBC page and
+ * the "pick a DBC signal" dialog render an empty list even though the import
+ * had been committed. This helper accepts BOTH shapes so a later backend
+ * normalisation cannot silently blank the UI again.
+ *
+ * A wrapped response with a non-zero `code` is treated as an error instead of
+ * being swallowed as an empty result.
+ */
+export function unwrapPayload<T = any>(response: any, fallback: T | null = null): T | null {
+  const body = response?.data
+  if (body === undefined || body === null) return fallback
+  const isEnvelope = typeof body === 'object' && !Array.isArray(body)
+    && Object.prototype.hasOwnProperty.call(body, 'code')
+    && Object.prototype.hasOwnProperty.call(body, 'data')
+  if (!isEnvelope) return body as T
+  if (body.code !== 0) {
+    throw new Error(String(body.message || body.detail || `服务端返回 code=${body.code}`))
+  }
+  return (body.data ?? fallback) as T
+}
+
+/** List version of `unwrapPayload`: bare array, `{items}` or wrapped data. */
+export function extractItemsCompat<T = any>(response: any, fallback: T[] = []): T[] {
+  const payload: any = unwrapPayload(response)
+  if (Array.isArray(payload)) return payload as T[]
+  if (payload && Array.isArray(payload.items)) return payload.items as T[]
+  return fallback
+}
+
 // Extract total count from paginated list response
 export function extractTotal(response: any, fallback: number = 0): number {
   const data = extractData(response)

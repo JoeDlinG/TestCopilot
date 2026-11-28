@@ -89,25 +89,129 @@ def _negotiate_port(preferred: int) -> int:
     )
 
 
-def _open_browser_now(port: int) -> None:
-    """Open the UI, trying every strategy available.
+def _browser_candidates() -> list:
+    """Locate a Chromium-family browser able to open a dedicated app window.
 
-    ``localhost`` first is a trap: it can resolve to ::1 (an IPv6 answer the
-    server never gave) and a browser may hand the URL to a system proxy, which
-    cannot reach a loopback-only server. ``127.0.0.1`` avoids both. When
-    ``webbrowser.open`` fails silently — elevated process, cold shell
-    association, browser still starting — fall back to the raw OS association
-    and finally ``cmd /c start``.
+    Order: explicit override, Windows App Paths registry, common install
+    locations, then PATH. Chrome / Edge / Brave all support ``--app=`` and an
+    isolated ``--user-data-dir``.
+    """
+    import shutil
+
+    candidates = []
+    override = os.environ.get("AITESTLAB_BROWSER_EXE", "").strip().strip('"')
+    if override and os.path.isfile(override):
+        candidates.append(override)
+
+    if os.name == "nt":
+        try:
+            import winreg
+            for app in ("msedge.exe", "chrome.exe", "brave.exe"):
+                key = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{app}"
+                for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                    try:
+                        with winreg.OpenKey(root, key) as handle:
+                            value, _ = winreg.QueryValueEx(handle, "")
+                            if value and os.path.isfile(value):
+                                candidates.append(value)
+                    except OSError:
+                        continue
+        except Exception:
+            pass
+        for prefix in (
+            os.environ.get("ProgramFiles(x86)", ""),
+            os.environ.get("ProgramFiles", ""),
+            os.environ.get("LOCALAPPDATA", ""),
+        ):
+            for rel in (
+                r"Microsoft\Edge\Application\msedge.exe",
+                r"Google\Chrome\Application\chrome.exe",
+                r"BraveSoftware\Brave-Browser\Application\brave.exe",
+            ):
+                if prefix:
+                    path = os.path.join(prefix, rel)
+                    if os.path.isfile(path):
+                        candidates.append(path)
+    for name in ("msedge", "chrome", "google-chrome", "chromium", "brave-browser"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+
+    seen, unique = set(), []
+    for path in candidates:
+        key = os.path.normcase(os.path.abspath(path))
+        if key not in seen and os.path.isfile(path):
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+
+def _open_app_window(url: str) -> bool:
+    """Open the UI in its own window instead of a tab of the daily browser.
+
+    ``--app=`` removes the tab strip and address bar. A private
+    ``--user-data-dir`` is the important part: with the default profile,
+    Windows hands the URL to an ALREADY RUNNING Chrome/Edge process, which
+    simply opens another tab in the user's existing window (or reuses that
+    window). A separate profile forces a separate browser process/window that
+    belongs to AITestLab alone.
+
+    Set ``AITESTLAB_BROWSER_EXE`` to pin a browser, or
+    ``AITESTLAB_APP_WINDOW=0`` to keep the legacy tab behaviour.
+    """
+    import subprocess
+
+    profile = os.path.join(_data_dir(), "BrowserProfile")
+    try:
+        os.makedirs(profile, exist_ok=True)
+    except OSError:
+        return False
+    for exe in _browser_candidates():
+        args = [
+            exe,
+            f"--app={url}",
+            f"--user-data-dir={profile}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-session-crashed-bubble",
+            "--window-size=1440,900",
+        ]
+        try:
+            subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            print(f"[boot] opened dedicated app window via {os.path.basename(exe)}: {url}")
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def _open_browser_now(port: int) -> None:
+    """Open the UI, preferring a dedicated standalone window.
+
+    ``127.0.0.1`` avoids the ::1 / system-proxy traps of ``localhost``. If no
+    Chromium browser is available, fall back to a new window via the standard
+    library, then the OS association and finally ``cmd /c start``.
     """
     import os as _os
     import subprocess
     import webbrowser
 
+    if os.environ.get("AITESTLAB_APP_WINDOW", "1") != "0":
+        if _open_app_window(f"http://127.0.0.1:{port}/"):
+            return
+        print("[boot] no Chromium browser found; falling back to a browser window")
+
     for host in ("127.0.0.1", "localhost"):
         url = f"http://{host}:{port}/"
         try:
-            if webbrowser.open(url):
-                print(f"[boot] opened {url}")
+            if webbrowser.open(url, new=1, autoraise=True):
+                print(f"[boot] opened {url} in a new browser window")
                 return
         except Exception:
             pass

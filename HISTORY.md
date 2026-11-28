@@ -4,6 +4,65 @@
 
 ---
 
+## 2026-11-28: DBC 导入「成功但空白」全链路修复 + exe 独立窗口（v2.3.15）
+
+### 范围
+
+用户反馈：DBC 文件导入提示「导入成功」，但 DBC 列表、文件详情与「解析配置 → 从 DBC 信号生成」
+全部空白。本轮按「上传 → 落库 → 列表/详情读取 → ParserSpec 生成 → 解析配置保存 → 重开持久化」
+逐段取证，定位为**前端响应解包契约不一致**，不是 DBC 解析或数据库写入问题；同时按需求把 exe 启动
+的 UI 改为独立窗口，不再与用户日常浏览器窗口合并或复用标签页。
+
+### 根因（导入成功却是空界面）
+
+| 层 | 事实 |
+|---|---|
+| 后端 | Issue #24 新增的 `/api/dbc/*` 返回**裸载荷**：list 是 JSON 数组，detail / parser-spec / upload 是裸对象；其余路由统一返回 `{code:0,message:"success",data:...}` 信封 |
+| 前端 | `Dbc.tsx` / `DbcSignalPicker.tsx` 沿用 `extractItems()` 与 `res.data`。前者只认信封，裸数组一律回退 `[]`；后者在 axios 层已是响应体，再取 `.data` 得到 `undefined` |
+| 实际结果 | 上传接口 200、SQLite 里确有记录（合成 fixture 3 报文 / 12 信号），但列表渲染 `[]`；解析配置弹窗同样拿不到文件，无法生成 ParserSpec |
+| 放大因素 | HTTP 200 被当成成功凭据，接口没返回文件记录、列表刷新失败都不会报错；已挂载的弹窗不会重拉列表，必须重挂载才看得见新文件；空 ParserSpec 会被写入一条空白解析行 |
+
+### 修复
+
+| 文件 | 内容 |
+|---|---|
+| `frontend/src/services/apiHelper.ts` | 新增 `unwrapPayload()`：兼容裸数组 / 裸对象 / `{code,data}` / `data.items`，非零 `code` 抛错而不是静默吞成空结果；新增 `extractItemsCompat()` 列表版。原 `extractItems()` 保留，其他页面不受影响 |
+| `frontend/src/pages/Dbc.tsx` | 列表 / 详情 / 复制 ParserSpec 全部改走兼容解包；`loadFiles()` 返回新行供导入后核对；上传必须拿到 `id` 才提示成功，重复导入、空结果、列表未同步分别给明确提示；广播 `aitestlab:dbc-changed` |
+| `frontend/src/components/DbcSignalPicker.tsx` | 同样改兼容解包并校验 `messages` 数组 / ParserSpec 非空；监听 `aitestlab:dbc-changed` 即时刷新，拒绝插入空白解析行 |
+| `frontend/src/i18n/messages.ts` | 新增 3 组中英提示（重复导入 / 空结果 / 列表未同步）；i18n 基线 222 → 223 |
+| `backend/run.py` | 新增 `_browser_candidates()` / `_open_app_window()`：优先用 Chromium 系 `--app=<url>` + 独立 `--user-data-dir=<data>/BrowserProfile` 拉起专属进程与窗口；找不到浏览器时回退 `webbrowser.open(new=1)` → OS 关联 → `cmd /c start`。`AITESTLAB_APP_WINDOW=0` 退回旧行为，`AITESTLAB_BROWSER_EXE` 可指定浏览器 |
+| `.gitignore` | 忽略 `BrowserProfile/`（运行时浏览器 profile，不入库） |
+| `Test/run_all.sh` | 注册本版新增的 `test_dbc_ui_contract` 套件 |
+
+**独立窗口为什么必须用独立 profile**：Windows 上用默认 profile 打开 URL 会把请求交给**已经在运行**的
+Chrome/Edge 进程，结果只是在用户现有窗口里多开一个标签页；`--user-data-dir` 指向专属目录后才会创建
+属于 AITestLab 的独立进程与窗口。实机命令行取证：
+`msedge.exe --app=http://127.0.0.1:8123/ --user-data-dir=...\AITestLab\BrowserProfile`。
+首启「轮询 `/api/health` 就绪后再开窗」「端口协商」「探活绕开系统代理」三条既有铁律未改动。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_dbc_ui_contract.py`（本版新增） | **全 PASS**：裸数组 / 裸对象 / 信封 / `data.items` 四类解包、非零 code 抛错、导入后核对新行、重复导入区分、事件广播与监听、空 ParserSpec 拒绝、i18n 双语键；独立窗口的 `--app=` / 独立 profile / opt-out / 健康轮询 / 降级路径全部断言 |
+| `Test/e2e_dbc_ui.py`（本版新增，真浏览器） | **PASS**：Playwright 以 `locale=zh-CN` 渲染真实 React 页面，通过隐藏 file input 导入唯一 DBC → 列表出现新行 → 详情显示报文与信号 → 「从 DBC 信号生成」写入解析配置 → 保存 → 重开页面仍在；双语文案断言兼容。每次生成唯一 DBC 内容以绕过内容哈希去重；不挂进 `run_all.sh`（保持无浏览器 / 无硬件依赖） |
+| `bash Test/run_all.sh` | **26 套件 PASS / 3 data-SKIP / 1 hardware-SKIP，exit 0**（本版新增 1 套件；真实厂商素材缺失时按设计 SKIP） |
+| `npm run build` | tsc + i18n-guard（A 类基线 223 / B 类零容忍）+ vite build 通过；chunk 依赖图无 2-环 |
+| 安装版真机冒烟 | 静默安装 → 启动安装版 → 独立窗口进程命令行含 `--app=` 与专属 `BrowserProfile` → DBC 导入 / 解析配置链路在打包版同样可用；表格取值改选可见数据行（避开 rc-table 隐藏测量行） |
+| 版本口径 | `APP_VERSION` / NSIS `!define APP_VERSION` / HISTORY 首章 / KANBAN 抬头 / 运行时 `/api/health` 统一 `2.3.15` |
+
+### 发布口径与说明
+
+- 本轮提交**只含代码、文档与测试**：8 个修改文件 + 2 个新增测试；手册 PDF、安装包 exe、
+  真实厂商 DBC/ASC/BLF 素材、`.build_tmp/` 诊断截图与临时 DBC 均不入库，提交前逐文件核对暂存区。
+- 版本 bump 到 `2.3.15`；`backend/dist/AITestLab-Setup-v2.3.14.exe` 为上一版本地产物，
+  本轮未重新打包，需要 v2.3.15 安装包时按既有流程（vite build → 拷 static → PyInstaller → NSIS）生成，
+  通过 Release 分发。
+- 未做：未把 `/api/dbc/*` 后端统一改成信封响应（前端兼容两种形态，避免破坏已有调用方）；
+  未改 GitHub Issue 状态；未给 DBC 页面补独立分页 / 虚拟滚动。
+
+---
+
 ## 2026-11-28: 四品牌可编程直流电源插件 + 串口/LAN 接口链路回归（v2.3.14）
 
 ### 范围

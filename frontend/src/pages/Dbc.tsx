@@ -8,7 +8,7 @@ import {
   DatabaseOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import { dbcAPI } from '../services/api'
-import { extractItems, handleApiError } from '../services/apiHelper'
+import { extractItemsCompat, unwrapPayload, handleApiError } from '../services/apiHelper'
 import { useI18n } from '../i18n'
 import { DataTable, PageContainer } from '../components/ui'
 import type { DbcFile, DbcMessage, DbcSignal } from '../types'
@@ -36,25 +36,35 @@ export default function Dbc() {
   const [query, setQuery] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
-  const loadFiles = useCallback(async () => {
+  // Returns the freshly loaded rows so the import handler can verify that the
+  // new file really reached the list instead of silently showing an empty UI.
+  const loadFiles = useCallback(async (): Promise<DbcFile[]> => {
     setLoading(true)
     try {
       const res = await dbcAPI.listFiles()
-      setFiles(extractItems(res))
+      const items = extractItemsCompat<DbcFile>(res)
+      setFiles(items)
+      return items
     } catch (err) {
+      setFiles([])
       handleApiError(err, t('dbc.loadFailed'))
+      return []
     } finally {
       setLoading(false)
     }
   }, [t])
 
-  useEffect(() => { loadFiles() }, [loadFiles])
+  useEffect(() => { void loadFiles() }, [loadFiles])
 
   const openDetail = async (file: DbcFile) => {
     setDetailLoading(true)
     try {
       const res = await dbcAPI.getFile(file.id)
-      setDetail(res.data)
+      const data = unwrapPayload<DbcFile>(res)
+      if (!data || !Array.isArray(data.messages)) {
+        throw new Error(t('dbc.loadFailed'))
+      }
+      setDetail(data)
       setQuery('')
     } catch (err) {
       handleApiError(err, t('dbc.loadFailed'))
@@ -66,10 +76,25 @@ export default function Dbc() {
   const doImport = async (file: File) => {
     setImporting(true)
     try {
-      await dbcAPI.upload(file)
-      message.success(t('dbc.importSuccess'))
+      const res = await dbcAPI.upload(file)
+      const payload = unwrapPayload<{
+        id?: string; name?: string; duplicate?: boolean; warning?: string
+      }>(res)
+      // HTTP 200 alone is not proof of an import: reject an empty/unexpected
+      // payload so the UI never reports "导入成功" for a no-op.
+      if (!payload || !payload.id) {
+        throw new Error(t('dbc.importEmptyResult'))
+      }
+      if (payload.warning) message.warning(payload.warning)
+      message.success(payload.duplicate ? t('dbc.importDuplicate') : t('dbc.importSuccess'))
       setImportOpen(false)
-      await loadFiles()
+      const fresh = await loadFiles()
+      if (!fresh.some(f => f.id === payload.id)) {
+        message.warning(t('dbc.importNotListed'))
+      }
+      // Parser-config dialogs keep their own file list; tell any mounted one to
+      // refresh immediately instead of waiting for a remount.
+      window.dispatchEvent(new CustomEvent('aitestlab:dbc-changed', { detail: payload }))
     } catch (err) {
       handleApiError(err, t('dbc.importFailed'))
     } finally {
@@ -80,7 +105,8 @@ export default function Dbc() {
   const copySpec = async (signal: DbcSignal) => {
     try {
       const res = await dbcAPI.signalParserSpec(signal.id)
-      const spec = res.data
+      const spec = unwrapPayload<Record<string, any>>(res)
+      if (!spec || !spec.name) throw new Error(t('dbc.importFailed'))
       await navigator.clipboard.writeText(JSON.stringify(spec, null, 2))
       message.success(t('dbc.copySpecDone'))
     } catch (err) {

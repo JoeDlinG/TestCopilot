@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-11-28（v2.3.14，四品牌可编程直流电源插件 + 串口/LAN 接口链路回归，详见 HISTORY.md）
+> 最后更新：2026-11-28（v2.3.15，DBC 导入全链路修复 + exe 独立窗口，详见 HISTORY.md）
 
 ---
 
@@ -125,6 +125,27 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v2.3.15 — DBC 导入「成功但空白」全链路修复 + exe 独立窗口（2026-11-28，分支 `TestCopilot_LabApp`）
+
+- [x] **定位真因**：`/api/dbc/*` 返回裸数组 / 裸对象，而 `extractItems()` 只认 `{code,data}` 信封、
+      `res.data` 又多取了一层 → 上传已落库（3 报文 / 12 信号）但列表、详情、解析配置全渲染为空；
+      **不是解析或数据库问题**
+- [x] **兼容解包**：`apiHelper.ts` 新增 `unwrapPayload()` / `extractItemsCompat()`，同时吃裸载荷、
+      信封与 `data.items`，非零 `code` 抛错；Dbc 页面与信号选择弹窗全部切换
+- [x] **导入状态闭环**：只有拿到 `id` 才提示成功；重复导入 / 空结果 / 列表未同步分别给中英提示；
+      导入后核对刷新结果并广播 `aitestlab:dbc-changed`，已挂载弹窗即时刷新；拒绝写入空白 ParserSpec
+- [x] **exe 独立窗口**：`run.py` 用 Chromium `--app=` + 独立 `--user-data-dir=BrowserProfile` 拉起专属
+      进程，避免把 URL 交给已在跑的日常浏览器变成标签页；无 Chromium 时降级为新窗口 → OS 关联 →
+      `cmd /c start`；`AITESTLAB_APP_WINDOW=0` / `AITESTLAB_BROWSER_EXE` 可控
+- [x] **回归门禁**：`Test/test_dbc_ui_contract.py`（解包四种形态 + 窗口启动契约，已挂 `run_all.sh`）、
+      `Test/e2e_dbc_ui.py`（Playwright 真浏览器：导入 → 解析配置生成 → 保存 → 重开持久化）
+- [x] 验证：合约套件全 PASS、`run_all.sh` 26 PASS / 3 data-SKIP / 1 hardware-SKIP、
+      `npm run build`（tsc + i18n-guard 223 + vite）通过、chunk 无 2-环、安装版独立窗口与 DBC 链路冒烟 PASS
+- [x] **发布口径**：版本四处统一 `2.3.15`；本轮提交仅代码 / 文档 / 测试，PDF、exe、真实厂商素材、
+      `BrowserProfile/` 与临时诊断文件均不入库
+- [ ] 待办：需要 v2.3.15 安装包时按既有流程重打包（本轮未重打，dist 中仍为 v2.3.14 产物）；
+      统一 `/api/dbc/*` 为信封响应（前端已做兼容，暂不破坏现有调用方）
 
 ### v2.3.14 — 四品牌可编程直流电源插件 + 串口/LAN 接口链路回归（2026-11-28，分支 `TestCopilot_LabApp`）
 

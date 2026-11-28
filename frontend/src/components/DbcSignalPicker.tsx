@@ -6,7 +6,7 @@ import {
   ArrowLeftOutlined, SearchOutlined, DatabaseOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import { dbcAPI } from '../services/api'
-import { extractItems, handleApiError } from '../services/apiHelper'
+import { extractItemsCompat, unwrapPayload, handleApiError } from '../services/apiHelper'
 import { useI18n } from '../i18n'
 import type { DbcFile, DbcMessage, DbcSignal } from '../types'
 
@@ -36,8 +36,11 @@ export default function DbcSignalPicker({ open, onCancel, onSelect }: Props) {
     setLoading(true)
     try {
       const res = await dbcAPI.listFiles()
-      setFiles(extractItems(res))
+      // /api/dbc/files returns a bare array, not the {code,data} envelope used
+      // by other routers — the legacy envelope-only helper always yielded [].
+      setFiles(extractItemsCompat<DbcFile>(res))
     } catch (err) {
+      setFiles([])
       handleApiError(err, t('dbc.loadFailed'))
     } finally {
       setLoading(false)
@@ -48,15 +51,26 @@ export default function DbcSignalPicker({ open, onCancel, onSelect }: Props) {
     if (open) {
       setCurrent(null)
       setQuery('')
-      loadFiles()
+      void loadFiles()
     }
   }, [open, loadFiles])
+
+  // A DBC imported while this dialog is mounted must appear without a remount.
+  useEffect(() => {
+    const refresh = () => { void loadFiles() }
+    window.addEventListener('aitestlab:dbc-changed', refresh)
+    return () => window.removeEventListener('aitestlab:dbc-changed', refresh)
+  }, [loadFiles])
 
   const openFile = async (file: DbcFile) => {
     setLoading(true)
     try {
       const res = await dbcAPI.getFile(file.id)
-      setCurrent(res.data)
+      const data = unwrapPayload<DbcFile>(res)
+      if (!data || !Array.isArray(data.messages)) {
+        throw new Error(t('dbc.loadFailed'))
+      }
+      setCurrent(data)
       setQuery('')
     } catch (err) {
       handleApiError(err, t('dbc.loadFailed'))
@@ -69,11 +83,12 @@ export default function DbcSignalPicker({ open, onCancel, onSelect }: Props) {
     setPickingId(signal.id)
     try {
       const res = await dbcAPI.signalParserSpec(signal.id)
+      const spec = unwrapPayload<Record<string, any>>(res)
       // Never insert a blank parser row when the API returns no payload.
-      if (!res.data || !res.data.name) {
+      if (!spec || !spec.name) {
         throw new Error('empty ParserSpec')
       }
-      onSelect(res.data)
+      onSelect(spec)
       onCancel()
     } catch (err) {
       handleApiError(err, t('dbc.importFailed'))

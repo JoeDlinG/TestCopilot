@@ -64,6 +64,7 @@ SUITE=(
   test_issue34_generic_can
   test_static_runtime
   test_dbc_import_and_parse
+  test_dbc_ui_contract
   test_dbc_log_e2e
   test_dbc_real_assets
   test_dc_power_plugins
