@@ -11,6 +11,7 @@ import {
   PlayCircleOutlined,
   FileDoneOutlined,
   DiffOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
@@ -40,6 +41,7 @@ export const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.config',
     items: [
       { key: '/devices', icon: <ApiOutlined />, labelKey: 'nav.devices', aliases: ['device', '设备'] },
+      { key: '/dbc', icon: <DatabaseOutlined />, labelKey: 'nav.dbc', aliases: ['dbc', 'can', '信号'] },
     ],
   },
   {

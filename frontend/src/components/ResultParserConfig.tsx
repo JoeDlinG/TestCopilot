@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import {
-  Modal, Button, Space, Table, Tag, Input, InputNumber, Select,
+  Modal, Button, Space, Table, Tag, Input, InputNumber, Select, Switch,
   Card, Row, Col, Empty, Alert, Typography, Tooltip, Divider, message
 } from 'antd'
 import {
-  PlusOutlined, DeleteOutlined, DiffOutlined, CopyOutlined
+  PlusOutlined, DeleteOutlined, DiffOutlined, CopyOutlined, DatabaseOutlined
 } from '@ant-design/icons'
 import { testCaseAPI } from '../services/api'
 import { handleApiError } from '../services/apiHelper'
+import { useI18n } from '../i18n'
+import DbcSignalPicker from './DbcSignalPicker'
 
 const { Text, Title } = Typography
 
@@ -37,7 +39,22 @@ export type ParserSpec = {
     max?: number | null
     equals?: string[]
   }
+  /** DBC-generated fields (issue #24); present only when the parser was
+   *  generated from a DBC signal. When set, the runtime/生成脚本 decode via the
+   *  shared dbc rules instead of the plain bit/byte slicer. */
+  byte_order?: 'intel' | 'motorola'
+  is_signed?: boolean
+  factor?: number
+  offset?: number
+  physical_unit?: string | null
+  comment?: string | null
+  choices?: Array<{ value: number; text: string }>
 }
+
+const BYTE_ORDERS = [
+  { value: 'intel', label: 'Intel' },
+  { value: 'motorola', label: 'Motorola' },
+]
 
 /** How to pick the payload when a reply carries several 0x fields. */
 export const HEX_FIELDS = [
@@ -98,6 +115,8 @@ export default function ResultParserConfig({
   const [previewMeta, setPreviewMeta] = useState<{
     raw_bytes_hex?: string; empty_frame?: boolean
   } | null>(null)
+  const [dbcPickerOpen, setDbcPickerOpen] = useState(false)
+  const { t } = useI18n()
 
   // Re-seed the form every time the dialog is opened for a step
   useEffect(() => {
@@ -156,6 +175,9 @@ export default function ResultParserConfig({
     { ...blankParser(prev.length), name: suggestName(prev) },
   ])
   const removeItem = (index: number) => setItems(prev => prev.filter((_, i) => i !== index))
+  const handleDbcSelect = (spec: Record<string, any>) => {
+    setItems(prev => [...prev, normalise(spec as ParserSpec)])
+  }
 
   const handleSave = () => {
     if (firstError) {
@@ -285,6 +307,54 @@ export default function ResultParserConfig({
             </Col>
           </Row>
 
+          {item.byte_order && (
+            <>
+              <Divider style={{ margin: '10px 0 6px' }} />
+              <Row gutter={8} style={{ marginTop: 4 }}>
+                <Col span={6}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dbc.byteOrder')}</Text>
+                  <Select
+                    size="small"
+                    style={{ width: '100%', marginTop: 2 }}
+                    value={item.byte_order}
+                    options={BYTE_ORDERS}
+                    onChange={(v: any) => update(index, { byte_order: v })}
+                  />
+                </Col>
+                <Col span={4}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dbc.signed')}</Text>
+                  <div style={{ marginTop: 4 }}>
+                    <Switch size="small" checked={item.is_signed ?? false} onChange={v => update(index, { is_signed: v })} />
+                  </div>
+                </Col>
+                <Col span={5}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dbc.factor')}</Text>
+                  <InputNumber
+                    size="small" style={{ width: '100%', marginTop: 2 }}
+                    value={item.factor ?? 1}
+                    onChange={v => update(index, { factor: Number(v ?? 1) })}
+                  />
+                </Col>
+                <Col span={5}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dbc.offset')}</Text>
+                  <InputNumber
+                    size="small" style={{ width: '100%', marginTop: 2 }}
+                    value={item.offset ?? 0}
+                    onChange={v => update(index, { offset: Number(v ?? 0) })}
+                  />
+                </Col>
+                <Col span={4}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('dbc.unit')}</Text>
+                  <Input
+                    size="small" style={{ marginTop: 2 }}
+                    value={item.physical_unit || ''}
+                    onChange={e => update(index, { physical_unit: e.target.value })}
+                  />
+                </Col>
+              </Row>
+            </>
+          )}
+
           <Divider style={{ margin: '10px 0 6px' }} />
           <Text type="secondary" style={{ fontSize: 12 }}>判断条件（可只填范围或只填等于；两者都填时需同时满足）</Text>
           <Row gutter={8} style={{ marginTop: 4 }}>
@@ -318,9 +388,14 @@ export default function ResultParserConfig({
         </Card>
       ))}
 
-      <Button size="small" type="dashed" block icon={<PlusOutlined />} onClick={addItem}>
-        添加解析项
-      </Button>
+      <Space.Compact style={{ width: '100%' }}>
+        <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addItem} style={{ flex: 1 }}>
+          添加解析项
+        </Button>
+        <Button size="small" icon={<DatabaseOutlined />} onClick={() => setDbcPickerOpen(true)}>
+          {t('parser.fromDbc')}
+        </Button>
+      </Space.Compact>
 
       {/* ---------- live preview ---------- */}
       <Divider />
@@ -415,6 +490,12 @@ export default function ResultParserConfig({
           <CopyOutlined /> 提示：起始位从 0 开始；单位为 byte 时按字节偏移，为 bit 时按位偏移（高位在前）。
         </Text>
       </div>
+
+      <DbcSignalPicker
+        open={dbcPickerOpen}
+        onCancel={() => setDbcPickerOpen(false)}
+        onSelect={handleDbcSelect}
+      />
     </Modal>
   )
 }

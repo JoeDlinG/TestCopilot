@@ -318,3 +318,51 @@ export const INTERFACE_TYPES: Record<string, string> = {
   custom: 'iface.custom',
   mini_gateway100: 'iface.miniGateway100',
 }
+
+// ---- CAN DBC (issue #24) ----
+
+export interface DbcFile {
+  id: string
+  name: string
+  filename?: string | null
+  message_count: number
+  signal_count: number
+  created_at?: string | null
+  messages?: DbcMessage[]  // populated by GET /dbc/files/{id}
+}
+
+export interface DbcMessage {
+  id: string
+  message_id: number      // CAN arbitration ID
+  name: string
+  dlc: number
+  sender?: string | null
+  comment?: string | null
+  signals?: DbcSignal[]
+}
+
+export interface DbcSignal {
+  id: string
+  name: string
+  start: number
+  length: number
+  byte_order: 'little_endian' | 'big_endian'
+  is_signed: boolean
+  factor: number
+  offset: number
+  min?: number | null
+  max?: number | null
+  physical_unit?: string | null
+  receivers: string[]
+  multiplexer?: string | null
+  comment?: string | null
+  choices: Array<{ value: number; text: string }>
+}
+
+export interface DbcSearchResult {
+  type: 'message' | 'signal'
+  message_id: number
+  name: string
+  message_name?: string
+  signal_id?: string
+}

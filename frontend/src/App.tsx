@@ -23,6 +23,7 @@ const Plugins = lazy(() => import('./pages/Plugins'))
 
 const ModelConfig = lazy(() => import('./pages/ModelConfig'))
 const ProjectManager = lazy(() => import('./pages/ProjectManager'))
+const Dbc = lazy(() => import('./pages/Dbc'))
 
 const PageLoading = () => (
   <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
@@ -96,6 +97,10 @@ function App() {
         <Route
           path="projects"
           element={<Suspense fallback={<PageLoading />}><ProjectManager /></Suspense>}
+        />
+        <Route
+          path="dbc"
+          element={<Suspense fallback={<PageLoading />}><Dbc /></Suspense>}
         />
       </Route>
     </Routes>

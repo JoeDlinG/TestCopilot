@@ -335,4 +335,23 @@ export const PROJECT_SECTIONS = [
 
 export const MEMORY_SECTIONS = PROJECT_SECTIONS
 
+// CAN DBC APIs (issue #24)
+export const dbcAPI = {
+  importJson: (data: { filename?: string; content: string }) => api.post('/dbc/import', data),
+  upload: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/dbc/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  listFiles: () => api.get('/dbc/files'),
+  getFile: (id: string) => api.get(`/dbc/files/${id}`),
+  searchFile: (id: string, q: string) => api.get(`/dbc/files/${id}/search`, { params: { q } }),
+  getMessage: (id: string) => api.get(`/dbc/messages/${id}`),
+  getSignal: (id: string) => api.get(`/dbc/signals/${id}`),
+  signalParserSpec: (signalId: string) => api.post(`/dbc/signals/${signalId}/parser-spec`),
+  preview: (data: any) => api.post('/dbc/preview', data),
+}
+
 export default api
