@@ -527,7 +527,7 @@ async def _static_diagnostics(request: Request, call_next):
     return response
 
 
-@app.get("/api/system/diag")
+@app.api_route("/api/system/diag", methods=["GET", "HEAD"])
 async def system_diag():
     """One-call evidence bundle for blank-screen / startup incidents."""
     return {
@@ -609,7 +609,7 @@ def _driver_status() -> dict:
     return info
 
 
-@app.get("/api/system/drivers")
+@app.api_route("/api/system/drivers", methods=["GET", "HEAD"])
 async def system_drivers():
     """Driver / port status for the device page and field debugging."""
     return _driver_status()
@@ -639,7 +639,7 @@ async def root():
     }
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 async def health_check():
     # ``status`` stays "ok" so a degraded boot is still usable; the warnings
     # tell the UI/operator which repair steps need attention.

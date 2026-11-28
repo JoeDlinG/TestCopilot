@@ -333,7 +333,9 @@ export interface DbcFile {
 
 export interface DbcMessage {
   id: string
-  message_id: number      // CAN arbitration ID
+  message_id: number      // raw BO_ id; bit 31 marks an extended frame
+  can_id?: number         // real 29-bit arbitration id (masked)
+  is_extended?: boolean
   name: string
   dlc: number
   sender?: string | null

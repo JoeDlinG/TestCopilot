@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-11-28: DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归（v2.3.13）
+
+### 范围
+
+分支 `TestCopilot_LabApp`（远端 `d72a715`，v2.3.12）两轮复核：第一轮全仓复核并修复 DBC 链路，
+第二轮把 `Test/dbc/` 下的真实素材接进测试入口。素材包括 GBK 编码的 X6S OTS CAN FD 矩阵
+（28 报文 / 279 信号 / 144 个 VAL_ / DLC 8–64）、body_chassis 与 powertrain 的 DBC + Vector ASC +
+二进制 BLF 三件套，以及合成的 mg100_demo.dbc/.log。原测试只认合成素材，真实 DBC 与日志完全未接入。
+
+### 根因与修复（解析链路）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| **P0** Motorola `@0` 信号全线解码错误 | DBC start 是 sawtooth 编号，标准实现先做 `linear = 8*(start//8) + (7 - start%8)` 再取位；旧代码把 start 当 MSB-first 线性索引。cantools 39.4.5 实测 StatusFlags 85/179、TorqueNm 26231/15300、CellTemp 123.9/55.6 | `dbc_parser.decode_signal` 按标准映射；修复后 8/8 信号与 cantools 一致 |
+| **P0** 生成脚本与运行时解码分叉 | `codegen_service.PARSE_HELPER` 是复制实现：未知 byte_order 默认相反、factor 未归一化、字符串 factor 直接崩 | 同步全部解码规则与 `_to_bytes` / `convert` 边界 |
+| **P0** 64-bit 信号数值错 27 处 | `raw * 1.0` 把 >2^53 的整数提升为 double 丢低位（实测 `16949912957570496541` → `...496512`）；cantools 在 scale/offset 为整数时用 int 精确算术 | `dbc_parser`、`codegen PARSE_HELPER` 在 factor/offset 均为整数值时走 `raw*int(f)+int(o)`；`ResponseParser.to_number` 保留 int 不再 `float()` 化。4 个真实 DBC 837 次比对修复前 27 差、修复后 0 差 |
+| **P0** DB 生成的 ParserSpec 永久丢物理单位 | `_signal_to_dict` 写 `physical_unit`，`signal_to_parser_spec` 只读 `unit` | 字段契约统一，兼容两种信号字典形状 |
+| **P0** VAL_ 枚举表被静默改坏 | choices 从 `List[Tuple]` 变 `List[dict]`，`for v,t in dict` 解包出 key → `{"value":"value","text":"text"}` | 按 shape 归一化；VAL_ 十六进制值一并支持 |
+| **P0** NaN/Inf → 接口 500 | `factor=1e400` 进入响应体，Starlette `allow_nan=False` 渲染期抛错 | `_to_float` 有限化；上传接口映射 400 |
+| **P0** cantools 交叉校验从未真正跑通 | fixture 复用器标记写反（`m0` / `M` 颠倒），cantools 拒绝加载 | 修正 fixture 并同步测试期望值 |
+| P1 `[0\|0]` 占位被当成真实上下限 | vendor DBC 用 `[0\|0]` 表示未指定范围，却生成 `min=0/max=0` 判定 → 每帧都判 fail | `signal_to_parser_spec` 跳过 0/0 占位，不再生成 conditions |
+| P1 HEAD 405 / float→string 崩溃 / import 无 rollback / 巨大 BO_ id 500 / GBK 变 U+FFFD / 无大小限制 | 静态路由仍用 `@app.get`；字符串转换只处理 bytes；SQLite INTEGER 溢出与编码探测缺失 | `main.py` 三处改 `@app.api_route(GET,HEAD)`；`response_parser` 补 float/兜底；`dbc_service` 加 rollback 与浮点清洗；`api/dbc.py` 加编码探测（返回 `encoding`/`warning`）、5 MiB 上限、异常映射 |
+| P2 扩展帧 / 重复 BO_ ID / 前端契约 | 扩展帧显示为 `0x80000100`；重复 ID 的 CM_/VAL_ 注释错挂；前端缺 DBC 字段与空 spec 防御 | `can_id`/`is_extended` 拆分、注释按报文实例归属；`Dbc.tsx` / `DbcSignalPicker.tsx` / `ResultParserConfig.tsx` / `types/index.ts` 补齐 |
+
+`frontend/scripts/i18n-baseline.json` 从 221 → 222 **不是本轮改动引入**：对比基线提交 `2eb43d0`
+定位到新增的是 Issue #24 导航项的中文搜索别名 `'信号'`（与其他导航项同类），属合理例外，
+用官方 `--update-baseline` 收口使构建门禁恢复通过。
+
+### 日志处理与测试配置
+
+| 问题 | 处理 |
+|---|---|
+| BLF 标准库静默读出 0 帧 | 两个 BLF 的 CAN_MESSAGE 位于顶层（缺 LOG_CONTAINER）、`header_version=0`、且 `dlc/flags` 字节写反；python-can 4.3.1 只解析容器内对象且只认 ver 1/2。未改用户原始二进制，新增容错 reader（兼容两种 header version / 字段顺序 / zlib 容器），并用 `can.BLFWriter` 生成合规副本证明标准库可读 |
+| ASC 场景语义未校验 | Vector `base hex` 文本解析后按注释场景核对物理值：怠速 1000/900 rpm、2500 rpm@35 km/h、8→65 km/h 车速曲线、车门/灯光/转向角/制动 |
+| 素材自身不一致（非代码缺陷） | body_chassis ASC 把转向灯写在 byte1，DBC 的 `TurnSignal` 定义在 byte0 bit2-3 → 该字段在转向场景恒 0；测试以 `note` 标注，不判 FAIL。要修应改 ASC 生成脚本 |
+| `run_all.sh` 硬编码 `python3` | 本机 `python3` 是无 fastapi 的托管基础解释器，照它跑全线 `ModuleNotFoundError`。改为 `pick_python()`（`AITESTLAB_PYTHON` > `VIRTUAL_ENV` > 托管 venv > `.venv` > `python3`）+ 启动前依赖探测 |
+| 场景断言过宽 | `"driver door opens"` 同时命中解锁与熄火两段注释（返回 3 帧）→ 收窄为 `"Car unlocked"` + `1 in values` |
+| `*.log` 全局 ignore 挡住测试素材 | `Test/dbc/mg100_demo.log` 被忽略，clone 后 `test_dbc_log_e2e` 会直接 FAIL → `.gitignore` 加 `!Test/dbc/mg100_demo.log` 例外 |
+| 真实素材缺失时误判 FAIL | `test_dbc_real_assets` 在素材不全时改为打印 `[SKIP]` 并 exit 0，与项目「无硬件/无数据 SKIP 而非 FAIL」约定一致 |
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| cantools 权威交叉 | Motorola 8/8 一致；4 个真实 DBC 全信号 837 次比对修复前 27 处差、修复后 **0 差**（含 64 字节 CAN FD 帧、9 个 64-bit 信号） |
+| `test_dbc_import_and_parse.py` | **102 PASS / 0 FAIL**（含 cantools 全量交叉、生成脚本真实 exec 数值比对） |
+| `test_dbc_log_e2e.py`（合成 dbc + log） | **34 PASS / 0 FAIL**：7 帧、22 个信号三层一致、4 个截断帧优雅拒绝、19 次 cantools 比对 |
+| `test_dbc_real_assets.py`（本轮新增） | **67 项断言 + 5130 次逐帧/逐信号比对，0 FAIL**：4 个 DBC 元数据/枚举/单位、临时 SQLite 导入 279 信号 / 80 单位 / 144 枚举、98 帧四层一致、ASC↔BLF 帧序列 0 差异、合规 BLF 重写可读、场景物理值 |
+| `bash Test/run_all.sh` | **23 套件 PASS / 3 SKIP（workspace fixture 数据缺失）/ 1 SKIP（无 MG100 硬件），exit 0** |
+| `npm run build` | tsc + i18n-guard + vite build 全过；28 chunks / 96 边，依赖图**无 2-环** |
+| 版本口径 | `APP_VERSION` / NSIS `!define APP_VERSION` / HISTORY 首章 / KANBAN 抬头 / 运行时 `/api/health` 统一 `2.3.13` |
+
+### 说明
+
+- 本轮未生成新安装包（NSIS 产物不随本次提交分发），版本号仅同步四处口径供 `test_version_consistency` 校验。
+- 真实 DBC/ASC/BLF 只作为 `Test/dbc/` 回归输入，不参与打包；缺素材时相关套件自动 SKIP。
+- **发布口径**：目标仓库为 public，真实厂商矩阵与实车日志按发布决策留在本地（`.gitignore` 排除），
+  只把合成的 `mg100_demo.dbc/.log`、测试代码与文档入库；clone 后真实素材套件自动 SKIP，其余套件照常 PASS。
+- 3 个 workspace fixture SKIP 与 1 个 MG100 硬件 SKIP 都不是代码失败。
+
+---
+
 ## 2026-11-24: 右侧抽屉标题改「运行 / 报告」（v2.3.12）
 
 ### 改动

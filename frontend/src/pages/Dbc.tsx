@@ -254,7 +254,10 @@ export default function Dbc() {
           ),
         }}
         columns={[
-          { title: t('dbc.canId'), dataIndex: 'message_id', width: 100, render: (v: number) => <Text code>0x{v.toString(16).toUpperCase()}</Text> },
+          { title: t('dbc.canId'), dataIndex: 'message_id', width: 100,
+            render: (_: number, r: DbcMessage) => (
+              <Text code>0x{(r.can_id ?? r.message_id).toString(16).toUpperCase()}</Text>
+            ) },
           { title: t('dbc.message'), dataIndex: 'name', width: 220 },
           { title: t('dbc.dlc'), dataIndex: 'dlc', width: 80 },
           {

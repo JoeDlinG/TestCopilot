@@ -48,8 +48,8 @@ BO_ 257 BatteryStatus: 8 ECU
  SG_ CellTemp : 40|12@0+ (0.1,-40) [-40|369.5] "degC" MG100
 
 BO_ 258 Multiplexed: 8 ECU
- SG_ MuxSelector m0 : 0|8@1+ (1,0) [0|255] "" PCAN
- SG_ SignalA M : 8|8@1+ (1,0) [0|255] "" PCAN
+ SG_ MuxSelector M : 0|8@1+ (1,0) [0|255] "" PCAN
+ SG_ SignalA m0 : 8|8@1+ (1,0) [0|255] "" PCAN
  SG_ SignalB m1 : 8|8@1+ (1,0) [0|255] "" PCAN
 
 CM_ BO_ 256 "Engine data frame";

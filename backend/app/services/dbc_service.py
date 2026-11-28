@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -16,9 +17,31 @@ from app.services.dbc_parser import (
     decode_signal,
 )
 
+_EXTENDED_FLAG = 0x80000000
+_CAN_ID_MASK = 0x1FFFFFFF
+
 
 def _sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _finite(value: Any, default: float) -> float:
+    """Never let a stored NaN/Infinity reach a JSON response."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
+
+
+def _finite_or_none(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _signal_to_dict(sig: DbcSignal) -> Dict[str, Any]:
@@ -29,8 +52,8 @@ def _signal_to_dict(sig: DbcSignal) -> Dict[str, Any]:
         "length": sig.length,
         "byte_order": sig.byte_order,
         "is_signed": sig.is_signed,
-        "factor": sig.factor,
-        "offset": sig.offset,
+        "factor": _finite(sig.factor, 1.0),
+        "offset": _finite(sig.offset, 0.0),
         "physical_unit": sig.physical_unit,
         "multiplexer": sig.multiplexer,
         "comment": sig.comment,
@@ -39,22 +62,31 @@ def _signal_to_dict(sig: DbcSignal) -> Dict[str, Any]:
         raw = getattr(sig, field)
         if raw:
             try:
-                out[field] = json.loads(raw)
+                loaded = json.loads(raw)
+                out[field] = loaded if isinstance(loaded, list) else []
             except (json.JSONDecodeError, TypeError):
                 out[field] = []
         else:
             out[field] = []
-    if sig.min_value is not None:
-        out["min"] = sig.min_value
-    if sig.max_value is not None:
-        out["max"] = sig.max_value
+    lo = _finite_or_none(sig.min_value)
+    hi = _finite_or_none(sig.max_value)
+    if lo is not None:
+        out["min"] = lo
+    if hi is not None:
+        out["max"] = hi
     return out
 
 
 def _message_to_dict(msg: DbcMessage, include_signals: bool = True) -> Dict[str, Any]:
+    raw_id = msg.message_id or 0
     out = {
         "id": msg.id,
         "message_id": msg.message_id,
+        # DBC encodes an extended frame by setting bit 31 of BO_ id; show the
+        # real 29-bit arbitration id separately so the UI never displays
+        # 0x80000100 when the frame is actually 0x100.
+        "can_id": raw_id & _CAN_ID_MASK,
+        "is_extended": bool(raw_id & _EXTENDED_FLAG),
         "name": msg.name,
         "dlc": msg.dlc,
         "sender": msg.sender,
@@ -90,45 +122,55 @@ class DbcService:
             message_count=len(parsed["messages"]),
             signal_count=sum(len(m["signals"]) for m in parsed["messages"]),
         )
-        db.add(dbf)
-        await db.flush()  # assign dbf.id
+        # Capture the response before commit: a later refresh() failure used to
+        # report 500 even though the rows were already committed (a retry then
+        # misleadingly said "duplicate").
+        result = {"id": None, "name": dbf.name, "duplicate": False}
+        try:
+            db.add(dbf)
+            await db.flush()  # assign dbf.id
+            result["id"] = dbf.id
 
-        for m in parsed["messages"]:
-            dbm = DbcMessage(
-                file_id=dbf.id,
-                message_id=m["id"],
-                name=m["name"],
-                dlc=m["length"],
-                sender=m.get("sender"),
-                comment=m.get("comment") or None,
-            )
-            db.add(dbm)
-            await db.flush()
+            for m in parsed["messages"]:
+                dbm = DbcMessage(
+                    file_id=dbf.id,
+                    message_id=m["id"],
+                    name=m["name"],
+                    dlc=m["length"],
+                    sender=m.get("sender"),
+                    comment=m.get("comment") or None,
+                )
+                db.add(dbm)
+                await db.flush()
 
-            for s in m["signals"]:
-                db.add(DbcSignal(
-                    message_id_fk=dbm.id,
-                    name=s["name"],
-                    start=s["start"],
-                    length=s["length"],
-                    byte_order=s["byte_order"],
-                    is_signed=s["is_signed"],
-                    factor=s["factor"],
-                    offset=s["offset"],
-                    min_value=s["min"],
-                    max_value=s["max"],
-                    physical_unit=s.get("unit") or None,
-                    receivers=json.dumps(s.get("receivers") or [], ensure_ascii=False),
-                    multiplexer=s.get("multiplexer"),
-                    comment=s.get("comment") or None,
-                    choices=json.dumps(
-                        [{"value": v, "text": t} for v, t in (s.get("choices") or [])],
-                        ensure_ascii=False,
-                    ),
-                ))
-        await db.commit()
-        await db.refresh(dbf)
-        return {"id": dbf.id, "name": dbf.name, "duplicate": False}
+                for s in m["signals"]:
+                    db.add(DbcSignal(
+                        message_id_fk=dbm.id,
+                        name=s["name"],
+                        start=s["start"],
+                        length=s["length"],
+                        byte_order=s["byte_order"],
+                        is_signed=s["is_signed"],
+                        factor=_finite(s["factor"], 1.0),
+                        offset=_finite(s["offset"], 0.0),
+                        min_value=_finite_or_none(s["min"]),
+                        max_value=_finite_or_none(s["max"]),
+                        physical_unit=s.get("unit") or None,
+                        receivers=json.dumps(s.get("receivers") or [], ensure_ascii=False),
+                        multiplexer=s.get("multiplexer"),
+                        comment=s.get("comment") or None,
+                        choices=json.dumps(
+                            [{"value": v, "text": t} for v, t in (s.get("choices") or [])],
+                            ensure_ascii=False,
+                        ),
+                    ))
+            await db.commit()
+        except Exception:
+            # Without an explicit rollback the session stays in a failed
+            # transaction and every subsequent request on it errors out.
+            await db.rollback()
+            raise
+        return result
 
     async def list_files(self, db: AsyncSession) -> List[Dict[str, Any]]:
         rows = (await db.execute(
@@ -151,6 +193,7 @@ class DbcService:
             return None
         msgs = (await db.execute(
             select(DbcMessage).where(DbcMessage.file_id == file_id)
+            .order_by(DbcMessage.message_id, DbcMessage.id)
             .options(selectinload(DbcMessage.signals))
         )).scalars().all()
         return {

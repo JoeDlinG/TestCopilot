@@ -49,6 +49,11 @@ export type ParserSpec = {
   physical_unit?: string | null
   comment?: string | null
   choices?: Array<{ value: number; text: string }>
+  dbc_signal?: string
+  dbc_message_id?: number | null
+  dbc_is_extended?: boolean
+  dbc_raw_message_id?: number
+  multiplexer?: string | null
 }
 
 const BYTE_ORDERS = [

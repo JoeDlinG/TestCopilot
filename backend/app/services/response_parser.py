@@ -21,8 +21,9 @@ The same engine is used by
   * the code generator    -> so generated scripts judge identically
 """
 from __future__ import annotations
+import math
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from app.services.dbc_parser import decode_signal
 
@@ -224,9 +225,10 @@ class ResponseParser:
                 except ValueError:
                     pass
             return int.from_bytes(value, "big")
-        # string (default)
-        if isinstance(value, int):
-            return str(value)
+        # string (default). DBC signals decode to floats (factor/offset), so
+        # a numeric value must be stringified instead of calling .decode().
+        if isinstance(value, (int, float)):
+            return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
         return value.decode("utf-8", errors="replace").rstrip("\x00").strip()
 
     # ------------------------------------------------------------------ #
@@ -234,12 +236,17 @@ class ResponseParser:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def to_number(value: Any) -> Optional[float]:
-        """Numeric view of a parsed value (hex/bin strings included)."""
+    def to_number(value: Any) -> Optional[Union[int, float]]:
+        """Numeric view of a parsed value (hex/bin strings included).
+
+        Integers stay ``int``: coercing a 64-bit CAN FD value to float drops
+        the low bits and would mis-evaluate min/max judgements. Python compares
+        ``int`` to ``float`` exactly, so the bounds remain correct.
+        """
         if isinstance(value, bool):
             return float(int(value))
         if isinstance(value, (int, float)):
-            return float(value)
+            return value
         s = str(value).strip()
         if not s:
             return None
@@ -277,6 +284,10 @@ class ResponseParser:
             num = cls.to_number(value)
             if num is None:
                 return False, f"无法将解析值 {value!r} 转为数值做范围判断"
+            # NaN compares False against every bound and would bypass the
+            # range check entirely; treat it as a failed judgement instead.
+            if not math.isfinite(num):
+                return False, f"解析值 {value!r} 不是有限数值，无法做范围判断"
             if has_lo:
                 try:
                     if num < float(lo):
@@ -361,8 +372,20 @@ class ResponseParser:
                 "detail": err,
             }
 
-        converted = cls.convert(value, data_type)
-        ok, detail = cls.evaluate(converted, spec.get("conditions"))
+        # ``parse`` promises to always return a dict; a malformed spec / an
+        # unexpected value type must degrade to an error result, never raise
+        # out of the execution loop.
+        try:
+            converted = cls.convert(value, data_type)
+            ok, detail = cls.evaluate(converted, spec.get("conditions"))
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            return {
+                **base,
+                "value": None,
+                "status": STATUS_ERROR,
+                "ok": False,
+                "detail": f"解析/判定异常: {exc}",
+            }
         return {
             **base,
             "value": converted,

@@ -69,6 +69,10 @@ export default function DbcSignalPicker({ open, onCancel, onSelect }: Props) {
     setPickingId(signal.id)
     try {
       const res = await dbcAPI.signalParserSpec(signal.id)
+      // Never insert a blank parser row when the API returns no payload.
+      if (!res.data || !res.data.name) {
+        throw new Error('empty ParserSpec')
+      }
       onSelect(res.data)
       onCancel()
     } catch (err) {

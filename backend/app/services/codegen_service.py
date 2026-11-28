@@ -79,6 +79,8 @@ def assertion_stmt(expected: str, render: bool = False) -> str:
 # Emitted into generated scripts so they can parse and judge responses exactly
 # like the platform's ResponseParser does at runtime.
 PARSE_HELPER = r'''
+import math
+
 
 def _pick_groups(groups, hex_field):
     """Choose which 0x.. field(s) form the payload."""
@@ -102,8 +104,14 @@ def _pick_groups(groups, hex_field):
 
 def _to_bytes(raw, hex_field="all"):
     """Convert a device response into raw bytes (hex or text)."""
+    if raw is None:
+        return b""
     if isinstance(raw, (bytes, bytearray)):
         return bytes(raw)
+    if isinstance(raw, (list, tuple)):
+        return bytes(b & 0xFF for b in raw if isinstance(b, int))
+    if isinstance(raw, int):
+        return bytes([raw & 0xFF])
     s = str(raw or "").strip()
     if not s:
         return b""
@@ -111,7 +119,10 @@ def _to_bytes(raw, hex_field="all"):
     if groups:
         joined = "".join(_pick_groups(groups, hex_field))
         if joined and len(joined) % 2 == 0:
-            return bytes.fromhex(joined)
+            try:
+                return bytes.fromhex(joined)
+            except ValueError:
+                pass
     compact = re.sub(r"[,\s_]+", "", s).lower().replace("0x", "")
     if compact and re.fullmatch(r"[0-9a-f]+", compact) and len(compact) % 2 == 0:
         return bytes.fromhex(compact)
@@ -133,26 +144,61 @@ def is_empty_frame(raw):
     return False
 
 
+def _finite_float(value, default):
+    """NaN/Inf must never reach a JSON response or a range judgement."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    return f if math.isfinite(f) else default
+
+
 def _decode_signal(payload, start, length, byte_order, is_signed=False, factor=1.0, offset=0.0):
-    """Decode one DBC signal (Intel/Motorola), matching the platform parser."""
+    """Decode one DBC signal (Intel/Motorola), matching dbc_parser.decode_signal.
+
+    Kept as a standalone copy because generated scripts run outside the
+    backend package; Test/test_dbc_import_and_parse.py asserts the two
+    implementations agree numerically for every byte order / geometry.
+    """
+    try:
+        start, length = int(start), int(length)
+    except (TypeError, ValueError):
+        return None
     nbits = 8 * len(payload)
-    if not payload or length <= 0 or start < 0 or start + length > nbits:
+    if not payload or length <= 0 or start < 0 or length > nbits:
         return None
     mask = (1 << length) - 1
-    if str(byte_order).lower() in ("intel", "little_endian", "little", "1"):
-        raw = (int.from_bytes(payload, "little") >> start) & mask
+    order = str(byte_order or "little_endian").strip().lower()
+    if order in ("motorola", "big_endian", "big", "0"):
+        # DBC @0 start bits are sawtooth-numbered; cantools converts them.
+        linear = 8 * (start // 8) + (7 - (start % 8))
+        if linear + length > nbits:
+            return None
+        raw = (int.from_bytes(payload, "big") >> (nbits - linear - length)) & mask
     else:
-        raw = (int.from_bytes(payload, "big") >> (nbits - start - length)) & mask
-    if is_signed and length and (raw >> (length - 1)) & 1:
+        # Unknown byte orders degrade to Intel, exactly like dbc_parser.
+        if start + length > nbits:
+            return None
+        raw = (int.from_bytes(payload, "little") >> start) & mask
+    if is_signed and (raw >> (length - 1)) & 1:
         raw -= 1 << length
-    value = raw * factor + offset
+    factor_f = _finite_float(factor, 1.0)
+    offset_f = _finite_float(offset, 0.0)
+    # Keep 64-bit raw values exact: raw * 1.0 would promote to double and
+    # drop bits above 2**53. Must match dbc_parser.decode_signal exactly.
+    if factor_f.is_integer() and offset_f.is_integer():
+        return raw * int(factor_f) + int(offset_f)
+    value = raw * factor_f + offset_f
+    if not math.isfinite(value):
+        return None
     return int(value) if float(value).is_integer() else value
 
 
 def dbc_start_to_linear(start, length, byte_order="little_endian"):
     """Map DBC sawtooth start to the linear MSB-first index (diagnostic)."""
-    if str(byte_order).lower() in ("motorola", "big_endian", "big", "0"):
-        return start
+    order = str(byte_order or "little_endian").strip().lower()
+    if order in ("motorola", "big_endian", "big", "0"):
+        return 8 * (start // 8) + (7 - (start % 8))
     byte, bit = divmod(start + length - 1, 8)
     return byte * 8 + (7 - bit)
 
@@ -180,23 +226,24 @@ def parse_field(raw, data_type="string", start=0, length=1, unit="byte", hex_fie
         value = data[start:start + length]
 
     if data_type == "hex":
-        return f"0x{value:X}" if isinstance(value, int) else "0x" + value.hex().upper()
+        return f"0x{int(value):X}" if isinstance(value, (int, float)) else "0x" + value.hex().upper()
     if data_type == "bin":
-        if isinstance(value, int):
-            return format(value, f"0{max(1, value.bit_length())}b")
+        if isinstance(value, (int, float)):
+            v = int(value)
+            return format(v, f"0{max(1, v.bit_length())}b")
         return "".join(f"{b:08b}" for b in value)
     if data_type == "bool":
-        return bool(value) if isinstance(value, int) else any(value)
+        return bool(value) if isinstance(value, (int, float)) else any(value)
     if data_type == "dec":
-        if isinstance(value, int):
+        if isinstance(value, (int, float)):
             return value
         txt = value.decode("utf-8", errors="replace").strip()
         try:
             return float(txt) if re.search(r"[.eE]", txt) else int(txt)
         except ValueError:
             return int.from_bytes(value, "big")
-    if isinstance(value, int):
-        return str(value)
+    if isinstance(value, (int, float)):
+        return str(int(value)) if isinstance(value, float) and float(value).is_integer() else str(value)
     return value.decode("utf-8", errors="replace").rstrip("\x00").strip()
 '''
 

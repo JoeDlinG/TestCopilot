@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-11-24（v2.3.12，右侧抽屉标题改「运行 / 报告」，详见 HISTORY.md）
+> 最后更新：2026-11-28（v2.3.13，DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归，详见 HISTORY.md）
 
 ---
 
@@ -125,6 +125,25 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v2.3.13 — DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归（2026-11-28，分支 `TestCopilot_LabApp`）
+
+- [x] **Issue #24 落地后全面复核**：装 cantools 39.4.5 做权威交叉，修掉 Motorola `@0` sawtooth 位映射错误、
+      生成脚本与运行时解码分叉、DB ParserSpec 丢物理单位、VAL_ 枚举表被改坏、NaN/Inf 导致接口 500，
+      以及 GBK 上传 / 5 MiB 上限 / import rollback / 扩展帧 / HEAD 405 / 前端字段契约等 10 类问题
+- [x] **真实素材接入测试入口**：GBK 的 X6S OTS CAN FD 矩阵（28 报文 / 279 信号 / DLC 8–64）+ body_chassis /
+      powertrain 的 DBC + ASC + BLF 全部跑通；修掉 64-bit 信号 `raw * 1.0` 精度丢失与 `[0|0]` 占位误判
+- [x] **日志链路**：BLF 容错 reader（顶层对象 / header_version=0 / dlc-flags 反序 / zlib 容器）+
+      ASC 场景语义断言；`can.BLFWriter` 合规副本验证标准库可读
+- [x] **测试配置**：`run_all.sh` 改用 `pick_python()` 解析项目 venv；`.log` ignore 放行测试素材；
+      真实素材缺失时 `[SKIP]` 而非 FAIL
+- [x] 验证：`test_dbc_import_and_parse` 102 PASS、`test_dbc_log_e2e` 34 PASS、
+      `test_dbc_real_assets` 67 断言 + 5130 次比对 0 FAIL、837 次解码与 cantools 0 差异；
+      `run_all.sh` 23 PASS / 4 SKIP；`npm run build` 通过且 28 chunks 无 2-环
+- [x] **发布口径**：public 仓库只推合成 fixture + 测试代码；真实厂商 DBC/ASC/BLF 由 `.gitignore` 排除，
+      clone 后真实素材套件自动 SKIP（已实测 rc=0 且不误判 FAIL）
+- [ ] 待办：BLF 原始素材如需被 CANoe / python-can 直接打开，按标准格式重新导出；
+      ASC 转向灯字段（byte1）与 DBC 定义（byte0 bit2-3）不一致需改日志生成脚本
 
 ### v2.3.5 — MGW100 USB 真正连上：内核未绑定 cdc_acm 的根治（2026-11-05，分支 `feature/flow-enhancements`）
 

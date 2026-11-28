@@ -44,6 +44,7 @@ backend/projects/Project_*.json
 
 # Logs
 *.log
+!Test/dbc/mg100_demo.log
 logs/
 backend/logs/
 
@@ -86,3 +87,12 @@ docs/UI_REDESIGN_PLAN.md
 .build_tmp2/
 backend/.trash_*
 .commit_msg.txt
+
+
+# Local bench captures: real vendor DBC matrices and CANoe ASC/BLF logs are
+# intentionally kept out of this public repository. Only the synthetic
+# mg100_demo fixtures are versioned so the DBC regression suites still run.
+Test/dbc/*.dbc
+Test/dbc/*.asc
+Test/dbc/*.blf
+!Test/dbc/mg100_demo.dbc
