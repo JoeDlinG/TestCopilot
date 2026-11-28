@@ -96,3 +96,8 @@ Test/dbc/*.dbc
 Test/dbc/*.asc
 Test/dbc/*.blf
 !Test/dbc/mg100_demo.dbc
+
+# Vendor PSU manuals: downloaded from brand websites and kept locally
+# only (25 MB, redistribution unknown). Plugin runtime needs only the
+# Markdown summaries under backend/plugins/manuals/.
+/docs/dc_power/manuals/*.pdf

@@ -4,6 +4,75 @@
 
 ---
 
+## 2026-11-28: 四品牌可编程直流电源插件 + 串口/LAN 接口链路回归（v2.3.14）
+
+### 范围
+
+按厂商官网手册新增 4 个常用可编程直流电源协议插件：ITECH（需求写「ITEC」，按品牌
+**ITECH / 艾德克斯**实现）、TDK-Lambda、Chroma 致茂、Keysight 是德科技；默认支持
+**RS-232 / RS-485 串口**与 **LAN TCP socket**。8 份官方手册 PDF 从厂商官网下载，
+按发布决策**只在本地保留、不加入 public 版本库**；插件运行只依赖 Markdown 摘要，
+不读取 PDF。同时补齐「真实 HTTP 链路」回归门禁，把接口切换类问题从「靠人肉点界面」
+变成可自动复现的断言。
+
+### 手册依据与出厂默认值
+
+| 品牌 / 协议 | 覆盖机型 | 串口默认（手册） | LAN 默认（手册） | 命令差异 | 已下载官方手册 |
+|---|---|---|---|---|---|
+| ITECH `itech_dc_power` | IT6800 / IT6860A / IT6500 | 9600 · 8N1 · SCPI（IT6860A 6.1 节） | 选配机型，按 SCPI raw socket 取 5025 | `VOLT` / `CURR` / `OUTP` / `MEAS:VOLT?` / `SYST:ERR?` | IT6800 SCPI 中文、IT6860A 用户手册、IT6800 用户手册 |
+| TDK-Lambda `tdk_lambda_dc_power` | GENESYS+ G+ / GH / GSP | 115200（可用 `SYST:BAUD` 改） | **TCP 8003**（LAN 接口手册原文），UDP 8005 | `OUTP:STAT` / `MEAS:VOLT?` | GENESYS+ 用户手册、Genesys LAN 接口手册 |
+| Chroma `chroma_dc_power` | 62000P（62006P/62012P/62024P/62050P） | RS-232C 标准接口 | 以太网为选配卡 | `SOUR:VOLT` / `SOUR:CURR` / `CONF:OUTP` / `FETC:POW?` | 62000P 中文型录、中文数据手册 |
+| Keysight `keysight_dc_power` | E36300 / N5700 | E36300 无原生 RS-232；带串口机型或 USB-串口适配器用此通道 | **SCPI socket 5025**（E36300 Users Guide 原文） | `INST:SEL {ch}` 多通道选择 | E36300 Users Guide |
+
+命令与接口参数出处逐条写在各插件 docstring、`backend/plugins/manuals/<protocol>.md`，
+手册清单与启用步骤见 `docs/DC_POWER_PLUGINS.md`。
+
+### 实现
+
+| 文件 | 内容 |
+|---|---|
+| `backend/app/services/scpi_power_transport.py` | 一份共享 SCPI 传输 mixin：串口经 `run_blocking` 走线程池、LAN 走 `asyncio` stream，共用 `_write_line` / `_flush_input` / `_read_line` 三原语；`asyncio.Lock` 防后台轮询抢走查询应答；`receive()` 立即返回 None。`send()` 支持 SCPI 字符串 / JSON 字符串 / `{"command","value","query"}` / `{"action","value"}`；语义错抛 `ValueError`（不断连）、断开与超时抛 `ConnectionError`（Issue #33 异常分类约束） |
+| `backend/plugins/{itech,tdk_lambda,chroma,keysight}_dc_power_plugin.py` | 4 个独立插件，只保留 `COMMAND_MAP` + 品牌出厂默认值；`port` 只有 placeholder 无 default（避免硬编码串口号被持久化） |
+| `backend/app/core/interfaces.py` | `PLUGIN_TRANSPORT_BINDINGS` / `PLUGIN_POLLUTION_TARGETS` 各登记 4 条；不登记则界面切 LAN 时 `config.transport` 永远停在 `serial`（Issue #11 复发点）。另保留 `brand_key` / `idn_expect` 私有签名键供协议污染自愈识别 |
+| `backend/plugins/manuals/*.md`、`backend/plugins/skills/*.md` | 每品牌 1 份手册摘要 + 1 份 AI Skill，frontmatter 的 `protocol` 与插件 `protocol_name` 一致 |
+| `docs/DC_POWER_PLUGINS.md` | 手册下载清单、命令差异表、架构要点、启用步骤、两套回归说明 |
+
+### 实时 API 链路验证暴露的问题（均已复现取证 → 修复）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| **P1** 界面设的串口参数被静默忽略 | 「配置接口」按 `INTERFACE_SPECS` 写入 `data_bits` / `stop_bits`，插件模板写的是驱动层键 `bytesize` / `stopbits`；`_connect_serial()` 优先读模板键，用户设 7E2 仍按 8N1 连接 | 改为优先读界面键、模板键仅作回退；补 4 品牌断言确认 7E2 真正下传到 pyserial |
+| **P1** LAN 切回串口后波特率变错 | 切 LAN 时 `foreign_config_keys` 会清掉 `baudrate`；切回串口时界面显示通用规格默认 115200 并覆盖手册值（ITECH / Chroma / Keysight 应为 9600） | 串口绑定新增 `defaults.baudrate`，`apply_plugin_transport()` 用 `setdefault` 恢复（不覆盖用户显式值），四品牌按手册分别登记 9600 / 115200 |
+| P2 `run_all.sh` 硬件 SKIP 计数报 0 | 无 MG100 时 `HARDWARE` 置空，汇总用 `${#HARDWARE[@]}` 当跳过数 | 独立记录 `HARDWARE_SKIPPED`，汇总如实输出 `1 hardware-skipped` |
+| **P0** 安装包里 4 个插件全部从 `/api/plugins/discovered` 消失 | 插件由 `plugin_service._exec_module()` 从磁盘动态 exec，共享模块 `app.services.scpi_power_transport` 不在 PyInstaller 静态模块图内 → frozen 版 import 失败，扫描阶段只记 warning 后跳过，界面毫无提示 | `aitestlab.spec` 显式 `hiddenimports += ["app.services.scpi_power_transport"]`；`test_dc_power_plugins.py` 增加 spec 契约断言防复发；重打包后 xref 命中 13 处，安装版 discovered 实到 4 个插件 |
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `Test/test_dc_power_plugins.py` | **249 项断言 PASS / 0 FAIL**（纯 mock，无需硬件）：4 协议唯一性、schema 门禁、串口与 LAN 双通道收发、action→SCPI 品牌差异、界面串口参数下传、双向传输绑定与品牌波特率恢复、异常分类、手册/Skill 资产与 frontmatter |
+| `Test/test_dc_power_api_chain.py`（本版新增） | **78 项断言 PASS / 0 FAIL**（真实 HTTP，需 `:8000`）：`discovered → install → enable → add-device → serial → LAN → 切回串口`，校验协议不被通用总线名覆盖、地址列镜像、旧接口键清理、手册波特率恢复；测试数据在 `finally` 全删，服务未启则 `[SKIP]` exit 0 |
+| 运行时发现 | `/api/plugins/discovered` 实到 4 个新插件；安装 / 启用 / 建设备 / 接口切换全部 200，收尾 `plugins` 表剩 0 行 |
+| `bash Test/run_all.sh` | **25 套件 PASS / 3 data-SKIP / 1 hardware-SKIP，exit 0** |
+| `npm run build` | tsc + i18n-guard + vite build 通过；chunk 依赖图无 2-环 |
+| 素材校验 | 8 份 PDF 全部为有效 PDF（约 25 MB，逐份校验 `%PDF` 头） |
+| 安装包真机冒烟（本版新增） | `AITestLab-Setup-v2.3.14.exe` 静默安装 rc=0 → 启动安装版 → `/api/health` 返回 `2.3.14` / `degraded=false`；`GET /` 200 且含 hashed entry；`/api/plugins/discovered` 实到 4 个电源插件；结束后关闭进程 |
+| 版本口径 | `APP_VERSION` / NSIS `!define APP_VERSION` / HISTORY 首章 / KANBAN 抬头 / 运行时 `/api/health` 统一 `2.3.14` |
+
+### 发布口径与说明
+
+- 本版**生成 Windows 安装包** `backend/dist/AITestLab-Setup-v2.3.14.exe`；exe 与
+  `backend/dist/`、`build/`、`backend/static/`、`frontend/dist/` 均按既有约定不入库，
+  通过 Release 分发。厂商设备驱动（PCAN-Basic、USB 转串口）无法打包，需用户自装。
+- **手册 PDF 不入库**：`.gitignore` 排除 `docs/dc_power/manuals/*.pdf`；8 份 PDF 只在本地
+  生成与保留。clone 后插件仍可用（运行只依赖 `backend/plugins/manuals/` 的 Markdown），
+  `docs/DC_POWER_PLUGINS.md` 保留下载清单与出处。提交前逐文件核对暂存区，确认无 PDF /
+  exe / 临时诊断脚本。
+- 打包前已关闭本地 `:8000` 后端服务；验证阶段如需 live 检查会临时启动、结束后再次关闭。
+- 未做：未改 GitHub Issue 状态；未为新插件生成独立 UI 配置页（复用「设备管理 → 配置接口」）。
+
+---
+
 ## 2026-11-28: DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归（v2.3.13）
 
 ### 范围

@@ -1,7 +1,7 @@
 # 项目看板 — AITestLab
 
 > 项目进展与计划同步看板。本文件用于快速同步各模块状态，详细变更见 `HISTORY.md`，使用说明见 `README.md`。
-> 最后更新：2026-11-28（v2.3.13，DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归，详见 HISTORY.md）
+> 最后更新：2026-11-28（v2.3.14，四品牌可编程直流电源插件 + 串口/LAN 接口链路回归，详见 HISTORY.md）
 
 ---
 
@@ -125,6 +125,26 @@
 ---
 
 ## ✅ 已完成 (Done) — 最近更新
+
+### v2.3.14 — 四品牌可编程直流电源插件 + 串口/LAN 接口链路回归（2026-11-28，分支 `TestCopilot_LabApp`）
+
+- [x] **按官网手册新增 4 个电源插件**：ITECH（艾德克斯）/ TDK-Lambda / Chroma 致茂 / Keysight 是德科技，
+      默认 RS-232 / RS-485 串口 + LAN TCP socket；TDK 8003 / 115200、Keysight 5025、ITECH 9600 8N1 均取自手册
+- [x] **共享 SCPI 传输层**：一份 `scpi_power_transport.py` 同时管串口（`run_blocking`）与 LAN（`asyncio` stream），
+      4 个插件只带命令方言与出厂默认值；异常分类遵守 Issue #33（语义错不断连、传输错才置离线）
+- [x] **接口绑定**：`PLUGIN_TRANSPORT_BINDINGS` / `PLUGIN_POLLUTION_TARGETS` 各登记 4 条，
+      界面切 LAN 不再让 `config.transport` 停在 `serial`（Issue #11 复发点）
+- [x] **安装包真机冒烟挖出 P0 打包缺陷**：动态 exec 的插件依赖 `scpi_power_transport` 未进 PyInstaller 模块图 → 安装版 discovered 为空；`aitestlab.spec` 补 hiddenimport + spec 契约断言，重打包后 4 个插件全部可见
+- [x] **真实 API 链路回归新挖出并修掉 2 个 bug**：界面 `data_bits`/`stop_bits` 被模板
+      `bytesize`/`stopbits` 静默覆盖（7E2 变 8N1）；LAN 切回串口时通用 115200 覆盖手册波特率
+      → 改优先读界面键 + 串口绑定 `defaults.baudrate` 按品牌恢复
+- [x] **资产**：8 份官网手册 PDF（本地保留、不入库）+ 4 份 Markdown 手册摘要 + 4 份 AI Skill +
+      `docs/DC_POWER_PLUGINS.md`；手册出处逐条可追溯
+- [x] 验证：`test_dc_power_plugins` 249 断言、`test_dc_power_api_chain` 78 断言（真实 HTTP）、
+      `run_all.sh` 25 PASS / 4 SKIP、`npm run build` 通过；运行时 `/api/plugins/discovered` 实到 4 个插件
+- [x] **发布口径**：手册 PDF 与 exe 均不入库；本版生成 `AITestLab-Setup-v2.3.14.exe` 供 Release 分发
+- [ ] 待办：真机带电源验证串口/LAN 通信（当前为 mock + 真实 API 链路，尚无实机）；
+      为新插件补独立 UI 配置页（现复用「设备管理 → 配置接口」）
 
 ### v2.3.13 — DBC 解析链路全面复核 + 真实 DBC/ASC/BLF 素材回归（2026-11-28，分支 `TestCopilot_LabApp`）
 

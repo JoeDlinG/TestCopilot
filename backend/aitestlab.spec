@@ -46,6 +46,12 @@ if sys.platform != "win32":
     hiddenimports += ["usb.backend.libusb1"]
 # App + restart helper
 hiddenimports += ["restart_helper", "update_helper", "app", "app.main"]
+# The four DC power plugins are exec'd from disk at runtime by
+# plugin_service._exec_module(), so their shared transport is invisible to
+# static analysis. Without an explicit hiddenimport the frozen build drops
+# app.services.scpi_power_transport: every plugin import fails during the scan,
+# the failure is only logged, and /api/plugins/discovered comes back empty.
+hiddenimports += ["app.services.scpi_power_transport"]
 
 # Data files: plugins (protocol drivers + manuals + skills) and the built
 # frontend. These are loaded from disk at runtime (plugins via importlib, the

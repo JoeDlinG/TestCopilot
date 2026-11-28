@@ -289,6 +289,35 @@ def foreign_config_keys(interface_type: str, keep: set) -> set:
 #   transport            value written to config["transport"]
 #   from_column          config_key -> device column to copy the value from
 #   drop                 config keys that must not survive this interface
+#   defaults             plugin defaults restored when the key was dropped by
+#                        an earlier switch (never overrides a user value)
+# Programmable DC power supplies (ITECH / TDK-Lambda / Chroma / Keysight) share
+# one SCPI transport mixin. Without these bindings the generic "configure
+# interface" dialog only writes the address columns and never touches
+# config["transport"], so switching to LAN silently keeps opening the serial
+# port -- the exact issue #11 regression recorded for MG100/RIGOL.
+def _power_serial_lan_bindings(default_baudrate: int) -> Dict[str, Dict[str, Any]]:
+    """Serial/LAN bindings for one brand, preserving its manual baud rate.
+
+    ``foreign_config_keys`` strips ``baudrate`` on a switch to Ethernet (it is
+    owned by the serial spec). Switching back would otherwise show the generic
+    115200 default and overwrite ITECH/Chroma/Keysight's 9600 from the manual.
+    ``defaults`` restores the brand value only when no user value survived.
+    """
+    return {
+        "serial": {
+            "transport": "serial",
+            "from_column": {"port": "serial_port"},
+            "drop": ("host", "tcp_port"),
+            "defaults": {"baudrate": default_baudrate},
+        },
+        "ethernet": {
+            "transport": "ethernet",
+            "from_column": {"host": "ip_address", "tcp_port": "port"},
+            "drop": ("port", "baudrate"),
+        },
+    }
+
 PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "mini_gateway100": {
         "serial": {
@@ -331,6 +360,10 @@ PLUGIN_TRANSPORT_BINDINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
             "from_column": {"channel": "can_channel"},
         },
     },
+    "itech_dc_power": _power_serial_lan_bindings(9600),        # IT6860A / IT6800 手册
+    "tdk_lambda_dc_power": _power_serial_lan_bindings(115200),  # GENESYS+ 手册
+    "chroma_dc_power": _power_serial_lan_bindings(9600),        # 62000P RS-232C
+    "keysight_dc_power": _power_serial_lan_bindings(9600),      # N5700 串口机型
 }
 
 # Config keys the *generic* communication drivers actually read (see
@@ -353,6 +386,10 @@ PLUGIN_POLLUTION_TARGETS = {
     "peakcan": {"can"},
     "mini_gateway100": {"serial", "ethernet", "usb"},
     "rigol_oscilloscope": {"scpi", "gpib", "usb", "ethernet"},
+    "itech_dc_power": {"serial", "ethernet"},
+    "tdk_lambda_dc_power": {"serial", "ethernet"},
+    "chroma_dc_power": {"serial", "ethernet"},
+    "keysight_dc_power": {"serial", "ethernet"},
 }
 
 
@@ -383,6 +420,10 @@ def apply_plugin_transport(
     # ``transport`` key the plugin never reads.
     if binding.get("transport"):
         out["transport"] = binding["transport"]
+    # Brand/manual defaults are only restored for keys that a previous
+    # interface switch removed; an explicit user value always wins.
+    for key, value in binding.get("defaults", {}).items():
+        out.setdefault(key, value)
     for config_key, column_key in binding.get("from_column", {}).items():
         value = columns.get(column_key)
         if value in (None, ""):

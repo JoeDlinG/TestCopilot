@@ -66,6 +66,8 @@ SUITE=(
   test_dbc_import_and_parse
   test_dbc_log_e2e
   test_dbc_real_assets
+  test_dc_power_plugins
+  test_dc_power_api_chain
 )
 
 # Hardware-only suites are skipped (not failed) when no MG100 is attached —
@@ -83,8 +85,10 @@ PY
 
 if hardware_available; then
   HARDWARE=(test_mg100_skill_syntax)
+  HARDWARE_SKIPPED=0
 else
   HARDWARE=()
+  HARDWARE_SKIPPED=1
   printf '  %-36s SKIP (no MG100 hardware attached)\n' 'test_mg100_skill_syntax'
 fi
 
@@ -114,4 +118,4 @@ if [ "$failed" -gt 0 ]; then
   echo "$failed suite(s) FAILED"
   exit 1
 fi
-echo "All $((${#SUITE[@]} + ${#HARDWARE[@]} - skipped)) suites passed ($skipped data-skipped, ${#HARDWARE[@]} hardware)."
+echo "All $((${#SUITE[@]} + ${#HARDWARE[@]} - skipped)) suites passed ($skipped data-skipped, $HARDWARE_SKIPPED hardware-skipped)."
